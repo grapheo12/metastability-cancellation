@@ -126,8 +126,8 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 
 ### Traceability
 
-Generated from the `// Design:` tags in the code by `implementation/tracegen/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
-Regenerate from the repository root with `python3 implementation/tracegen/tracegen.py --lang Go --ext .go --comment // --write`.
+Generated from the `// Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`.
 
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
