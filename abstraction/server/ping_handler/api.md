@@ -1,6 +1,8 @@
 # Ping Handler — API
 
-## `handle_ping(task: StreamTask, config: ServerConfig, rng: Rng, cancel_ctx) -> Response | Aborted`
+## Functions
+
+### `handle_ping(task: StreamTask, config: ServerConfig, rng: Rng, cancel_ctx) -> Response | Aborted`
 
 - `Response(202, body)`: the burn completed. Body is a PaddedJsonBody.
 - `Response(503, body)`: a `/cancel` matched (`cooperative` only). Body is a PaddedJsonBody.

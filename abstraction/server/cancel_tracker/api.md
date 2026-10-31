@@ -7,6 +7,8 @@
 | `CANCEL_REGISTRY_CAPACITY` | `65536` | Slot count of the CancelRegistry (same as [../api.md#constants](../api.md#constants)) |
 | `EMPTY_KEY` | `0` | Marks an unused registry slot. Stored keys are `client_id + 1` |
 
+Both are used by [design.md#cancelregistry](design.md#cancelregistry).
+
 ## Types
 
 ### `CancelRegistry`
@@ -34,6 +36,8 @@ Owned by one Connection Handler's worker only, so it needs no synchronization.
 | `last_completed_id` | u64 or `none` | `none` | Id of the last request whose burn finished (`202`) |
 | `pending` | ordered set of u64 | empty | The local set: drained ids not yet resolved |
 
+See [design.md#cancelmatching](design.md#cancelmatching).
+
 ## Functions
 
 ### `registry_new(capacity: integer) -> CancelRegistry`
@@ -56,10 +60,11 @@ Handles a routed `DELETE /cancel`. Responses: `202`, `400` or `503`, always with
 [design.md#handle_cancel](design.md#handle_cancel).
 
 ### `counters_new() -> CancelCounters`
-All fields start at 0.
+All fields start at 0. See [design.md#cancelcounters](design.md#cancelcounters).
 
 ### `counters_snapshot(counters) -> (u64, u64, u64)`
-Reads the three values in the order of the CancelCounters table. Used for the shutdown line.
+Reads the three values in the order of the CancelCounters table. Used for the shutdown line. See
+[design.md#cancelcounters](design.md#cancelcounters).
 
 ## Uses
 
