@@ -293,3 +293,75 @@ Co-authored by: <Agent name>
 ```
 
 Any changes to AGENTS.md will be done on a separate commit and will be backported to main and all other branches.
+
+
+# Macros
+
+A macro is a one-word instruction from the human that expands to the procedure below. Run every step. If a step
+hits a merge conflict, an ambiguous spec, or a check that cannot be made to pass, stop and ask the human instead of
+guessing. A macro never pushes. At the end, report each commit created, per branch, and the result of every check.
+
+Definitions used below:
+- **Spec part** of a file in `abstraction/`: the whole file, except that in a `design.md` it is everything before
+  `## Design specific to <Lang>`. That section is always the **last** section of a `design.md` and exists only on
+  `impl/<lang>` branches.
+- **Spec checks:** relative links and anchors resolve, and the
+  [Spec self-check before committing](#spec-self-check-before-committing) holds.
+
+## `sync_spec`
+
+Run on a branch `B` other than `main`, usually an `impl/<lang>` branch. It brings every change to the spec part of
+`abstraction/` made on `B` to `main`, and then to every other branch.
+
+1. **Find the changes.** List the commits on `B` that are not on `main` and touch `abstraction/`
+   (`git log main..B -- abstraction/`, dropping any that `git cherry main B` marks as already applied). Then compare
+   the spec part of every file in `abstraction/` between `B` and `main`. A file whose spec parts are equal needs
+   nothing. If no file differs, report "already in sync" and stop.
+2. **Bring them to `main`.** On `main`, apply the differing spec parts:
+   - A commit on `B` that touches only `abstraction/` and no `Design specific to <Lang>` section is cherry-picked
+     as it is.
+   - Any other commit has only its spec-part changes copied over. Language sections and `implementation/` files are
+     never brought to `main`.
+   - The result is grouped into `[spec]` commits that follow
+     [Building for future improvements](#building-for-future-improvements) (one level, one subcomponent, or one
+     subcomponent plus its parent per commit; never two siblings).
+   - Each changed node gets a new `version.md` row, and so does every ancestor up to the root (parent-bump rule).
+     Version rows already made on `B` are kept, not duplicated.
+3. **Check `main`.** The spec checks pass. `main` contains only `abstraction/` and `AGENTS.md`, and no
+   `Design specific to` text.
+4. **Bring them back to every branch, including `B`.** Cherry-pick the new `main` commits onto every other branch,
+   and onto `B` itself whenever they differ from what `B` already has (version rows, regrouping), so the spec parts
+   become identical everywhere. Language sections are untouched, and they apply cleanly because they are always last.
+5. **Report** every `impl/<lang>` branch whose code is now behind its spec (any `Source:` annotation older than
+   the newest row of that component's `version.md`). Those branches need `sync_impl`, which `sync_spec` does not run
+   by itself.
+
+## `sync_impl <branch>`
+
+Brings the implementation on `<branch>` (an `impl/<lang>` branch) up to date with the spec in `abstraction/`. It
+never changes the spec part of `abstraction/`.
+
+1. **Spec first.** On `<branch>`, compare the spec part of `abstraction/` with `main`.
+   - If `<branch>` has spec changes that `main` lacks, stop and ask whether to run `sync_spec` first.
+   - Otherwise, cherry-pick onto `<branch>` the `[spec]` commits from `main` that it lacks, so its spec parts match
+     `main`.
+2. **Find what is behind.** For each component, compare the newest version in its `version.md` with the version in
+   every `Source: abstraction/<component path>/design.md (<component> v<version>)` annotation in the code. Any
+   component whose annotation is older is out of date. To see exactly what changed, find the commit that introduced
+   the annotated version row (`git log -S "| <version> |" -- <component>/version.md`) and diff the component's spec
+   files from that commit to `HEAD`.
+3. **Update each out-of-date component**, from the leaves up, one subtree at a time:
+   1. Update the `<Lang> choices` in its `Design specific to <Lang>` section *before* touching code.
+   2. Change the code and tests so they realize the new spec. Add, move or remove `Design:` tags with the code.
+   3. Bump every `Source:` annotation of that component to the newest version, including tests and files shared
+      with other components.
+   4. Run tracegen in write mode, then in check mode ([Traceability generator (tracegen)](#traceability-generator-tracegen)).
+      It must report `OK`.
+   5. Build and run all tests of `implementation/<lang>`. They must pass.
+   6. Commit as `[impl] <Lang>: sync <component> to spec v<version>`. Follow the same scope rule as specs: never two
+      sibling subtrees in one commit.
+
+   A spec change that needs no code change (for example a wording or style fix) still gets its annotation bump, its
+   tracegen and test run, and its own commit.
+4. **Final check.** No `Source:` annotation is older than its `version.md`, tracegen check mode reports `OK`, the
+   build and tests pass, and the spec parts of `abstraction/` match `main`.
