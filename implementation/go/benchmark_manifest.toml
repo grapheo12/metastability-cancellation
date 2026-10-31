@@ -1,0 +1,10 @@
+# BuildManifest for the Go implementation.
+# Contract: abstraction/benchmark_runner/remote_setup/design.md#buildmanifest
+lang = "go"
+required_tools = ["go"]
+build = "CGO_ENABLED=0 go build -o bin/ ./cmd/server ./cmd/loadgen ./cmd/canceller"
+
+[binaries]
+server = "bin/server"
+loadgen = "bin/loadgen"
+canceller = "bin/canceller"
