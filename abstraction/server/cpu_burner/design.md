@@ -59,3 +59,28 @@ Races on `sink` between connections do no harm, because its value is never used.
   `id_check()`, which may free drained inbox nodes and insert into the pending set.
 - The time is **wall-clock** time spent spinning, not CPU time accounting. If the OS preempts
   the thread, that time still counts toward `duration_us`.
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- File `internal/server/cpuburner.go`. `burn` is `Burn`, returning `BurnCompleted`, `BurnCancelledRST` or `BurnCancelledID`.
+- The monotonic clock is `time.Since(clockBase)`. Go's `time.Time` carries a monotonic reading, so wall-clock adjustments have no effect.
+- `NONE` is `nil` for both the flag pointer and the `idCheck` function.
+- `sink` is an `atomic.Uint64`. The atomic store keeps the work observable and keeps the race detector quiet.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code. Each link points at the first code line after the tag.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [CooperativeCpuBurn](#cooperativecpuburn) | [cpuburner.go:36](../../../implementation/go/internal/server/cpuburner.go#L36), [server_test.go:100](../../../implementation/go/internal/server/server_test.go#L100) |
+| [Spin unit](#spin-unit) | [cpuburner.go:19](../../../implementation/go/internal/server/cpuburner.go#L19), [cpuburner.go:66](../../../implementation/go/internal/server/cpuburner.go#L66), [cpuburner.go:69](../../../implementation/go/internal/server/cpuburner.go#L69) |
+| [Timing](#timing) | [cpuburner.go:25](../../../implementation/go/internal/server/cpuburner.go#L25), [cpuburner.go:28](../../../implementation/go/internal/server/cpuburner.go#L28) |
+<!-- trace:end -->

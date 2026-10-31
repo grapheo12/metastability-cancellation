@@ -117,3 +117,35 @@ open, and wakes the queue. The worker finishes its current task (a running burn 
 interrupted), then sees `None` and returns. Queued tasks are dropped. The handler returns once both
 activities have ended and the socket is closed. The connection's `pending` set is thrown away
 uncounted, and its registry entry stays (entries are never deleted).
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- File `internal/server/connhandler.go`.
+- The FrameReader is split in two. The x/net/http2 read loop does the framing, and each stream's `http.Handler` goroutine (`frameReader`) does the rest. That goroutine runs on HEADERS, reads the body to END_STREAM, builds the `StreamTask`, enqueues it, and turns `r.Context().Done()` (fired on RST_STREAM) into the RST flag. Each handler goroutine holds its own `*StreamTask`, which takes the place of `stream_table`.
+- The queue is a `chan *StreamTask` whose capacity equals the advertised `MaxConcurrentStreams` (4096), so a push never blocks. A mutex makes `closing` and enqueue atomic with respect to each other.
+- The worker sends the `Response` back over a 1-buffered channel, and the handler goroutine writes it, because x/net/http2 only allows writes from the handler goroutine. "Write nothing" (`Aborted`, or RST in cooperative mode) is `panic(http.ErrAbortHandler)`. That resets the stream instead of letting the library send an empty 200.
+- Concurrency requirement: Go preempts goroutines asynchronously and schedules them on several OS threads, so the HTTP/2 read loop keeps running during a burn. Nothing else is needed.
+- The RST flag is `sync/atomic.Bool`.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code. Each link points at the first code line after the tag.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [Shared state](#shared-state) | [connhandler.go:46](../../../implementation/go/internal/server/connhandler.go#L46), [pinghandler.go:13](../../../implementation/go/internal/server/pinghandler.go#L13) |
+| [FrameReader](#framereader) | [connhandler.go:94](../../../implementation/go/internal/server/connhandler.go#L94), [server_test.go:125](../../../implementation/go/internal/server/server_test.go#L125) |
+| [SerialStreamWorker](#serialstreamworker) | [connhandler.go:126](../../../implementation/go/internal/server/connhandler.go#L126) |
+| [Routing](#routing) | [connhandler.go:144](../../../implementation/go/internal/server/connhandler.go#L144) |
+| [Response writing](#response-writing) | [connhandler.go:165](../../../implementation/go/internal/server/connhandler.go#L165) |
+| [Concurrency requirement](#concurrency-requirement) | [connhandler.go:77](../../../implementation/go/internal/server/connhandler.go#L77) |
+| [State machine (per `/ping` StreamTask)](#state-machine-per-ping-streamtask) | [connhandler.go:94](../../../implementation/go/internal/server/connhandler.go#L94) |
+| [Connection close](#connection-close) | [connhandler.go:185](../../../implementation/go/internal/server/connhandler.go#L185), [connhandler.go:204](../../../implementation/go/internal/server/connhandler.go#L204) |
+<!-- trace:end -->

@@ -140,3 +140,31 @@ function handle_cancel(body, config, registry):
 
 `handle_cancel` does not check that `client_id < N`, because the server does not know `N`. An id
 for a client that never connects sits in its inbox and is never drained.
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- File `internal/server/canceltracker.go`.
+- `keys` is `[]atomic.Uint64` and `heads` is `[]atomic.Pointer[inboxNode]`. Go atomics are sequentially consistent, which is stronger than the acquire/release the design requires.
+- The garbage collector frees drained nodes, so there is no explicit `free`. There is still no ABA problem, because nodes are never reused while reachable.
+- `pending` is a `container/heap` min-heap plus a membership `map` for set semantics. `last_completed_id: none` is the flag `hasLastCompleted`. `slot: none` is `-1`.
+- Tests: `canceltracker_test.go` checks the worked examples from the CancelMatching table, concurrent push then drain, a full registry, and `HandleCancel`. `server_test.go` runs end-to-end tests for before, during and RST.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code. Each link points at the first code line after the tag.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [CancelRegistry](#cancelregistry) | [canceltracker.go:16](../../../implementation/go/internal/server/canceltracker.go#L16), [canceltracker.go:35](../../../implementation/go/internal/server/canceltracker.go#L35), [canceltracker.go:44](../../../implementation/go/internal/server/canceltracker.go#L44), [canceltracker.go:59](../../../implementation/go/internal/server/canceltracker.go#L59), [canceltracker_test.go:100](../../../implementation/go/internal/server/canceltracker_test.go#L100) |
+| [CancelInbox](#cancelinbox) | [canceltracker.go:24](../../../implementation/go/internal/server/canceltracker.go#L24), [canceltracker.go:86](../../../implementation/go/internal/server/canceltracker.go#L86), [canceltracker.go:106](../../../implementation/go/internal/server/canceltracker.go#L106), [canceltracker_test.go:77](../../../implementation/go/internal/server/canceltracker_test.go#L77) |
+| [CancelMatching](#cancelmatching) | [canceltracker.go:157](../../../implementation/go/internal/server/canceltracker.go#L157), [canceltracker.go:195](../../../implementation/go/internal/server/canceltracker.go#L195), [canceltracker_test.go:28](../../../implementation/go/internal/server/canceltracker_test.go#L28), [canceltracker_test.go:68](../../../implementation/go/internal/server/canceltracker_test.go#L68) |
+| [CancelCounters](#cancelcounters) | [canceltracker.go:124](../../../implementation/go/internal/server/canceltracker.go#L124), [canceltracker.go:133](../../../implementation/go/internal/server/canceltracker.go#L133) |
+| [handle_cancel](#handle_cancel) | [canceltracker.go:217](../../../implementation/go/internal/server/canceltracker.go#L217), [canceltracker_test.go:119](../../../implementation/go/internal/server/canceltracker_test.go#L119) |
+<!-- trace:end -->

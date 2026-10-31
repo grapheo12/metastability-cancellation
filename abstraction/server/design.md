@@ -94,3 +94,31 @@ sends `GOAWAY`, stops reading, and drops its queued tasks. A burn that is runnin
 interrupted (in `ignore` mode the process exits when the burn finishes, or the OS ends it). Once
 every handler has returned, the server prints the CancelCounters line
 ([api.md#cancelcounters-output](api.md#cancelcounters-output)) and exits `0`.
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- One Go package `internal/server` for the whole subtree. Each subcomponent is one file: `config.go`, `listener.go`, `connhandler.go`, `pinghandler.go`, `cpuburner.go`, `canceltracker.go`. Separate packages would form import cycles (`StreamTask`/`Response` are shared by the handler, the ping handler and the tracker).
+- `ServerConfig` is `server.Config`. The raw flags are `server.Params`, parsed by `cmd/server/main.go` with the standard `flag` package (`--name value`).
+- HTTP/2: `golang.org/x/net/http2.Server.ServeConn` on connections accepted by our own `net.Listener` loop, so the Listener matches the design exactly. h2c with prior knowledge is ServeConn's default when no TLS is present.
+- GOAWAY on shutdown: a `net/http.Server` configured with `http2.ConfigureServer` is passed as `ServeConnOpts.BaseConfig`. Its `Shutdown` hook makes every connection send GOAWAY. This is best effort, because sockets are then closed.
+- The CancelCounters line is printed with `fmt.Printf` after `sync.WaitGroup.Wait()` over all connection handlers.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code. Each link points at the first code line after the tag.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [Structure](#structure) | [listener.go:23](../../implementation/go/internal/server/listener.go#L23) |
+| [Configuration validation](#configuration-validation) | [config.go:32](../../implementation/go/internal/server/config.go#L32), [config.go:64](../../implementation/go/internal/server/config.go#L64) |
+| [Listener](#listener) | [listener.go:41](../../implementation/go/internal/server/listener.go#L41), [listener.go:72](../../implementation/go/internal/server/listener.go#L72) |
+| [Cancellation semantics](#cancellation-semantics) | [pinghandler.go:23](../../implementation/go/internal/server/pinghandler.go#L23), [server_test.go:66](../../implementation/go/internal/server/server_test.go#L66) |
+| [Shutdown](#shutdown) | [listener.go:120](../../implementation/go/internal/server/listener.go#L120) |
+<!-- trace:end -->

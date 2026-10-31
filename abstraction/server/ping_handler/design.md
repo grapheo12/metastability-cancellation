@@ -83,3 +83,30 @@ arrive in increasing order, so `last_completed_id` only grows. CancelMatching us
 | `202` | Burn completed | PaddedJsonBody of `response_bytes` |
 | `503` | `/cancel` matched at check point 1 or 2 | PaddedJsonBody of `response_bytes` |
 | `400` | Unparseable body or client id mismatch | empty |
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- File `internal/server/pinghandler.go`, function `handlePing`. `cancel_ctx` is the struct `cancelContext`.
+- `id_check` is a Go closure over the connection's state and the request id, passed to `Burn`.
+- Counters are incremented with `atomic.Uint64.Add(1)`.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code. Each link points at the first code line after the tag.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [handle_ping](#handle_ping) | [pinghandler.go:23](../../../implementation/go/internal/server/pinghandler.go#L23) |
+| [Client binding](#client-binding) | [pinghandler.go:32](../../../implementation/go/internal/server/pinghandler.go#L32) |
+| [Sampling order](#sampling-order) | [pinghandler.go:40](../../../implementation/go/internal/server/pinghandler.go#L40) |
+| [CancelCheckPoints](#cancelcheckpoints) | [pinghandler.go:46](../../../implementation/go/internal/server/pinghandler.go#L46) |
+| [last_completed_id](#last_completed_id) | [pinghandler.go:66](../../../implementation/go/internal/server/pinghandler.go#L66) |
+| [Response status](#response-status) | [pinghandler.go:69](../../../implementation/go/internal/server/pinghandler.go#L69) |
+<!-- trace:end -->
