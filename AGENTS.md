@@ -45,6 +45,7 @@ Stick to this folder structure:
 |- implementation
    |- <lang>
       |- <typical folder structure for lang>
+   |- <shared tool>        # e.g. spec_tools, scripts; see "Shared tooling"
 ```
 
 The `impl/<lang>` branches will have the full structure. `main` should only have `abstraction/`.
@@ -56,21 +57,48 @@ These links are a bidirectional traceability contract: every future design or im
 The code → design direction is written by hand as tags. The design → code direction is generated from those tags by `tracegen` ([Traceability generator (tracegen)](#traceability-generator-tracegen)), never edited by hand.
 
 
+# Shared tooling
+
+**Shared tooling** is code that serves every implementation instead of realizing one: build and traceability tools,
+benchmark runners, and the like. These rules hold whatever language a tool is written in.
+
+- **Location.** Each shared tool lives in its own directory directly under `implementation/`
+  (`implementation/<tool>/`), next to and never inside the `implementation/<lang>/` directories.
+- **One tooling language per tool.** Each tool is written in a single language, its *tooling language*, chosen once
+  and the same on every branch. The tool's entry file header names that language. This is the only exception to
+  "never two language implementations on the same branch".
+- **Identical everywhere.** Every `impl/<lang>` branch carries an identical copy of every shared tool. `main` never
+  has one, because `main` holds only `abstraction/` and `AGENTS.md`. An agent starting a new `impl/<lang>` branch
+  copies all shared tools from an existing impl branch first.
+- **Changes.** A change to a shared tool goes in its own `[impl]` commit, separate from any language implementation
+  change, and is backported to every `impl/<lang>` branch, the same way `AGENTS.md` changes are.
+- **`.gitignore`.** Each tool directory starts with the full `.gitignore` for its tooling language, before any other
+  file.
+- **Specs.** A tool that implements a component of the system (e.g. a benchmark runner) is specified in
+  `abstraction/` like any other component, without naming its tooling language. On every impl branch, that
+  component's `design.md` files carry a `## Design specific to <tooling language>` section, maintained with tracegen
+  (`--lang <tooling language> --impl implementation/<tool>`). Tools that only serve the process, such as tracegen and
+  linkcheck, are specified in this file instead.
+- **Language hooks.** When a shared tool needs something language-specific from an implementation (e.g. how to build
+  it), its spec defines a declarative contract, and each `implementation/<lang>/` provides a file fulfilling it. A
+  shared tool never hard-codes an implementation language.
+
+Current shared tools:
+
+| Tool | Directory | Tooling language | Spec |
+|---|---|---|---|
+| spec_tools (tracegen, linkcheck) | `implementation/spec_tools/` | Python 3, standard library only | [tracegen](#traceability-generator-tracegen), [linkcheck](#link-checker-linkcheck) |
+
+
 # Traceability generator (tracegen)
 
-`tracegen` is a single **Python 3 (standard library only)** tool shared by every implementation. It lives at
-`implementation/tracegen/tracegen.py`, next to (not inside) the `implementation/<lang>/` directories, together with its
-tests and the full `Python.gitignore`. This section is its spec.
+`tracegen` is part of the shared tool `implementation/spec_tools/` ([Shared tooling](#shared-tooling)). This
+section is its spec.
 
-- Every `impl/<lang>` branch carries an **identical** copy of `implementation/tracegen/`. An agent starting a new
-  `impl/<lang>` branch copies it from an existing impl branch before writing the `Design specific to <lang>` sections.
-  `main` never has it, because `main` holds only `abstraction/`.
-- A change to `tracegen` goes in its own `[impl]` commit and is backported to every `impl/<lang>` branch, the same way
-  `AGENTS.md` changes are.
-- The language is chosen with command-line options, so no language-specific copy is ever written:
-  `python3 implementation/tracegen/tracegen.py --lang <Lang> --ext <source extension> --comment <line-comment prefix> [--write]`,
-  run from the repository root. The implementation directory defaults to `implementation/<lang in lowercase>`.
-  `--ext` may be repeated.
+- The implementation language is chosen with command-line options, so one copy serves every implementation:
+  `python3 implementation/spec_tools/tracegen.py --lang <Lang> --ext <source extension> --comment <line-comment prefix> [--impl <dir>] [--write]`,
+  run from the repository root. The implementation directory defaults to `implementation/<lang in lowercase>`, and
+  `--impl` points it at a shared tool's directory instead. `--ext` may be repeated.
 - The tool is a build tool: it carries no `Design:` tags itself, and its file header cites this section as its source.
 
 ## Tags in code
@@ -146,10 +174,38 @@ The output must be deterministic: the same tree always gives byte-identical tabl
 - Run `tracegen` in write mode after every implementation change, then in check mode. Check mode must report `OK`
   before committing. Exit status: `0` OK, `1` problems reported, `2` usage or I/O error.
 - Each `Design specific to <Lang>` section states the exact `tracegen` command for its language (e.g. for Go:
-  `python3 implementation/tracegen/tracegen.py --lang Go --ext .go --comment // --write`).
+  `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`).
 - A spec change that adds, renames or removes a design subsection makes check mode fail on the impl branches
   (UNCOVERED or UNKNOWN ANCHOR) until the code tags follow. That is the intended signal that the implementation is
   behind the spec.
+
+
+# Link checker (linkcheck)
+
+`linkcheck` is part of the shared tool `implementation/spec_tools/` ([Shared tooling](#shared-tooling)). It shares
+the anchor slug rule with tracegen. This section is its spec.
+
+- **Command:** `python3 implementation/spec_tools/linkcheck.py [--root <repo root>] [<path> ...]`, run from the
+  repository root. The default paths are `abstraction/` and `AGENTS.md`. A directory means every `.md` file under it.
+- **Which links:** every inline Markdown link `[text](target)` in the checked files, except links inside fenced code
+  blocks (lines between a pair of ```` ``` ```` fences) and inside inline code spans. Targets that start with `http://`,
+  `https://` or `mailto:` are skipped.
+- **Rules**, with paths resolved relative to the file containing the link:
+
+| Target form | Must hold | Problem reported |
+|---|---|---|
+| `path` | the file or directory exists | `MISSING FILE` |
+| `path.md#anchor` | the file exists and one of its headings (any level, outside code fences) slugs to `anchor` | `MISSING FILE` / `MISSING ANCHOR` |
+| `#anchor` | a heading of the same file slugs to `anchor` | `MISSING ANCHOR` |
+| `path#L<n>` (path not `.md`) | the file exists and has at least `n` lines | `MISSING FILE` / `LINE OUT OF RANGE` |
+| `path#other` (path not `.md`) | the file exists; the fragment is not checked | `MISSING FILE` |
+
+- **Output:** one line per problem, `<PROBLEM> <file containing the link>: <target>`, in file order and then line
+  order. Then `OK` or `PROBLEMS`. Exit status: `0` OK, `1` problems reported, `2` usage or I/O error.
+- **When to run:** as part of the [Spec self-check before committing](#spec-self-check-before-committing), and on
+  impl branches together with tracegen check mode. `main` does not carry spec_tools, so spec work on `main` runs
+  linkcheck from an impl branch checkout (for example a `git worktree`) against the `main` working tree with
+  `--root`.
 
 
 # Spec writing style
@@ -221,7 +277,7 @@ A table of Version | Last modified (UTC, ISO-8601) | Summary, with the newest ro
 
 ## Spec self-check before committing
 
-- Every relative link and anchor resolves (check it with a script, not by eye).
+- Every relative link and anchor resolves: [linkcheck](#link-checker-linkcheck) reports `OK`.
 - Names, units, defaults and constraints are the same from parent to child and from `api.md` to `design.md`.
 - Every `api.md` item has a design anchor. Every child's `api.md` covers what its parent's `design.md` asks of it.
 - Every worked example has been recomputed.
@@ -305,7 +361,7 @@ Definitions used below:
 - **Spec part** of a file in `abstraction/`: the whole file, except that in a `design.md` it is everything before
   `## Design specific to <Lang>`. That section is always the **last** section of a `design.md` and exists only on
   `impl/<lang>` branches.
-- **Spec checks:** relative links and anchors resolve, and the
+- **Spec checks:** [linkcheck](#link-checker-linkcheck) reports `OK`, and the
   [Spec self-check before committing](#spec-self-check-before-committing) holds.
 
 ## `sync_spec`
@@ -363,5 +419,10 @@ never changes the spec part of `abstraction/`.
 
    A spec change that needs no code change (for example a wording or style fix) still gets its annotation bump, its
    tracegen and test run, and its own commit.
-4. **Final check.** No `Source:` annotation is older than its `version.md`, tracegen check mode reports `OK`, the
-   build and tests pass, and the spec parts of `abstraction/` match `main`.
+
+   Components realized by a shared tool ([Shared tooling](#shared-tooling)) are handled the same way, with
+   `<Lang>` = the tooling language and the code in `implementation/<tool>/`. Their `[impl]` commits touch only the
+   shared tool and must then be backported to every other `impl/<lang>` branch.
+4. **Final check.** No `Source:` annotation is older than its `version.md`, tracegen check mode reports `OK` for the
+   branch language and for every shared tool that realizes a component, linkcheck reports `OK`, the build and tests
+   pass, and the spec parts of `abstraction/` match `main`.
