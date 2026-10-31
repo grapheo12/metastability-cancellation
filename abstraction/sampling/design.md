@@ -110,3 +110,31 @@ Worked examples:
 | 1 | 4 | 4 | 0 | Power of two: never rejects, result `1 + (x mod 4)` |
 | 0 | 2 | 3 | 1 | `2^64 mod 3 = 1`: rejects only `x = 0` |
 | 0 | 0 | 1 | 0 | Always returns `0` and still uses one draw |
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- Package `internal/sampling`. `Rng` is a struct holding `[4]uint64`. Go's `uint64` arithmetic wraps modulo 2^64, as the design requires.
+- `rotl` is `math/bits.RotateLeft64`. `ln` is `math.Log`. Rounding is `math.Floor(x + 0.5)`.
+- The `exponential_*` and `uniform_int` functions are methods on `*Rng` (`rng.ExponentialNs(rate)` and so on).
+- Tests: `sampling_test.go` covers the xoshiro256** reference step (state {1,2,3,4} → 11520), determinism, `UniformInt` range and threshold examples, and the exponential mean.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code. Each link points at the first code line after the tag.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [SplitMix64](#splitmix64) | [sampling.go:20](../../implementation/go/internal/sampling/sampling.go#L20), [sampling.go:25](../../implementation/go/internal/sampling/sampling.go#L25), [sampling.go:32](../../implementation/go/internal/sampling/sampling.go#L32) |
+| [SeedDerivation](#seedderivation) | [sampling.go:40](../../implementation/go/internal/sampling/sampling.go#L40), [sampling_test.go:19](../../implementation/go/internal/sampling/sampling_test.go#L19) |
+| [Generator](#generator) | [sampling.go:48](../../implementation/go/internal/sampling/sampling.go#L48), [sampling.go:55](../../implementation/go/internal/sampling/sampling.go#L55), [sampling.go:67](../../implementation/go/internal/sampling/sampling.go#L67), [sampling_test.go:10](../../implementation/go/internal/sampling/sampling_test.go#L10) |
+| [Uniform](#uniform) | [sampling.go:83](../../implementation/go/internal/sampling/sampling.go#L83) |
+| [ExponentialSampler](#exponentialsampler) | [sampling.go:90](../../implementation/go/internal/sampling/sampling.go#L90), [sampling.go:98](../../implementation/go/internal/sampling/sampling.go#L98), [sampling.go:105](../../implementation/go/internal/sampling/sampling.go#L105), [sampling_test.go:57](../../implementation/go/internal/sampling/sampling_test.go#L57) |
+| [UniformIntSampler](#uniformintsampler) | [sampling.go:113](../../implementation/go/internal/sampling/sampling.go#L113), [sampling_test.go:32](../../implementation/go/internal/sampling/sampling_test.go#L32) |
+<!-- trace:end -->
