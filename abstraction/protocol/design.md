@@ -5,28 +5,41 @@
 A RequestId is an unsigned 64-bit integer:
 
 ```
-bits 63..32 : seq        (u32) per-client counter, starts at 0, +1 for each scheduled arrival
-bits 31..0  : client_id  (u32) index of the client, 0 ..= N-1
+bits 63..32 : client_id  (u32) index of the client, 0 ..= N-1
+bits 31..0  : seq        (u32) per-client counter, starts at 0, +1 for each scheduled arrival
 ```
 
 ```
 function make_request_id(seq, client_id):
-    return (seq << 32) | client_id          # all arithmetic is on unsigned 64-bit
+    return (client_id << 32) | seq          # all arithmetic is on unsigned 64-bit
 
 function split_request_id(id):
-    return (id >> 32, id & 0xFFFFFFFF)
+    return (id & 0xFFFFFFFF, id >> 32)      # (seq, client_id)
 ```
 
-In JSON the id is written as a **decimal string** (for example `"4294967299"`), never as a JSON
+Because the client id is in the high bits and `seq` only goes up, the ids sent by one client
+increase monotonically.
+
+A RequestId in a `/cancel` is **valid** if it follows this layout. Its `seq` half need not
+correspond to a request that was or will be sent.
+
+In JSON the id is written as a **decimal string** (for example `"12884901889"`), never as a JSON
 number, because values above 2^53 lose precision in many JSON libraries. The decimal form has no
 leading zeros, no sign, and between 1 and 20 digits.
 
-Worked example: `seq = 1`, `client_id = 3` gives `id = 4294967296 + 3 = 4294967299`.
+Worked examples:
+
+| client_id | seq | id | check |
+|---|---|---|---|
+| 0 | 0 | `0` | 0 · 2^32 + 0 |
+| 0 | 7 | `7` | 0 · 2^32 + 7 |
+| 3 | 1 | `12884901889` | 3 · 4294967296 + 1 = 12884901888 + 1 |
+| 4294967295 | 4294967295 | `18446744073709551615` | the largest u64 |
 
 ## PaddedJsonBody
 
-Request and response bodies use the same exact serialization. There is no whitespace, the keys
-appear in this order, and everything is ASCII:
+`/ping` request and response bodies use the same exact serialization. There is no whitespace, the
+keys appear in this order, and everything is ASCII:
 
 ```
 {"id":"<DEC>","payload":"<PAD>"}
@@ -57,7 +70,7 @@ Worked examples:
 | id | `len(dec)` | total_bytes | k | check |
 |---|---|---|---|---|
 | `0` | 1 | 128 | 105 | 22 + 1 + 105 = 128 |
-| `4294967299` | 10 | 128 | 96 | 22 + 10 + 96 = 128 |
+| `12884901889` | 11 | 128 | 95 | 22 + 11 + 95 = 128 |
 | `18446744073709551615` (max) | 20 | 42 | 0 | 22 + 20 + 0 = 42 |
 
 ## Minimum body size
@@ -71,10 +84,26 @@ function validate_body_size(total_bytes):
     return ok
 ```
 
+## CancelBody
+
+A `/cancel` request body is not padded:
+
+```
+{"id":"<DEC>"}
+```
+
+```
+function build_cancel_body(id):
+    return "{\"id\":\"" + decimal_string(id) + "\"}"
+```
+
+Its length is `9 + len(dec)` bytes (`{"id":"` is 7, `"}` is 2). For example, id `12884901889` gives
+20 bytes.
+
 ## Parsing
 
-Parsing is lenient. It accepts any valid JSON, not only our exact serialization, so other clients
-can talk to the server.
+Parsing is lenient. It accepts any valid JSON, not only our exact serializations, so other clients
+can talk to the server. The same function parses PaddedJsonBody and CancelBody.
 
 ```
 function parse_body(body):
@@ -88,10 +117,19 @@ function parse_body(body):
     return n                                          # "payload" and other fields are ignored
 ```
 
-## Status classification (client side)
+## Status classification (load-generator client)
 
-| Received | Meaning for the client |
+| Received for `/ping` | Meaning for the client |
 |---|---|
 | `202` with body whose parsed id equals the sent id | success (`ok`) |
-| `503` with body whose parsed id equals the sent id | rejected (`rejected`) |
+| `503` with body whose parsed id equals the sent id | cancelled by the server through `/cancel` (`rejected`) |
 | any other status, unparseable body, or id mismatch | `error` |
+
+## Status classification (load canceller)
+
+| Received for `/cancel` | Meaning for the canceller |
+|---|---|
+| `202` | `accepted` |
+| `503` | `rejected` (registry full) |
+| `400` | `bad_request` |
+| any other status | `error` |
