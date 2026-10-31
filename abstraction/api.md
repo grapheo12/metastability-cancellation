@@ -4,6 +4,9 @@ The system ships as three programs: **server**, **loadgen** and **canceller**. E
 on the command line as `--<parameter_name> <value>`. Invalid or missing required parameters make the
 program exit with a non-zero status and a one-line error message, before any network activity.
 
+A fourth program, **bench** (the Benchmark Runner), runs on an operator machine and drives the other
+three on remote machines. Its interface is in [Benchmark runner](#benchmark-runner).
+
 ## Server parameters
 
 | Parameter | Type / unit | Default | Meaning |
@@ -93,6 +96,20 @@ See [server/api.md](server/api.md#cancelcounters-output). Counter semantics are 
   [load_canceller/design.md#cancelschedule](load_canceller/design.md#cancelschedule) and
   [load_canceller/design.md#summary](load_canceller/design.md#summary).
 
+## Benchmark runner
+
+`bench <command> ...`, with commands:
+
+| Command | Effect |
+|---|---|
+| `bench run <config.toml>` | Setup both machines, run every SweepPoint, then plot |
+| `bench setup <config.toml>` | Setup both machines only |
+| `bench plot <output_dir>` | Rebuild the PointTable and plots from a finished or partial run |
+
+The config format is in [benchmark_runner/config/api.md](benchmark_runner/config/api.md). The output
+directory layout is in [benchmark_runner/api.md](benchmark_runner/api.md#output-directory). Produced by
+[benchmark_runner/design.md](benchmark_runner/design.md#run-flow).
+
 ## Exit status
 
 The load generator and the canceller exit with status `0` after writing their files. They exit
@@ -108,3 +125,4 @@ non-zero if a connection cannot be established at startup. The server's lifecycl
 | Server | [server/api.md](server/api.md) |
 | Load Generator | [load_generator/api.md](load_generator/api.md) |
 | Load Canceller | [load_canceller/api.md](load_canceller/api.md) |
+| Benchmark Runner | [benchmark_runner/api.md](benchmark_runner/api.md) |

@@ -27,6 +27,12 @@ flowchart LR
   S[(Sampling)] -.used by.- C
   S -.used by.- PH
   S -.used by.- CS
+  subgraph OP[Operator machine]
+    BR[Benchmark Runner]
+  end
+  BR ==>|"SSH: setup, start/stop, fetch"| SV
+  BR ==>|"SSH: setup, run, fetch"| LG
+  BR ==>|"SSH: run, fetch"| LC
 ```
 
 | Component | Role | Spec |
@@ -36,10 +42,16 @@ flowchart LR
 | Server | Accepts connections, serves `/ping` with a CPU-bound cost, applies RST and `/cancel` cancellation | [server/description.md](server/description.md) |
 | Load Generator | Simulates N clients, applies SLOCancellation, records latency | [load_generator/description.md](load_generator/description.md) |
 | Load Canceller | Sends `/cancel` requests on a Poisson clock to random clients | [load_canceller/description.md](load_canceller/description.md) |
+| Benchmark Runner | Sets up two machines, runs a parameter sweep of the three programs, downloads and plots results | [benchmark_runner/description.md](benchmark_runner/description.md) |
 
 Protocol and Sampling are shared leaves. Server, Load Generator and Load Canceller all depend on
 them and never on each other. The only coupling between the three programs is the wire contract in
 [api.md](api.md#wire-contract-ping) and [api.md](api.md#wire-contract-cancel).
+
+The Benchmark Runner depends on no other component's internals. It uses only the programs' command-line
+parameters, their output files and the server's `listening on` and CancelCounters lines, all from
+[api.md](api.md). It learns how to build an implementation from that implementation's BuildManifest
+([benchmark_runner/remote_setup/design.md](benchmark_runner/remote_setup/design.md#buildmanifest)).
 
 ## End-to-end flow of one request
 
