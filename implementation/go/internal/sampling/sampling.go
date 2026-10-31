@@ -1,7 +1,7 @@
 // Package sampling provides reproducible, language-independent randomness:
 // SplitMix64 seeding, xoshiro256**, and exponential / uniform-integer samplers.
 //
-// Source: abstraction/sampling/design.md (sampling v0.2.0)
+// Source: abstraction/sampling/design.md (sampling v0.2.1)
 package sampling
 
 import (
