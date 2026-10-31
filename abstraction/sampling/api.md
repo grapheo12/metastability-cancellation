@@ -2,6 +2,8 @@
 
 ## Constants
 
+Kind tags for [design.md#seedderivation](design.md#seedderivation):
+
 | Name | Value | Use |
 |---|---|---|
 | `STREAM_CLIENT_ARRIVALS` | `1` | Kind tag for load-generator client arrival streams |
@@ -11,8 +13,9 @@
 ## Types
 
 ### `Rng`
-Opaque generator state. It is not shared between concurrent activities. Each client, each server
-connection and the canceller own their own `Rng`.
+Opaque generator state (xoshiro256**, 256 bits). It is not shared between concurrent activities.
+Each client, each server connection and the canceller own their own `Rng`. See
+[design.md#generator](design.md#generator).
 
 ## Functions
 
@@ -27,7 +30,7 @@ CancelRegistry). See [design.md#splitmix64](design.md#splitmix64).
 Creates a generator. See [design.md#generator](design.md#generator).
 
 ### `next_u64(rng) -> u64`
-Next raw 64-bit output.
+Next raw 64-bit output. See [design.md#generator](design.md#generator).
 
 ### `next_unit(rng) -> float in [0, 1)`
 Uniform double. See [design.md#uniform](design.md#uniform).
@@ -36,10 +39,12 @@ Uniform double. See [design.md#uniform](design.md#uniform).
 One sample of `Exp(rate)` in seconds. See [design.md#exponentialsampler](design.md#exponentialsampler).
 
 ### `exponential_us(rng, rate) -> integer >= 0`
-`exponential_seconds` rounded to whole microseconds (ServiceTime).
+`exponential_seconds` rounded to whole microseconds (ServiceTime). See
+[design.md#exponentialsampler](design.md#exponentialsampler).
 
 ### `exponential_ns(rng, rate) -> integer >= 0`
-`exponential_seconds` rounded to whole nanoseconds (inter-arrival gaps).
+`exponential_seconds` rounded to whole nanoseconds (inter-arrival gaps). See
+[design.md#exponentialsampler](design.md#exponentialsampler).
 
 ### `uniform_int(rng, lo: u64, hi: u64) -> u64 in [lo, hi]`
 Unbiased integer from the closed range. Precondition: `lo <= hi`. It may use more than one
