@@ -32,6 +32,7 @@ function derive_seed(base_seed, kind, index):
 - Server connection number `c` (accept order, starting at 0) uses
   `derive_seed(seed, STREAM_SERVER_CONNECTION, c)`. Server reproducibility therefore depends on
   connections being accepted in the same order.
+- The load canceller uses `derive_seed(seed, STREAM_CANCELLER, 0)`.
 
 ## Generator
 
@@ -80,3 +81,32 @@ function exponential_ns(rng, rate):
 
 Each call uses exactly **one** `next_u64`. Callers must sample in a fixed order (see the
 callers' designs) so that sequences are reproducible.
+
+## UniformIntSampler
+
+Rejection sampling over the full 64-bit output. It is unbiased for every range. Arithmetic is on
+unsigned 64-bit, wrapping, and `mod` is the unsigned remainder.
+
+```
+function uniform_int(rng, lo, hi):
+    range = hi - lo + 1                     # wraps to 0 when [lo, hi] is all of u64
+    if range == 0:
+        return next_u64(rng)
+    threshold = (0 - range) mod range       # equals 2^64 mod range
+    loop:
+        x = next_u64(rng)
+        if x >= threshold:
+            return lo + (x mod range)
+```
+
+The accepted values `[threshold, 2^64)` number `2^64 - (2^64 mod range)`, which is a multiple of
+`range`, so every result is equally likely. Each call uses **one or more** `next_u64` draws. The
+expected number is below 2.
+
+Worked examples:
+
+| lo | hi | range | threshold | Note |
+|---|---|---|---|---|
+| 1 | 4 | 4 | 0 | Power of two: never rejects, result `1 + (x mod 4)` |
+| 0 | 2 | 3 | 1 | `2^64 mod 3 = 1`: rejects only `x = 0` |
+| 0 | 0 | 1 | 0 | Always returns `0` and still uses one draw |

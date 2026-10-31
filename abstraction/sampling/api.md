@@ -6,17 +6,22 @@
 |---|---|---|
 | `STREAM_CLIENT_ARRIVALS` | `1` | Kind tag for load-generator client arrival streams |
 | `STREAM_SERVER_CONNECTION` | `2` | Kind tag for server per-connection ServiceTime streams |
+| `STREAM_CANCELLER` | `3` | Kind tag for the load canceller's single stream (index `0`) |
 
 ## Types
 
 ### `Rng`
-Opaque generator state. It is not shared between concurrent activities. Each client and each
-server connection owns its own `Rng`.
+Opaque generator state. It is not shared between concurrent activities. Each client, each server
+connection and the canceller own their own `Rng`.
 
 ## Functions
 
 ### `derive_seed(base_seed: u64, kind: u32, index: u32) -> u64`
 Deterministic per-stream seed. See [design.md#seedderivation](design.md#seedderivation).
+
+### `mix64(z: u64) -> u64`
+SplitMix64 finalizer. A bijective 64-bit mixer, also used for hashing (e.g. by the server's
+CancelRegistry). See [design.md#splitmix64](design.md#splitmix64).
 
 ### `rng_new(seed: u64) -> Rng`
 Creates a generator. See [design.md#generator](design.md#generator).
@@ -35,3 +40,7 @@ One sample of `Exp(rate)` in seconds. See [design.md#exponentialsampler](design.
 
 ### `exponential_ns(rng, rate) -> integer >= 0`
 `exponential_seconds` rounded to whole nanoseconds (inter-arrival gaps).
+
+### `uniform_int(rng, lo: u64, hi: u64) -> u64 in [lo, hi]`
+Unbiased integer from the closed range. Precondition: `lo <= hi`. It may use more than one
+`next_u64`. See [design.md#uniformintsampler](design.md#uniformintsampler).
