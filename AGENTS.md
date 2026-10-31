@@ -1,3 +1,5 @@
+<!-- (c) Shubham Mishra and Fuzzy Contract Developers, 2026 -->
+
 This is an experiment in writing code completely in Natural Language.
 The aim is to have a set of markdown files describing a problem to solve.
 And treat them as code. Instead of code in programming languages as code.
