@@ -40,3 +40,28 @@ merged only after every client has returned. Timers and sleeps must use the same
 4. **Teardown:** close connections, aggregate, write files.
 
 Details: [run_controller/design.md](run_controller/design.md).
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- One Go package `internal/loadgen`: `config.go` (`LoadGenConfig`, time base), `client.go`, `metrics.go`, `runcontroller.go`. Flags are parsed in `cmd/loadgen/main.go`.
+- Shared h2c dialing is in `internal/h2client` (also used by the canceller).
+- Each client is a goroutine. Timestamps are `int64` nanoseconds from `time.Since(runStart)`, which is monotonic.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code. Each link points at the first code line after the tag.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [Structure](#structure) | [runcontroller.go:78](../../implementation/go/internal/loadgen/runcontroller.go#L78) |
+| [Time base](#time-base) | [config.go:49](../../implementation/go/internal/loadgen/config.go#L49), [config.go:56](../../implementation/go/internal/loadgen/config.go#L56) |
+| [Concurrency](#concurrency) | [runcontroller.go:92](../../implementation/go/internal/loadgen/runcontroller.go#L92) |
+| [Phases](#phases) | [runcontroller.go:78](../../implementation/go/internal/loadgen/runcontroller.go#L78) |
+<!-- trace:end -->

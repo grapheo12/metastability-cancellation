@@ -100,3 +100,32 @@ stateDiagram-v2
   Recording_not_sent --> [*]: next t_sched >= D
   Waiting --> [*]: first t_sched >= D
 ```
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- File `internal/loadgen/client.go`.
+- Each client owns an `*h2client.Conn` that wraps one `http2.ClientConn` (one TCP connection, never pooled).
+- `wait_first_of` is a `select` between a 1-buffered result channel and a `time.Timer` set to `t_send + SLO`. The goroutine runs `RoundTrip` and reads the body to EOF (END_STREAM).
+- The `reset(RST_CODE_CANCEL)` call is a cancelled request context. x/net/http2 then sends `RST_STREAM(CANCEL)` for the open stream, and the abandoned goroutine ends by itself.
+- Schedule times saturate at `math.MaxInt64` (`addGap`) instead of overflowing.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code. Each link points at the first code line after the tag.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [ClosedLoopPoissonClient](#closedlooppoissonclient) | [client.go:35](../../../implementation/go/internal/loadgen/client.go#L35) |
+| [GatedArrival](#gatedarrival) | [client.go:45](../../../implementation/go/internal/loadgen/client.go#L45) |
+| [send_one](#send_one) | [client.go:69](../../../implementation/go/internal/loadgen/client.go#L69) |
+| [SLOCancellation](#slocancellation) | [client.go:95](../../../implementation/go/internal/loadgen/client.go#L95) |
+| [Outcome classification](#outcome-classification) | [client.go:118](../../../implementation/go/internal/loadgen/client.go#L118), [metrics_test.go:36](../../../implementation/go/internal/loadgen/metrics_test.go#L36) |
+| [State machine](#state-machine) | [client.go:35](../../../implementation/go/internal/loadgen/client.go#L35) |
+<!-- trace:end -->

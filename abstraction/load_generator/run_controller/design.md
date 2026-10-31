@@ -58,3 +58,28 @@ sent are recorded as `not_sent` by the client.
 1. All clients have returned (no stream is in use any more).
 2. Send `GOAWAY` and close each connection. Errors here are ignored.
 3. Aggregate and write the outputs. A write failure exits non-zero.
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- File `internal/loadgen/runcontroller.go`: `Validate` and `Run` (the `main` of the design, minus flag parsing).
+- `open_h2c_connection` is `h2client.Dial`. It does TCP dial, `Transport{AllowHTTP: true}.NewClientConn`, then a `Ping` round trip, so the server has accepted the connection and SETTINGS are exchanged before the next client dials. This keeps the server's accept order equal to client-id order.
+- `join` is a `sync.WaitGroup`. `GOAWAY + close` is `ClientConn.Shutdown` with a 10 ms bound, then `Close`.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code. Each link points at the first code line after the tag.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [Configuration validation](#configuration-validation) | [runcontroller.go:20](../../../implementation/go/internal/loadgen/runcontroller.go#L20) |
+| [Startup](#startup) | [h2client.go:28](../../../implementation/go/internal/h2client/h2client.go#L28), [runcontroller.go:78](../../../implementation/go/internal/loadgen/runcontroller.go#L78) |
+| [DrainPhase](#drainphase) | [runcontroller.go:104](../../../implementation/go/internal/loadgen/runcontroller.go#L104) |
+| [Shutdown ordering](#shutdown-ordering) | [h2client.go:52](../../../implementation/go/internal/h2client/h2client.go#L52), [runcontroller.go:108](../../../implementation/go/internal/loadgen/runcontroller.go#L108) |
+<!-- trace:end -->

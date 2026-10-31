@@ -48,3 +48,29 @@ function latency_stats(values):
 ```
 
 Worked example: `n = 10` gives `p50 = v[4]`, `p90 = v[8]`, `p99 = v[9]`, `p999 = v[9]`.
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- File `internal/loadgen/metrics.go`.
+- Empty CSV fields: `HTTPStatus == 0` means empty, and `Sent == false` blanks `send_ns`, `end_ns` and both latencies.
+- `null` statistics are `*float64` set to `nil`. JSON field order comes from struct field order (`encoding/json`).
+- The percentile rank uses Go `int` arithmetic: `(pMilli*n + 99999) / 100000 - 1`.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code. Each link points at the first code line after the tag.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [RequestRecord](#requestrecord) | [metrics.go:16](../../../implementation/go/internal/loadgen/metrics.go#L16), [metrics.go:141](../../../implementation/go/internal/loadgen/metrics.go#L141) |
+| [Collection](#collection) | [metrics.go:82](../../../implementation/go/internal/loadgen/metrics.go#L82), [metrics_test.go:19](../../../implementation/go/internal/loadgen/metrics_test.go#L19) |
+| [Summary](#summary) | [metrics.go:82](../../../implementation/go/internal/loadgen/metrics.go#L82) |
+| [Percentiles](#percentiles) | [metrics.go:118](../../../implementation/go/internal/loadgen/metrics.go#L118), [metrics_test.go:7](../../../implementation/go/internal/loadgen/metrics_test.go#L7) |
+<!-- trace:end -->
