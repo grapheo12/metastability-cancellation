@@ -7,3 +7,4 @@
 | 0.2.1 | 2026-10-30T00:00:00Z | Child bump: protocol 0.2.0 |
 | 0.2.2 | 2026-10-30T00:00:00Z | Child bump: sampling 0.2.0 |
 | 0.2.3 | 2026-10-30T00:00:00Z | Child bump: server 0.2.0 (new cancel_tracker 0.1.0) |
+| 0.2.4 | 2026-10-30T00:00:00Z | Child bump: load_canceller 0.1.0 (new) |
