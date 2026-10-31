@@ -58,10 +58,20 @@ The code → design direction is written by hand as tags. The design → code di
 
 # Traceability generator (tracegen)
 
-Every `impl/<lang>` branch has its own `tracegen`, written **in that branch's language** and living inside
-`implementation/<lang>/` (e.g. `implementation/go/cmd/tracegen`). This section is its spec. An agent starting a
-new `impl/<lang>` branch implements `tracegen` from it before writing the `Design specific to <lang>` sections.
-The tool is a build tool: it carries no `Design:` tags itself, and its file header cites this section as its source.
+`tracegen` is a single **Python 3 (standard library only)** tool shared by every implementation. It lives at
+`implementation/tracegen/tracegen.py`, next to (not inside) the `implementation/<lang>/` directories, together with its
+tests and the full `Python.gitignore`. This section is its spec.
+
+- Every `impl/<lang>` branch carries an **identical** copy of `implementation/tracegen/`. An agent starting a new
+  `impl/<lang>` branch copies it from an existing impl branch before writing the `Design specific to <lang>` sections.
+  `main` never has it, because `main` holds only `abstraction/`.
+- A change to `tracegen` goes in its own `[impl]` commit and is backported to every `impl/<lang>` branch, the same way
+  `AGENTS.md` changes are.
+- The language is chosen with command-line options, so no language-specific copy is ever written:
+  `python3 implementation/tracegen/tracegen.py --lang <Lang> --ext <source extension> --comment <line-comment prefix> [--write]`,
+  run from the repository root. The implementation directory defaults to `implementation/<lang in lowercase>`.
+  `--ext` may be repeated.
+- The tool is a build tool: it carries no `Design:` tags itself, and its file header cites this section as its source.
 
 ## Tags in code
 
@@ -134,7 +144,9 @@ The output must be deterministic: the same tree always gives byte-identical tabl
 ## When to run
 
 - Run `tracegen` in write mode after every implementation change, then in check mode. Check mode must report `OK`
-  before committing.
+  before committing. Exit status: `0` OK, `1` problems reported, `2` usage or I/O error.
+- Each `Design specific to <Lang>` section states the exact `tracegen` command for its language (e.g. for Go:
+  `python3 implementation/tracegen/tracegen.py --lang Go --ext .go --comment // --write`).
 - A spec change that adds, renames or removes a design subsection makes check mode fail on the impl branches
   (UNCOVERED or UNKNOWN ANCHOR) until the code tags follow. That is the intended signal that the implementation is
   behind the spec.
