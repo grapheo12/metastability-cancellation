@@ -1,50 +1,72 @@
 # HTTP/2 Cancellation Testbed — Description
 
+Components: Protocol, Sampling, Server, Load Generator, Load Canceller.
+
 ## Problem
 
-We want to measure how **client-side request cancellation** affects tail latency and wasted work in a
-CPU-bound HTTP/2 service. Clients have a latency target (SLO). When a request does not come back in
-time, the client gives up on it and resets the stream. What happens next depends on the server: it can
-keep burning CPU on the abandoned request, or it can notice the cancellation and stop. This testbed makes that
-choice a single switch and records per-request latency so the two behaviors can be compared.
+We want to measure how **request cancellation** affects tail latency and wasted work in a CPU-bound
+HTTP/2 service. The testbed covers two cancellation paths:
+
+- **Client-side SLO cancellation.** A client gives up on a request that has not come back within its
+  SLO and resets the stream. The server can keep burning CPU on the abandoned request, or notice the
+  reset and stop.
+- **Server-directed cancellation.** A separate **LoadCanceller** sends `DELETE /cancel` naming a
+  RequestId. The server records it in a global **CancelRegistry**. The worker serving that client
+  checks for cancellations at fixed **CancelCheckPoints** and stops the request if it matches,
+  answering `503`. **CancelCounters** record whether each cancellation landed before processing,
+  during processing, or after the request had already completed.
 
 ## The system in one paragraph
 
 A **Server** accepts HTTP/2 connections and starts one handler (coroutine or thread) per connection.
-It exposes one endpoint, `POST /ping`. For each request it busy-loops on the CPU for a random time drawn
-from an exponential distribution, then answers with a JSON body of a fixed size. A **Load Generator**
-simulates `N` clients, each on its own connection. Every client has its own Poisson arrival clock
-(rate `global_rate / N`) but keeps at most one request outstanding (a gated closed loop). When a
-request goes past its SLO, the client cancels it. The load generator runs for a fixed time, waits
-for in-flight requests to finish, and writes per-request records plus a summary.
+It exposes `POST /ping` and `DELETE /cancel`. For each `/ping` it busy-loops on the CPU for a random
+time drawn from an exponential distribution, then answers `202` (completed) or `503` (cancelled by
+`/cancel`) with a JSON body of a fixed size. A **Load Generator** simulates `N` clients, each on its
+own connection. Every client has its own Poisson arrival clock (rate `global_rate / N`) but keeps at
+most one request outstanding (a gated closed loop), and cancels requests that go past their SLO. A
+**Load Canceller** sends `/cancel` requests on its own Poisson clock from a single sender, choosing
+client ids uniformly at random and advancing a per-client sequence counter by small random steps.
+The load generator writes per-request records plus a summary. The canceller writes per-cancel records
+plus a summary. The server prints its CancelCounters when it shuts down.
 
 ## Goals
 
 - Show the effect of server-side cancellation handling (`ignore` vs `cooperative`) on latency.
+- Show how often server-directed cancellations arrive before, during or after the work they target.
 - Make runs reproducible where possible (seeded randomness, exact body sizes, exact id format).
 - Keep the server's per-request cost a pure, controllable CPU cost.
 
 ## Non-goals
 
-- TLS, HTTP/1.1, or any endpoint other than `/ping`.
-- Server-side metrics collection (v1 measures only from the client side).
-- Load shedding or admission control. The `503` status is reserved in the protocol but never sent in v1.
+- TLS, HTTP/1.1, or any endpoint other than `/ping` and `/cancel`.
+- Server metrics beyond the three CancelCounters.
+- Load shedding or admission control. `503` means only "cancelled by `/cancel`" (or, for `/cancel`
+  itself, "registry full").
 - Distributed load generation across machines.
+- Coordinating the Load Canceller with the Load Generator. The two programs run independently.
 
 ## Glossary (named concepts used across all specs)
 
 | Concept | Meaning | Defined in |
 |---|---|---|
-| **RequestId** | 64-bit id: high 32 bits are the per-client sequence number, low 32 bits are the client id | [protocol/design.md](protocol/design.md#requestid) |
+| **RequestId** | 64-bit id: high 32 bits are the client id, low 32 bits are the per-client sequence number | [protocol/design.md](protocol/design.md#requestid) |
 | **PaddedJsonBody** | JSON body `{"id":..,"payload":..}` padded so its byte length is exact | [protocol/design.md](protocol/design.md#paddedjsonbody) |
+| **CancelBody** | JSON body `{"id":..}` of a `/cancel` request | [protocol/design.md](protocol/design.md#cancelbody) |
 | **ServiceTime** | CPU time per request, `Exp(response_rate)` seconds, in whole microseconds | [sampling/design.md](sampling/design.md#exponentialsampler) |
-| **CooperativeCpuBurn** | Busy loop that checks a cancel flag at a fixed interval | [server/cpu_burner/design.md](server/cpu_burner/design.md#cooperativecpuburn) |
+| **CooperativeCpuBurn** | Busy loop that checks the RST flag on a time interval and `/cancel` every `CHECK_ITER` spin units | [server/cpu_burner/design.md](server/cpu_burner/design.md#cooperativecpuburn) |
 | **SerialStreamWorker** | Per-connection worker that runs requests one at a time in arrival order | [server/connection_handler/design.md](server/connection_handler/design.md#serialstreamworker) |
-| **CancelMode** | Server switch: `ignore` or `cooperative` | [api.md](api.md#server-parameters) |
+| **CancelMode** | Server switch: `ignore` or `cooperative`. Applies to both cancellation paths | [api.md](api.md#server-parameters) |
+| **CancelRegistry** | Global lock-free map from client id to a CancelInbox | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelregistry) |
+| **CancelInbox** | Lock-free multi-producer stack of cancelled RequestIds for one client, drained by its worker | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelinbox) |
+| **CancelMatching** | Per-connection algorithm that matches pending cancel ids against the current request | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelmatching) |
+| **CancelCheckPoint** | A point where the worker consults CancelMatching: before a request starts, and every `CHECK_ITER` spin units during its burn | [server/ping_handler/design.md](server/ping_handler/design.md#cancelcheckpoints) |
+| **CancelCounters** | Server-wide atomic counters: cancelled before processing, cancelled during processing, completed before cancel | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelcounters) |
 | **ClosedLoopPoissonClient** | Client with a Poisson arrival clock and at most one outstanding request | [load_generator/client/design.md](load_generator/client/design.md#closedlooppoissonclient) |
 | **GatedArrival** | A scheduled arrival that must wait for the previous request to resolve | [load_generator/client/design.md](load_generator/client/design.md#gatedarrival) |
 | **SLOCancellation** | Client resets a stream once `slo_ms` has passed since send | [load_generator/client/design.md](load_generator/client/design.md#slocancellation) |
 | **DrainPhase** | Time after `duration_s` when no new requests are sent and in-flight ones resolve | [load_generator/run_controller/design.md](load_generator/run_controller/design.md#drainphase) |
 | **RequestRecord** | One output row per scheduled arrival | [load_generator/metrics/design.md](load_generator/metrics/design.md#requestrecord) |
+| **LoadCanceller** | Single-sender, open-loop Poisson source of `/cancel` requests | [load_canceller/design.md](load_canceller/design.md#cancelschedule) |
+| **CancelTargetChoice** | Uniform client choice plus per-client counter advanced by `[1, INCR_RAND_MAX]` | [load_canceller/design.md](load_canceller/design.md#canceltargetchoice) |
 
 See [api.md](api.md) for the external interface and [design.md](design.md) for the component breakdown.
