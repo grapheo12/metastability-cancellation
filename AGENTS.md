@@ -52,6 +52,91 @@ For `impl/<lang>` branches, the `design.md` at each leaf level component will ha
 The `Design specific to <lang>` section must contain, for every design subsection in that file, a detailed list of links to the implementation files and exact line numbers that realize that subsection.
 Conversely, implementation references must not exist only as a file-level comment. Comments inside the code body, adjacent to the relevant declarations, state transitions, algorithms, or tests, must link to the exact `design.md` subsection from which that code is derived.
 These links are a bidirectional traceability contract: every future design or implementation change must update both directions and keep file names, subsection anchors, and line numbers consistent. A change is incomplete if it leaves either direction stale.
+The code → design direction is written by hand as tags. The design → code direction is generated from those tags by `tracegen` ([Traceability generator (tracegen)](#traceability-generator-tracegen)), never edited by hand.
+
+
+# Traceability generator (tracegen)
+
+Every `impl/<lang>` branch has its own `tracegen`, written **in that branch's language** and living inside
+`implementation/<lang>/` (e.g. `implementation/go/cmd/tracegen`). This section is its spec. An agent starting a
+new `impl/<lang>` branch implements `tracegen` from it before writing the `Design specific to <lang>` sections.
+The tool is a build tool: it carries no `Design:` tags itself, and its file header cites this section as its source.
+
+## Tags in code
+
+- **File header:** `Source: abstraction/<path>/design.md (<component> v<version>)`, written in a comment. This is the
+  version annotation that "Building for future improvements" requires.
+- **Body tags:** a comment line containing `Design: abstraction/<path>/design.md#<anchor>`, placed directly above the
+  declaration, branch, state transition or test that realizes that subsection. Several tag lines may be stacked.
+- A tag **resolves** to the first following line that is neither blank nor a comment. That line number is what gets
+  linked. Tags inside trailing comments on code lines are not recognized.
+- Optional `API: abstraction/<path>/api.md#<anchor>` comments are allowed for documentation. tracegen ignores them.
+
+## Section format in `design.md`
+
+```
+## Design specific to <Lang>
+
+<short header: toolchain, versions, build/test command>
+
+### <Lang> choices
+<hand-written: data structures, libraries, deviations in mechanism (never in behavior) and why>
+
+### Traceability
+<one sentence naming the tool and the regenerate command>
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [<heading>](#<anchor>) | [<file basename>:<line>](<path from this design.md to repo root>/<file path from root>#L<line>), ... |
+<!-- trace:end -->
+```
+
+There is one row per `## ` heading that appears **before** `## Design specific to <Lang>`, in document order. Links in
+a row are sorted by (file path, line) with duplicates removed.
+
+## Algorithm
+
+```
+inputs: repo root, impl dir (implementation/<lang>), Lang, source extension, line-comment prefix, mode (check | write)
+
+refs = map (design path, anchor) -> list of (file path from root, line)
+for each source file under impl dir with the extension:
+    pending = []
+    for each line n (1-based), s = line with surrounding whitespace removed:
+        if s starts with the comment prefix and contains a Design tag:
+            pending.append((design path, anchor)); continue
+        if pending not empty and s is not empty and s does not start with the comment prefix:
+            for k in pending: refs[k].append((file, n))
+            pending = []
+
+designs = every design.md under abstraction/ that contains "## Design specific to <Lang>",
+          plus every design path named by a tag
+for each design in sorted(designs):
+    spec_part = text before "## Design specific to <Lang>"
+    headings  = the "## " headings of spec_part, in order
+    report UNKNOWN ANCHOR for each tagged anchor of this design that no heading has
+    report UNCOVERED for each heading with no refs
+    table = rows as in Section format
+    if the section or either marker is missing: report NO SECTION; continue
+    updated = text with everything between the markers replaced by table
+    if updated != text: in write mode save it, in check mode report STALE
+print OK, or PROBLEMS and exit non-zero if anything was reported
+```
+
+**Anchor slug** (GitHub rules): lowercase the heading, delete every character that is not a letter, a digit, `_`, `-`
+or a space, then replace each space with `-`. For example, ``State machine (per `/ping` StreamTask)`` becomes
+`state-machine-per-ping-streamtask`.
+
+The output must be deterministic: the same tree always gives byte-identical tables.
+
+## When to run
+
+- Run `tracegen` in write mode after every implementation change, then in check mode. Check mode must report `OK`
+  before committing.
+- A spec change that adds, renames or removes a design subsection makes check mode fail on the impl branches
+  (UNCOVERED or UNKNOWN ANCHOR) until the code tags follow. That is the intended signal that the implementation is
+  behind the spec.
 
 
 # Spec writing style
