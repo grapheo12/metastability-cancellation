@@ -2,7 +2,9 @@
 # Any program parameter given as an array is swept; the run covers the cross product.
 
 [repo]
-url = "git@github.com:<you>/cancellation.git"   # defaults to the origin remote of this checkout
+# Defaults to this checkout's origin remote. Both machines clone from it, so they need read access:
+# a GitHub SSH key on each machine for this URL, or the https:// URL if the repository is public.
+url = "git@github.com:grapheo12/metastability-cancellation.git"
 
 [machines.server]
 host = "10.0.0.5"            # or "local"
