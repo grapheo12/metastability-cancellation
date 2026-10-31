@@ -1,7 +1,7 @@
 // Package protocol implements the /ping and /cancel wire formats shared by
 // the server, the load generator and the load canceller.
 //
-// Source: abstraction/protocol/design.md (protocol v0.2.0)
+// Source: abstraction/protocol/design.md (protocol v0.2.1)
 package protocol
 
 import (
