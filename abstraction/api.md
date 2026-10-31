@@ -76,17 +76,35 @@ details are in [protocol/api.md](protocol/api.md).
 ### Server outputs
 On shutdown, the server prints one line to standard output:
 `{"cancelled_before_processing":<u64>,"cancelled_during_processing":<u64>,"completed_before_cancel":<u64>}`.
-See [server/api.md](server/api.md#cancelcounters-output).
+See [server/api.md](server/api.md#cancelcounters-output). Counter semantics are in
+[server/cancel_tracker/design.md#cancelcounters](server/cancel_tracker/design.md#cancelcounters).
 
 ### Load generator outputs
 - `<output_path>.requests.csv`: one RequestRecord per scheduled arrival. Columns are in
   [load_generator/metrics/api.md](load_generator/metrics/api.md#requests-csv).
 - `<output_path>.summary.json`: outcome counts, rates and latency percentiles. Fields are in
   [load_generator/metrics/api.md](load_generator/metrics/api.md#summary-json).
+- Both are produced by [load_generator/metrics/design.md#collection](load_generator/metrics/design.md#collection)
+  and [load_generator/metrics/design.md#summary](load_generator/metrics/design.md#summary).
 
 ### Canceller outputs
 - `<output_path>.cancels.csv` and `<output_path>.summary.json`. Formats are in
-  [load_canceller/api.md](load_canceller/api.md#outputs).
+  [load_canceller/api.md](load_canceller/api.md#outputs). Produced by
+  [load_canceller/design.md#cancelschedule](load_canceller/design.md#cancelschedule) and
+  [load_canceller/design.md#summary](load_canceller/design.md#summary).
+
+## Exit status
 
 The load generator and the canceller exit with status `0` after writing their files. They exit
-non-zero if a connection cannot be established at startup.
+non-zero if a connection cannot be established at startup. The server's lifecycle is in
+[server/api.md#lifecycle](server/api.md#lifecycle).
+
+## Components
+
+| Component | API |
+|---|---|
+| Protocol | [protocol/api.md](protocol/api.md) |
+| Sampling | [sampling/api.md](sampling/api.md) |
+| Server | [server/api.md](server/api.md) |
+| Load Generator | [load_generator/api.md](load_generator/api.md) |
+| Load Canceller | [load_canceller/api.md](load_canceller/api.md) |
