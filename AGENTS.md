@@ -48,6 +48,7 @@ Stick to this folder structure:
 ```
 
 The `impl/<lang>` branches will have the full structure. `main` should only have `abstraction/`.
+For every `implementation/<lang>`, first add the full `<lang>.gitignore` (likely download from Github), before any other file in that directory.
 For `impl/<lang>` branches, the `design.md` at each leaf level component will have an added `Design specific to <lang>` section, which is to be filled in before an agent touches the actual code.
 The `Design specific to <lang>` section must contain, for every design subsection in that file, a detailed list of links to the implementation files and exact line numbers that realize that subsection.
 Conversely, implementation references must not exist only as a file-level comment. Comments inside the code body, adjacent to the relevant declarations, state transitions, algorithms, or tests, must link to the exact `design.md` subsection from which that code is derived.
@@ -278,3 +279,5 @@ The structure of a commit should be:
 
 Co-authored by: <Agent name>
 ```
+
+Any changes to AGENTS.md will be done on a separate commit and will be backported to main and all other branches.
