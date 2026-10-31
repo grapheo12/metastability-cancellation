@@ -2,11 +2,12 @@
 """tracegen: fill and check the traceability tables of every
 "Design specific to <Lang>" section from the "Design:" tags in the code.
 
+Tooling language: Python 3, standard library only (shared tool implementation/spec_tools).
 Source: AGENTS.md#traceability-generator-tracegen
 
 Usage (from the repository root):
-    python3 implementation/tracegen/tracegen.py --lang Go --ext .go --comment //          # check
-    python3 implementation/tracegen/tracegen.py --lang Go --ext .go --comment // --write  # rewrite, then check
+    python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment //          # check
+    python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write  # rewrite, then check
 
 Exit status: 0 OK, 1 problems reported, 2 usage or I/O error.
 """
@@ -16,18 +17,12 @@ import os
 import re
 import sys
 
+from mdlinks import slug
+
 BEGIN_MARKER = "<!-- trace:begin -->"
 END_MARKER = "<!-- trace:end -->"
 TAG_RE = re.compile(r"Design:\s*(abstraction/\S+?design\.md)#(\S+)")
 HEADING_RE = re.compile(r"^## (.+)$", re.M)
-
-
-def slug(heading):
-    """GitHub heading anchor: lowercase, drop everything except letters,
-    digits, '_', '-' and ' ', then turn spaces into '-'."""
-    s = heading.strip().lower()
-    s = "".join(c for c in s if c.isalnum() or c in "_- ")
-    return s.replace(" ", "-")
 
 
 def collect_tags(root, impl_dir, exts, comment):

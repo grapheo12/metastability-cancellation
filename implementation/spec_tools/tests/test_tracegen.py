@@ -1,5 +1,5 @@
 """Tests for tracegen. Run from the repository root:
-    python3 -B -m unittest discover -s implementation/tracegen
+    python3 -B -m unittest discover -s implementation/spec_tools/tests -t implementation/spec_tools
 
 Source: AGENTS.md#traceability-generator-tracegen
 """
