@@ -1,7 +1,7 @@
 // Package loadgen implements the load generator: one file per component of
 // abstraction/load_generator.
 //
-// Source: abstraction/load_generator/design.md (load_generator v0.1.0)
+// Source: abstraction/load_generator/design.md (load_generator v0.1.1)
 package loadgen
 
 import (

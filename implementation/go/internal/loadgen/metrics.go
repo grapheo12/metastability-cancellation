@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/metrics/design.md (metrics v0.1.0)
+// Source: abstraction/load_generator/metrics/design.md (metrics v0.1.1)
 package loadgen
 
 import (

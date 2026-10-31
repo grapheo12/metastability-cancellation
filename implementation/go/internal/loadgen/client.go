@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/client/design.md (client v0.1.0)
+// Source: abstraction/load_generator/client/design.md (client v0.1.1)
 package loadgen
 
 import (

@@ -2,8 +2,8 @@
 // connections: the open_h2c_connection primitive of the load generator and
 // the load canceller designs.
 //
-// Source: abstraction/load_generator/run_controller/design.md (run_controller v0.1.0),
-// abstraction/load_canceller/design.md (load_canceller v0.1.0)
+// Source: abstraction/load_generator/run_controller/design.md (run_controller v0.1.1),
+// abstraction/load_canceller/design.md (load_canceller v0.1.1)
 package h2client
 
 import (

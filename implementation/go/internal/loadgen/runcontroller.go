@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/run_controller/design.md (run_controller v0.1.0)
+// Source: abstraction/load_generator/run_controller/design.md (run_controller v0.1.1)
 package loadgen
 
 import (
