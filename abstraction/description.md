@@ -1,6 +1,6 @@
 # HTTP/2 Cancellation Testbed — Description
 
-Components: Protocol, Sampling, Server, Load Generator, Load Canceller.
+Components: Protocol, Sampling, Server, Load Generator, Load Canceller, Benchmark Runner.
 
 ## Problem
 
@@ -29,12 +29,20 @@ client ids uniformly at random and advancing a per-client sequence counter by sm
 The load generator writes per-request records plus a summary. The canceller writes per-cancel records
 plus a summary. The server prints its CancelCounters when it shuts down.
 
+A **BenchmarkRunner** drives whole experiments from an operator's machine. It reads one **BenchConfig**,
+prepares a server machine and a client machine over SSH (clone, pin the exact commit, check tools,
+build), then runs every point of the **SweepExpansion** of the swept parameters. Each point runs the
+server on the server machine and the load generator plus the canceller on the client machine. The runner
+downloads each point's results and plots all points together.
+
 ## Goals
 
 - Show the effect of server-side cancellation handling (`ignore` vs `cooperative`) on latency.
 - Show how often server-directed cancellations arrive before, during or after the work they target.
 - Make runs reproducible where possible (seeded randomness, exact body sizes, exact id format).
 - Keep the server's per-request cost a pure, controllable CPU cost.
+- Make parameter sweeps over two real machines a single command with a reproducible record (config,
+  branch, commit, raw outputs, plots).
 
 ## Non-goals
 
@@ -42,7 +50,8 @@ plus a summary. The server prints its CancelCounters when it shuts down.
 - Server metrics beyond the three CancelCounters.
 - Load shedding or admission control. `503` means only "cancelled by `/cancel`" (or, for `/cancel`
   itself, "registry full").
-- Distributed load generation across machines.
+- Distributed load generation across more than one client machine.
+- Installing toolchains on the experiment machines. The BenchmarkRunner only checks that they exist.
 - Coordinating the Load Canceller with the Load Generator. The two programs run independently.
 
 ## Glossary (named concepts used across all specs)
@@ -68,5 +77,15 @@ plus a summary. The server prints its CancelCounters when it shuts down.
 | **RequestRecord** | One output row per scheduled arrival | [load_generator/metrics/design.md](load_generator/metrics/design.md#requestrecord) |
 | **LoadCanceller** | Single-sender, open-loop Poisson source of `/cancel` requests | [load_canceller/design.md](load_canceller/design.md#cancelschedule) |
 | **CancelTargetChoice** | Uniform client choice plus per-client counter advanced by `[1, INCR_RAND_MAX]` | [load_canceller/design.md](load_canceller/design.md#canceltargetchoice) |
+| **BenchmarkRunner** | Operator-side driver: setup over SSH, sweep execution, result download, plots | [benchmark_runner/design.md](benchmark_runner/design.md#run-flow) |
+| **BenchConfig** | The validated TOML experiment configuration | [benchmark_runner/config/design.md](benchmark_runner/config/design.md#benchconfig) |
+| **SweepExpansion** | Cross product of every array-valued program parameter, in a fixed order | [benchmark_runner/config/design.md](benchmark_runner/config/design.md#sweepexpansion) |
+| **SweepPoint** | One element of the SweepExpansion: the full argument lists of the three programs | [benchmark_runner/config/design.md](benchmark_runner/config/design.md#sweepexpansion) |
+| **Transport** | Run commands on, and copy files from, a machine over SSH (or locally) | [benchmark_runner/remote_transport/design.md](benchmark_runner/remote_transport/design.md#transport) |
+| **SourcePin** | The exact branch and commit the runner deploys, checked against `repo_url` | [benchmark_runner/remote_setup/design.md](benchmark_runner/remote_setup/design.md#sourcepin) |
+| **BuildManifest** | Per-implementation declarative file saying how to build and where the binaries are | [benchmark_runner/remote_setup/design.md](benchmark_runner/remote_setup/design.md#buildmanifest) |
+| **ServerLifecycle** | Start, readiness wait and SIGINT stop of the server for one SweepPoint | [benchmark_runner/experiment_executor/design.md](benchmark_runner/experiment_executor/design.md#serverlifecycle) |
+| **PointTable** | One row per SweepPoint with swept values and key metrics | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#pointtable) |
+| **SweepPlots** | The standard figures over all SweepPoints | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#sweepplots) |
 
 See [api.md](api.md) for the external interface and [design.md](design.md) for the component breakdown.
