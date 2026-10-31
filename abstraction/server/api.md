@@ -20,7 +20,9 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 | `CHECK_ITER` | `1024` | Spin units between `/cancel` checks during a burn ([ping_handler/design.md#cancelcheckpoints](ping_handler/design.md#cancelcheckpoints)) |
 | `CANCEL_REGISTRY_CAPACITY` | `65536` | Number of client ids the CancelRegistry can hold. Must be a power of two and at least `N` ([cancel_tracker/design.md#cancelregistry](cancel_tracker/design.md#cancelregistry)) |
 
-## `ServerConfig`
+## Types
+
+### `ServerConfig`
 
 An immutable record holding the six parameters above after validation
 ([design.md#configuration-validation](design.md#configuration-validation)). One read-only copy is

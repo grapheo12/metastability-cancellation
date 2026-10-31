@@ -1,12 +1,8 @@
 # Connection Handler — API
 
-## `ConnectionHandler(conn, config: ServerConfig, rng: Rng, registry: CancelRegistry, counters: CancelCounters)`
+## Types
 
-Starts handling one accepted connection. Returns once the connection is closed. It is called by the
-Listener in [../design.md#listener](../design.md#listener), on a coroutine/thread of its own. See
-[design.md#shared-state](design.md#shared-state).
-
-## `StreamTask`
+### `StreamTask`
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -16,7 +12,23 @@ Listener in [../design.md#listener](../design.md#listener), on a coroutine/threa
 | `body` | bytes | Full request body (all DATA frames joined) |
 | `cancelled` | atomic boolean, initially `false` | The RST flag. Set by the FrameReader on `RST_STREAM`. Read by the worker and the burner |
 
-## `close()`
+Created by [design.md#framereader](design.md#framereader). Lifecycle in
+[design.md#state-machine-per-ping-streamtask](design.md#state-machine-per-ping-streamtask).
+
+### `Response`
+
+Either `Response(status: integer, body: bytes)` or `Aborted`, which means "write nothing". Returned by
+the route handlers and written by [design.md#response-writing](design.md#response-writing).
+
+## Functions
+
+### `ConnectionHandler(conn, config: ServerConfig, rng: Rng, registry: CancelRegistry, counters: CancelCounters)`
+
+Starts handling one accepted connection. Returns once the connection is closed. It is called by the
+Listener in [../design.md#listener](../design.md#listener), on a coroutine/thread of its own. See
+[design.md#shared-state](design.md#shared-state).
+
+### `close()`
 
 Asks the handler to shut down ([design.md#connection-close](design.md#connection-close)).
 

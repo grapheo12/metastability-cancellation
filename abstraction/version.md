@@ -11,3 +11,4 @@
 | 0.2.5 | 2026-10-30T00:00:00Z | API style: Exit status section, Components table, design links for every output. No behavior change |
 | 0.2.6 | 2026-10-30T00:00:00Z | Child bump: protocol 0.2.1 |
 | 0.2.7 | 2026-10-30T00:00:00Z | Child bump: sampling 0.2.1 |
+| 0.2.8 | 2026-10-30T00:00:00Z | Child bump: server 0.2.1 (cancel_tracker 0.1.1, connection_handler 0.2.1, cpu_burner 0.2.1, ping_handler 0.2.1) |
