@@ -48,7 +48,9 @@ Stick to this folder structure:
    |- <shared tool>        # e.g. spec_tools, scripts; see "Shared tooling"
 ```
 
-The `impl/<lang>` branches will have the full structure. `main` should only have `abstraction/`.
+The `impl/<lang>` branches will have the full structure. `main` should only have `abstraction/`, plus the two top-level
+documents `AGENTS.md` and `README.md` (a human-facing overview of the repository and how to run it). `README.md`
+follows the same rule as `AGENTS.md`: changes go in a separate commit and are backported to `main` and all other branches.
 For every `implementation/<lang>`, first add the full `<lang>.gitignore` (likely download from Github), before any other file in that directory.
 For `impl/<lang>` branches, the `design.md` at each leaf level component will have an added `Design specific to <lang>` section, which is to be filled in before an agent touches the actual code.
 The `Design specific to <lang>` section must contain, for every design subsection in that file, a detailed list of links to the implementation files and exact line numbers that realize that subsection.
@@ -68,7 +70,7 @@ benchmark runners, and the like. These rules hold whatever language a tool is wr
   and the same on every branch. The tool's entry file header names that language. This is the only exception to
   "never two language implementations on the same branch".
 - **Identical everywhere.** Every `impl/<lang>` branch carries an identical copy of every shared tool. `main` never
-  has one, because `main` holds only `abstraction/` and `AGENTS.md`. An agent starting a new `impl/<lang>` branch
+  has one, because `main` holds only `abstraction/`, `AGENTS.md` and `README.md`. An agent starting a new `impl/<lang>` branch
   copies all shared tools from an existing impl branch first.
 - **Changes.** A change to a shared tool goes in its own `[impl]` commit, separate from any language implementation
   change, and is backported to every `impl/<lang>` branch, the same way `AGENTS.md` changes are.
@@ -383,7 +385,7 @@ Run on a branch `B` other than `main`, usually an `impl/<lang>` branch. It bring
      subcomponent plus its parent per commit; never two siblings).
    - Each changed node gets a new `version.md` row, and so does every ancestor up to the root (parent-bump rule).
      Version rows already made on `B` are kept, not duplicated.
-3. **Check `main`.** The spec checks pass. `main` contains only `abstraction/` and `AGENTS.md`, and no
+3. **Check `main`.** The spec checks pass. `main` contains only `abstraction/`, `AGENTS.md` and `README.md`, and no
    `Design specific to` text.
 4. **Bring them back to every branch, including `B`.** Cherry-pick the new `main` commits onto every other branch,
    and onto `B` itself whenever they differ from what `B` already has (version rows, regrouping), so the spec parts
