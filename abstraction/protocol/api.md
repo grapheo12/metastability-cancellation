@@ -2,20 +2,20 @@
 
 ## Constants
 
-| Name | Value | Meaning |
-|---|---|---|
-| `PING_PATH` | `/ping` | Work route |
-| `PING_METHOD` | `POST` | Only allowed method on `/ping` |
-| `CANCEL_PATH` | `/cancel` | Cancellation route |
-| `CANCEL_METHOD` | `DELETE` | Only allowed method on `/cancel` |
-| `CONTENT_TYPE_JSON` | `application/json` | Content type of every non-empty body |
-| `STATUS_OK` | `202` | `/ping`: work completed. `/cancel`: id accepted |
-| `STATUS_REJECTED` | `503` | `/ping`: work cancelled by `/cancel` (padded body). `/cancel`: registry full (empty body) |
-| `STATUS_BAD_REQUEST` | `400` | Body could not be parsed, or a `/ping` client id differs from the connection's. Empty body |
-| `STATUS_NOT_FOUND` | `404` | Path other than `/ping` and `/cancel`. Empty body |
-| `STATUS_METHOD_NOT_ALLOWED` | `405` | Wrong method for the path. Empty body |
-| `RST_CODE_CANCEL` | `0x8` | HTTP/2 error code the client uses in `RST_STREAM` to cancel |
-| `MIN_BODY_BYTES` | `42` | Smallest allowed `request_bytes` / `response_bytes` |
+| Name | Value | Meaning | Defined in |
+|---|---|---|---|
+| `PING_PATH` | `/ping` | Work route | [../api.md#wire-contract-ping](../api.md#wire-contract-ping) |
+| `PING_METHOD` | `POST` | Only allowed method on `/ping` | [../api.md#wire-contract-ping](../api.md#wire-contract-ping) |
+| `CANCEL_PATH` | `/cancel` | Cancellation route | [../api.md#wire-contract-cancel](../api.md#wire-contract-cancel) |
+| `CANCEL_METHOD` | `DELETE` | Only allowed method on `/cancel` | [../api.md#wire-contract-cancel](../api.md#wire-contract-cancel) |
+| `CONTENT_TYPE_JSON` | `application/json` | Content type of every non-empty body | [design.md#paddedjsonbody](design.md#paddedjsonbody), [design.md#cancelbody](design.md#cancelbody) |
+| `STATUS_OK` | `202` | `/ping`: work completed. `/cancel`: id accepted | [design.md#status-classification-load-generator-client](design.md#status-classification-load-generator-client), [design.md#status-classification-load-canceller](design.md#status-classification-load-canceller) |
+| `STATUS_REJECTED` | `503` | `/ping`: work cancelled by `/cancel` (padded body). `/cancel`: registry full (empty body) | [design.md#status-classification-load-generator-client](design.md#status-classification-load-generator-client), [design.md#status-classification-load-canceller](design.md#status-classification-load-canceller) |
+| `STATUS_BAD_REQUEST` | `400` | Body could not be parsed, or a `/ping` client id differs from the connection's. Empty body | [design.md#parsing](design.md#parsing), [design.md#status-classification-load-canceller](design.md#status-classification-load-canceller) |
+| `STATUS_NOT_FOUND` | `404` | Path other than `/ping` and `/cancel`. Empty body | [../api.md#wire-contract-ping](../api.md#wire-contract-ping) |
+| `STATUS_METHOD_NOT_ALLOWED` | `405` | Wrong method for the path. Empty body | [../api.md#wire-contract-ping](../api.md#wire-contract-ping), [../api.md#wire-contract-cancel](../api.md#wire-contract-cancel) |
+| `RST_CODE_CANCEL` | `0x8` | HTTP/2 error code the client uses in `RST_STREAM` to cancel | [../load_generator/client/design.md#slocancellation](../load_generator/client/design.md#slocancellation) |
+| `MIN_BODY_BYTES` | `42` | Smallest allowed `request_bytes` / `response_bytes` | [design.md#minimum-body-size](design.md#minimum-body-size) |
 
 ## Functions
 
@@ -23,7 +23,8 @@
 Returns `(client_id << 32) | seq`. See [design.md#requestid](design.md#requestid).
 
 ### `split_request_id(id: u64) -> (seq: u32, client_id: u32)`
-Inverse of `make_request_id`: `client_id = id >> 32`, `seq = id & 0xFFFFFFFF`.
+Inverse of `make_request_id`: `client_id = id >> 32`, `seq = id & 0xFFFFFFFF`. See
+[design.md#requestid](design.md#requestid).
 
 ### `build_body(id: u64, total_bytes: integer) -> bytes`
 Returns a PaddedJsonBody whose length is exactly `total_bytes`. Precondition:
@@ -38,7 +39,7 @@ Pulls the RequestId out of a PaddedJsonBody or a CancelBody. See [design.md#pars
 
 ### `validate_body_size(total_bytes: integer) -> ok | ConfigError`
 Returns `ConfigError` if `total_bytes < MIN_BODY_BYTES`. The server and the load generator call
-this at startup.
+this at startup. See [design.md#minimum-body-size](design.md#minimum-body-size).
 
 ## Request headers (client or canceller → server)
 
