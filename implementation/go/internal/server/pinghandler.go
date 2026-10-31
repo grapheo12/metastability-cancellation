@@ -1,4 +1,4 @@
-// Source: abstraction/server/ping_handler/design.md (ping_handler v0.2.0)
+// Source: abstraction/server/ping_handler/design.md (ping_handler v0.2.1)
 package server
 
 import (

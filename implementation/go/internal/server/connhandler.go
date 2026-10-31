@@ -1,4 +1,4 @@
-// Source: abstraction/server/connection_handler/design.md (connection_handler v0.2.0)
+// Source: abstraction/server/connection_handler/design.md (connection_handler v0.2.1)
 package server
 
 import (

@@ -1,4 +1,4 @@
-// Source: abstraction/server/cpu_burner/design.md (cpu_burner v0.2.0)
+// Source: abstraction/server/cpu_burner/design.md (cpu_burner v0.2.1)
 package server
 
 import (
