@@ -111,7 +111,8 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 
 ### Traceability
 
-Generated from the `// Design:` tags in the code. Each link points at the first code line after the tag.
+Generated from the `// Design:` tags in the code by `implementation/go/cmd/tracegen` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from `implementation/go` with `CGO_ENABLED=0 go run ./cmd/tracegen -root ../.. -write`.
 
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
