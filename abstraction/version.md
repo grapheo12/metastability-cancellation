@@ -16,3 +16,4 @@
 | 0.2.10 | 2026-10-30T00:00:00Z | Child bump: load_canceller 0.1.1 |
 | 0.3.0 | 2026-10-31T00:00:00Z | New component: Benchmark Runner (description, glossary, `bench` program, design diagram) |
 | 0.3.1 | 2026-10-31T00:00:00Z | Child bump: benchmark_runner 0.1.0 (new: config, remote_transport, remote_setup, experiment_executor, result_plotter) |
+| 0.3.2 | 2026-10-31T00:00:00Z | Child bump: benchmark_runner 0.1.1 (remote_transport 0.1.1) |

@@ -41,7 +41,7 @@ Every path that reaches the transport is absolute. Callers resolve a leading `~`
 
 ```
 function start_background(t, command, log_path):
-    r = run(t, "nohup sh -c " + quote(command) + " >> " + quote(log_path) + " 2>&1 < /dev/null & echo $!", 30)
+    r = run(t, "set -m; nohup sh -c " + quote(command) + " >> " + quote(log_path) + " 2>&1 < /dev/null & echo $!", 30)
     require r.exit_status == 0 and r.stdout.strip() is a positive integer
     return that integer
 
@@ -54,7 +54,10 @@ function alive(t, pid):
 ```
 
 `nohup ... &` together with redirecting all three standard streams detaches the process from the SSH session, so it
-survives the connection closing. The returned pid belongs to the `sh -c` wrapper, so it must `exec` the program for
+survives the connection closing. `set -m` turns on job control first. Without it, a POSIX shell starts an
+asynchronous command with SIGINT and SIGQUIT ignored, and an ignored signal cannot be re-enabled by a shell, so the
+interrupt that stops the server ([../experiment_executor/design.md#serverlifecycle](../experiment_executor/design.md#serverlifecycle))
+would never arrive. The returned pid belongs to the `sh -c` wrapper, so it must `exec` the program for
 signals to reach it. Callers therefore always start commands as `exec <program> <args>`
 ([../experiment_executor/design.md#serverlifecycle](../experiment_executor/design.md#serverlifecycle)).
 
