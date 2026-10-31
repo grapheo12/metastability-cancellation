@@ -92,3 +92,29 @@ function format_arg(value):
 
 Each argument is passed as two words, `--<name>` and `format_arg(value)`. Quoting for the remote shell is the
 Transport's job ([../remote_transport/design.md#command-quoting](../remote_transport/design.md#command-quoting)).
+
+## Design specific to Python
+
+Shared tool `implementation/scripts/` (tooling language Python 3.11+; see `AGENTS.md` "Shared tooling"). Identical on
+every `impl/<lang>` branch. Plotting needs `matplotlib` (`python3 -m pip install -r implementation/scripts/requirements.txt`).
+Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts`.
+
+### Python choices
+
+- TOML is parsed with the standard library's `tomllib`, which keeps table key order (needed for the file order of the sweep).
+- `BenchConfig`, `Machine`, `RunOptions` and `SweepPoint` are `dataclasses`. Program parameters are plain `dict`s in insertion order.
+- Integers exclude `bool` (Python's `bool` is a subclass of `int`). `format_arg` checks `bool` before `int`, and writes floats with `repr`, which is the shortest round-trip form.
+- `itertools.product` gives the cross product with the last key varying fastest.
+
+### Traceability
+
+Generated from the `# Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Python --impl implementation/scripts --ext .py --comment '#' --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [BenchConfig](#benchconfig) | [config.py:13](../../../implementation/scripts/benchrunner/config.py#L13), [config.py:140](../../../implementation/scripts/benchrunner/config.py#L140), [test_config.py:72](../../../implementation/scripts/tests/test_config.py#L72) |
+| [SweepExpansion](#sweepexpansion) | [config.py:250](../../../implementation/scripts/benchrunner/config.py#L250), [test_config.py:47](../../../implementation/scripts/tests/test_config.py#L47), [test_config.py:57](../../../implementation/scripts/tests/test_config.py#L57) |
+| [Argument formatting](#argument-formatting) | [config.py:272](../../../implementation/scripts/benchrunner/config.py#L272), [test_config.py:92](../../../implementation/scripts/tests/test_config.py#L92) |
+<!-- trace:end -->

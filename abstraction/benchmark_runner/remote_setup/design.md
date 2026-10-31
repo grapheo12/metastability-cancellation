@@ -71,3 +71,28 @@ string is a shell command by contract.
 Both machines are set up in parallel, and the run continues only if both succeed. If both machines are the same
 host with the same `workdir` (e.g. two `local` machines), the two setups would race on one clone. So setup runs
 **once** for that pair, and both MachineReady values share the result.
+
+## Design specific to Python
+
+Shared tool `implementation/scripts/` (tooling language Python 3.11+; see `AGENTS.md` "Shared tooling"). Identical on
+every `impl/<lang>` branch. Plotting needs `matplotlib` (`python3 -m pip install -r implementation/scripts/requirements.txt`).
+Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts`.
+
+### Python choices
+
+- The operator-side git queries (`symbolic-ref`, `status --porcelain --untracked-files=no`, `rev-parse`, `ls-remote`) run through `subprocess.run(["git", "-C", repo_root, ...])`.
+- The manifest is parsed with `tomllib`. Its errors are `PinError`, because they are found while pinning.
+- The two machines are set up in parallel with `concurrent.futures.ThreadPoolExecutor(max_workers=2)`. The same-machine case is detected by equal `(host, user, ssh_port, workdir)`, and then setup runs once.
+
+### Traceability
+
+Generated from the `# Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Python --impl implementation/scripts --ext .py --comment '#' --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [SourcePin](#sourcepin) | [remote_setup.py:61](../../../implementation/scripts/benchrunner/remote_setup.py#L61) |
+| [BuildManifest](#buildmanifest) | [remote_setup.py:28](../../../implementation/scripts/benchrunner/remote_setup.py#L28), [remote_setup.py:86](../../../implementation/scripts/benchrunner/remote_setup.py#L86), [test_remote_setup.py:29](../../../implementation/scripts/tests/test_remote_setup.py#L29) |
+| [Machine setup](#machine-setup) | [remote_setup.py:117](../../../implementation/scripts/benchrunner/remote_setup.py#L117), [remote_setup.py:151](../../../implementation/scripts/benchrunner/remote_setup.py#L151) |
+<!-- trace:end -->

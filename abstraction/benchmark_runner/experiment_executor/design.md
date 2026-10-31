@@ -110,3 +110,29 @@ function validate_outputs(point, pdir):
 ```
 
 Every fetch is best effort (`missing` is fine), so a failed point still keeps whatever evidence exists.
+
+## Design specific to Python
+
+Shared tool `implementation/scripts/` (tooling language Python 3.11+; see `AGENTS.md` "Shared tooling"). Identical on
+every `impl/<lang>` branch. Plotting needs `matplotlib` (`python3 -m pip install -r implementation/scripts/requirements.txt`).
+Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts`.
+
+### Python choices
+
+- `run_point` uses `try / except / finally`. `finally` always stops the server and collects outputs. `KeyboardInterrupt` is recorded as reason `interrupted` and re-raised after the `failed` marker is written.
+- Waiting uses `time.monotonic()` deadlines and `time.sleep(POLL_INTERVAL_S)`.
+- `params.json` and `server_counters.json` are written with `json.dump(..., indent=2)`.
+
+### Traceability
+
+Generated from the `# Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Python --impl implementation/scripts --ext .py --comment '#' --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [run_point](#run_point) | [executor.py:47](../../../implementation/scripts/benchrunner/executor.py#L47) |
+| [ServerLifecycle](#serverlifecycle) | [executor.py:94](../../../implementation/scripts/benchrunner/executor.py#L94), [executor.py:113](../../../implementation/scripts/benchrunner/executor.py#L113) |
+| [ClientRun](#clientrun) | [executor.py:133](../../../implementation/scripts/benchrunner/executor.py#L133) |
+| [Point outputs](#point-outputs) | [executor.py:161](../../../implementation/scripts/benchrunner/executor.py#L161), [executor.py:182](../../../implementation/scripts/benchrunner/executor.py#L182) |
+<!-- trace:end -->

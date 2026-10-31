@@ -65,3 +65,30 @@ are command-line arguments. Running setup once also means every point measures t
 If the operator interrupts `bench run` (e.g. Ctrl-C), the executor stops the current point's server
 ([experiment_executor/design.md#serverlifecycle](experiment_executor/design.md#serverlifecycle)), marks that point
 `failed` with reason `interrupted`, writes the plots for the points finished so far, and exits `1`.
+
+## Design specific to Python
+
+Shared tool `implementation/scripts/` (tooling language Python 3.11+; see `AGENTS.md` "Shared tooling"). Identical on
+every `impl/<lang>` branch. Plotting needs `matplotlib` (`python3 -m pip install -r implementation/scripts/requirements.txt`).
+Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts`.
+
+### Python choices
+
+- Entry point `bench.py` (argparse subcommands `run`, `setup`, `plot`). The package `benchrunner/` has one module per leaf: `config.py`, `transport.py`, `remote_setup.py`, `executor.py`, `plotter.py`.
+- The operator repository is found with `git rev-parse --show-toplevel` from the script's own directory, so `bench.py` can be run from any working directory.
+- `run` checks that `matplotlib` can be imported *before* setup and exits `2` if it can't, so a long sweep never ends without plots. `setup` doesn't need it.
+- An operator interrupt is Python's `KeyboardInterrupt`. `run_point` finishes its cleanup and re-raises it, and `bench_run` catches it, plots, and exits `1`.
+
+### Traceability
+
+Generated from the `# Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Python --impl implementation/scripts --ext .py --comment '#' --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [Structure](#structure) | [bench.py:67](../../implementation/scripts/bench.py#L67) |
+| [Run flow](#run-flow) | [bench.py:40](../../implementation/scripts/bench.py#L40), [bench.py:67](../../implementation/scripts/bench.py#L67), [bench.py:112](../../implementation/scripts/bench.py#L112) |
+| [Why setup happens once](#why-setup-happens-once) | [bench.py:80](../../implementation/scripts/bench.py#L80) |
+| [Interrupts](#interrupts) | [bench.py:103](../../implementation/scripts/bench.py#L103) |
+<!-- trace:end -->
