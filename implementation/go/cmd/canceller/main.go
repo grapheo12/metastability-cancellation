@@ -1,6 +1,6 @@
 // Command canceller runs the LoadCanceller.
 //
-// Source: abstraction/load_canceller/api.md (load_canceller v0.1.0)
+// Source: abstraction/load_canceller/api.md (load_canceller v0.1.1)
 package main
 
 import (

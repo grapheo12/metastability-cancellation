@@ -1,4 +1,4 @@
-// Source: abstraction/load_canceller/design.md (load_canceller v0.1.0)
+// Source: abstraction/load_canceller/design.md (load_canceller v0.1.1)
 package canceller
 
 import (
