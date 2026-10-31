@@ -1,11 +1,15 @@
 # Run Controller — API
 
-## `main(params) -> exit status`
+## Functions
+
+### `main(params) -> exit status`
 
 Entry point of the load generator program. Takes the parameters in
-[../api.md#program-parameters](../api.md#program-parameters).
+[../api.md#program-parameters](../api.md#program-parameters). Exit status is as in
+[../api.md#exit-status](../api.md#exit-status). See [design.md#startup](design.md#startup),
+[design.md#drainphase](design.md#drainphase) and [design.md#shutdown-ordering](design.md#shutdown-ordering).
 
-## `validate(params) -> LoadGenConfig | ConfigError`
+### `validate(params) -> LoadGenConfig | ConfigError`
 
 See [design.md#configuration-validation](design.md#configuration-validation).
 

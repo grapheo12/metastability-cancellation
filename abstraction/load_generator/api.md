@@ -15,9 +15,13 @@ Same as [../api.md#load-generator-parameters](../api.md#load-generator-parameter
 | `seed` | u64 | `0` |
 | `output_path` | path prefix | `results` |
 
-## `LoadGenConfig`
+## Types
 
-An immutable record holding the parameters above after validation, plus derived values:
+### `LoadGenConfig`
+
+An immutable record holding the parameters above after validation
+([run_controller/design.md#configuration-validation](run_controller/design.md#configuration-validation)),
+plus derived values:
 
 | Derived | Formula |
 |---|---|
@@ -28,7 +32,7 @@ An immutable record holding the parameters above after validation, plus derived 
 ## Outputs
 
 `<output_path>.requests.csv` and `<output_path>.summary.json`. Formats are in
-[metrics/api.md](metrics/api.md).
+[metrics/api.md](metrics/api.md#outputs).
 
 ## Exit status
 

@@ -1,5 +1,7 @@
 # Load Generator — Description
 
+Subcomponents: Run Controller, Client, Metrics.
+
 Simulates `N` independent clients against the server, each on its own HTTP/2 connection. Each
 client is a **ClosedLoopPoissonClient**: arrivals follow a Poisson process of rate
 `global_rate / N`, but a client has at most one request outstanding, so an arrival that comes due

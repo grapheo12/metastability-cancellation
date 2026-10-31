@@ -1,6 +1,8 @@
 # Metrics — API
 
-## `RequestRecord`
+## Types
+
+### `RequestRecord`
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -14,13 +16,29 @@
 | `end_ns` | integer or empty | When the request resolved. Empty for `not_sent` |
 
 Derived: `e2e_latency_ns = end_ns - scheduled_ns` and `service_latency_ns = end_ns - send_ns`,
-both empty for `not_sent`.
+both empty for `not_sent`. See [design.md#requestrecord](design.md#requestrecord).
 
-## `aggregate(records, config, run_end_ns) -> SummaryReport`
-## `write_requests_csv(path, records)`
-## `write_summary_json(path, report)`
+### `SummaryReport`
 
-## Requests CSV
+The record written as [Summary JSON](#summary-json). See [design.md#summary](design.md#summary).
+
+## Functions
+
+### `aggregate(records, config, run_end_ns) -> SummaryReport`
+Counts outcomes, computes rates over `duration_s`, and computes latency statistics over `ok` records. See
+[design.md#collection](design.md#collection), [design.md#summary](design.md#summary) and
+[design.md#percentiles](design.md#percentiles).
+
+### `write_requests_csv(path, records)`
+Writes [Requests CSV](#requests-csv), with records sorted by `(client_id, seq)`. See
+[design.md#requestrecord](design.md#requestrecord).
+
+### `write_summary_json(path, report)`
+Writes [Summary JSON](#summary-json). See [design.md#summary](design.md#summary).
+
+## Outputs
+
+### Requests CSV
 
 UTF-8, comma-separated, `\n` line endings, one header line, rows sorted by `(client_id, seq)`:
 
@@ -28,9 +46,10 @@ UTF-8, comma-separated, `\n` line endings, one header line, rows sorted by `(cli
 request_id,client_id,seq,outcome,http_status,scheduled_ns,send_ns,end_ns,e2e_latency_ns,service_latency_ns
 ```
 
-Integers are written in decimal. Empty fields are written as nothing between the commas.
+Integers are written in decimal. Empty fields are written as nothing between the commas. One row
+per [design.md#requestrecord](design.md#requestrecord).
 
-## Summary JSON
+### Summary JSON
 
 ```
 {
@@ -44,3 +63,8 @@ Integers are written in decimal. Empty fields are written as nothing between the
 ```
 
 Definitions are in [design.md#summary](design.md#summary).
+
+## Uses
+
+- [../client/api.md](../client/api.md#outcome): `Outcome`
+- [../api.md](../api.md#loadgenconfig): `LoadGenConfig`
