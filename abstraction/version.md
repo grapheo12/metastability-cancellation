@@ -8,3 +8,4 @@
 | 0.2.2 | 2026-10-30T00:00:00Z | Child bump: sampling 0.2.0 |
 | 0.2.3 | 2026-10-30T00:00:00Z | Child bump: server 0.2.0 (new cancel_tracker 0.1.0) |
 | 0.2.4 | 2026-10-30T00:00:00Z | Child bump: load_canceller 0.1.0 (new) |
+| 0.2.5 | 2026-10-30T00:00:00Z | API style: Exit status section, Components table, design links for every output. No behavior change |
