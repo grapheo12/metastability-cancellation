@@ -20,12 +20,18 @@ Same as [../api.md#canceller-parameters](../api.md#canceller-parameters):
 | `INCR_RAND_MAX` | `4` | Largest per-client counter step. Steps are uniform in `[1, INCR_RAND_MAX]` ([design.md#canceltargetchoice](design.md#canceltargetchoice)) |
 | `CANCELLER_DRAIN_TIMEOUT_MS` | `1000` | Longest wait for outstanding responses after the sending phase ([design.md#cancellerdrain](design.md#cancellerdrain)) |
 
-## `CancellerConfig`
+## Types
+
+### `CancellerConfig`
 
 An immutable record holding the parameters above after validation, plus `duration_ns =
 round(duration_s * 1e9)` ([design.md#configuration-validation](design.md#configuration-validation)).
 
-## `CancelRecord`
+### `CancelRecord`
+
+One per arrival. Created by [design.md#cancelschedule](design.md#cancelschedule), resolved by
+[design.md#response-collection](design.md#response-collection) or
+[design.md#cancellerdrain](design.md#cancellerdrain).
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -48,7 +54,8 @@ UTF-8, comma-separated, `\n` line endings, one header line, rows in `arrival` or
 arrival,cancel_id,client_id,target_seq,outcome,http_status,scheduled_ns,send_ns,end_ns
 ```
 
-Integers are written in decimal. Empty fields are written as nothing between the commas.
+Integers are written in decimal. Empty fields are written as nothing between the commas. Rows are
+the CancelRecords from [design.md#cancelschedule](design.md#cancelschedule).
 
 ### `<output_path>.summary.json`
 
