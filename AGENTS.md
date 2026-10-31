@@ -54,6 +54,81 @@ Conversely, implementation references must not exist only as a file-level commen
 These links are a bidirectional traceability contract: every future design or implementation change must update both directions and keep file names, subsection anchors, and line numbers consistent. A change is incomplete if it leaves either direction stale.
 
 
+# Spec writing style
+
+Every `description.md`, `api.md`, `design.md` and `version.md` follows the rules below.
+`abstraction/` on `main` in this repo is a reference example: compare against it when unsure.
+
+## Common rules (all spec files)
+
+- **Named concepts.** Give every concept one CamelCase name (e.g. `RequestId`, `DrainPhase`).
+  Put it in **bold** where a description first introduces it. Use the exact same name in every file at every level.
+  List it in the glossary of the root `description.md` as a table: Concept | Meaning | Defined in (a link to the design anchor).
+  Consistent names are what make fuzzy-contract search work.
+- **Stable anchors.** Each design subsection heading is either the concept's name or a short fixed phrase, so its anchor never changes.
+  Cross-references always use `path/file.md#anchor`. A broken link is a bug.
+- **Navigation.** Every `description.md` links to its parent `design.md` and to its own `api.md` and `design.md`.
+  Every `api.md` links the design anchor of each item it declares. Every non-leaf file links to each child.
+- **Units and types.** Names carry units (`_ms`, `_us`, `_ns`, `_s`, `_bytes`), or a table column states the unit.
+  Types are abstract: `u32`, `u64`, `float`, `bytes`, `string`, `atomic boolean`, `FIFO`, `map`. Never use language types or library names.
+- **Explicit over implied.** Write down defaults, valid ranges, validation errors, exit status, error handling, features that are reserved or not yet used (e.g. "reserved, never sent in v1"), and non-goals.
+- **Tables for anything enumerable.** Parameters, constants, record fields, outcomes, status codes, and behavior per mode × situation.
+
+## `description.md`
+
+- Says *what* the component is and *why* it exists, never *how*.
+- Opens with "Leaf component." or with the names of its subcomponents.
+- Lists responsibilities as a short bullet list using the bold concept names.
+- At the root only, has these sections: Problem, a one-paragraph summary of the system, Goals, Non-goals, Glossary.
+- Contains no pseudocode and no field lists.
+
+## `api.md`
+
+Sections, in this order, leaving out any that are empty:
+
+1. **Parameters / Constants:** a table of Parameter (or Name) | Type / unit / constraint | Default (or Value) | Meaning.
+   A child that restates its parent's parameters must match them exactly and link back to the parent.
+2. **Types / records:** a table of Field | Type | Meaning, one per record.
+3. **Functions:** each one is a `###` heading holding its full typed signature, including alternative or error returns, e.g.
+   `### parse_body(body: bytes) -> u64 | ParseError`.
+   Under it go one or two lines of contract (preconditions, guarantees, who calls it) and a link to the design anchor that implements it.
+4. **Outputs / wire-visible behavior:** exact formats (column order, JSON shape, headers, status codes).
+5. **Lifecycle / exit status:** start, run, stop and error behavior.
+6. **Uses:** links to the `api.md` of each dependency, naming the items used.
+7. **Subcomponents** (non-leaf only): a table linking each child's `api.md`.
+
+## `design.md`
+
+**Non-leaf:**
+- A mermaid diagram of the structure.
+- A table of Subcomponent | Responsibility | Spec link.
+- The cross-cutting rules every child must share: time base, concurrency model, phases, ordering.
+- A short "Why …" paragraph for each structural decision that is not obvious.
+
+**Leaf.** Write these so that a small model produces the same code every time:
+- One `##` section per concept or algorithm, containing **exact pseudocode**. State the arithmetic semantics
+  (e.g. "unsigned 64-bit, wrapping"), the rounding rule, and use integer arithmetic wherever a result must be exact.
+  Name every constant.
+- **Worked examples** as tables with a column that checks the arithmetic. Include the boundary cases (minimum, maximum, empty).
+- **Races and ties resolved explicitly**, e.g. "whichever is observed first wins; the other is ignored".
+- **Ordering requirements** that affect reproducibility (e.g. the order of random draws) get their own subsection.
+- **State machines** as mermaid `stateDiagram`. Behavior that differs by mode × situation goes in a table.
+- **Concurrency requirements** stated without naming a language, e.g. "X must keep making progress while Y runs.
+  If both share one thread, Y must be moved to its own thread."
+- **Failure and edge cases** listed: connection errors, malformed input, overflow, shutdown in the middle of work.
+
+## `version.md`
+
+A table of Version | Last modified (UTC, ISO-8601) | Summary, with the newest row last.
+
+## Spec self-check before committing
+
+- Every relative link and anchor resolves (check it with a script, not by eye).
+- Names, units, defaults and constraints are the same from parent to child and from `api.md` to `design.md`.
+- Every `api.md` item has a design anchor. Every child's `api.md` covers what its parent's `design.md` asks of it.
+- Every worked example has been recomputed.
+
+
 # Coding principle
 
 ## Fuzzy contracts
@@ -105,7 +180,7 @@ Follow this guideline religiously:
     - Or think about improving a subcomponent, then the reasoning should stay limited to that subcomponent.
     - Or improvement is jointly between a subcomponent or its parent. Improvement plans that change two sibling subcomponents is disallowed.
     - Same goes for implementation and leaf-level `design.md`s.
-3. Maintain a `version.md` at each level of abstraction that stores a version number and last modified datetime for each change. In any `impl/<lang>` branch, in each code file, along with the source design file, have version number annotation. The next round of implementation effort must make sure that the implementation has the latest spec version.
+3. Maintain a `version.md` at each level of abstraction that stores a version number and last modified datetime for each change. A version update in a subcomponent updates the version number in the parent as well. In any `impl/<lang>` branch, in each code file, along with the source design file, have version number annotation. The next round of implementation effort must make sure that the implementation has the latest spec version.
 
 
 ## Commit policy
