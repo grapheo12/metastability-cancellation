@@ -81,11 +81,14 @@ downloads each point's results and plots all points together.
 | **BenchConfig** | The validated TOML experiment configuration | [benchmark_runner/config/design.md](benchmark_runner/config/design.md#benchconfig) |
 | **SweepExpansion** | Cross product of every array-valued program parameter, in a fixed order | [benchmark_runner/config/design.md](benchmark_runner/config/design.md#sweepexpansion) |
 | **SweepPoint** | One element of the SweepExpansion: the full argument lists of the three programs | [benchmark_runner/config/design.md](benchmark_runner/config/design.md#sweepexpansion) |
+| **ProcessPlacement** | A program's worker-thread count and CPU set, applied when the runner starts it | [benchmark_runner/config/design.md](benchmark_runner/config/design.md#processplacement) |
+| **CancelRateFraction** | Canceller rate given as a fraction of the same point's `global_rate` | [benchmark_runner/config/design.md](benchmark_runner/config/design.md#cancelratefraction) |
 | **Transport** | Run commands on, and copy files from, a machine over SSH (or locally) | [benchmark_runner/remote_transport/design.md](benchmark_runner/remote_transport/design.md#transport) |
 | **SourcePin** | The exact branch and commit the runner deploys, checked against `repo_url` | [benchmark_runner/remote_setup/design.md](benchmark_runner/remote_setup/design.md#sourcepin) |
 | **BuildManifest** | Per-implementation declarative file saying how to build and where the binaries are | [benchmark_runner/remote_setup/design.md](benchmark_runner/remote_setup/design.md#buildmanifest) |
 | **ServerLifecycle** | Start, readiness wait and SIGINT stop of the server for one SweepPoint | [benchmark_runner/experiment_executor/design.md](benchmark_runner/experiment_executor/design.md#serverlifecycle) |
 | **PointTable** | One row per SweepPoint with swept values and key metrics | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#pointtable) |
 | **SweepPlots** | The standard figures over all SweepPoints | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#sweepplots) |
+| **ThroughputLatencyPlot** | Latency percentiles against measured goodput, one line per series, points in swept order | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#throughputlatencyplot) |
 
 See [api.md](api.md) for the external interface and [design.md](design.md) for the component breakdown.
