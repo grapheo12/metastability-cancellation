@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/remote_setup/design.md (remote_setup v0.2.0)
+# Source: abstraction/benchmark_runner/remote_setup/design.md (remote_setup v0.3.0)
 """SourcePin, BuildManifest, and per-machine clone/checkout/tool check/build."""
 
 import os
@@ -14,7 +14,7 @@ from .transport import quote
 # API: abstraction/benchmark_runner/remote_setup/api.md#constants
 MANIFEST_PATH = "implementation/{lang}/benchmark_manifest.toml"
 BRANCH_PREFIX = "impl/"
-PROGRAMS = ("server", "loadgen", "canceller")
+PROGRAMS = ("server", "loadgen", "ingress")
 MANIFEST_KEYS = {"lang", "required_tools", "build", "binaries"}
 OPTIONAL_MANIFEST_KEYS = {"thread_env"}
 
@@ -110,7 +110,7 @@ def read_manifest(path, lang):
         raise PinError(f"{path}: build must be a non-empty string")
     binaries = doc["binaries"]
     if not isinstance(binaries, dict) or set(binaries) != set(PROGRAMS):
-        raise PinError(f"{path}: binaries must have exactly server, loadgen, canceller")
+        raise PinError(f"{path}: binaries must have exactly server, loadgen, ingress")
     for name, rel in binaries.items():
         if not isinstance(rel, str) or not rel or os.path.isabs(rel) or ".." in rel.split("/"):
             raise PinError(f"{path}: binaries.{name} must be a relative path without '..'")

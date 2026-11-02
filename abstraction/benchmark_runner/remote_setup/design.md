@@ -98,6 +98,6 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | Design subsection | Implementation (file:line) |
 |---|---|
 | [SourcePin](#sourcepin) | [remote_setup.py:70](../../../implementation/scripts/benchrunner/remote_setup.py#L70) |
-| [BuildManifest](#buildmanifest) | [remote_setup.py:34](../../../implementation/scripts/benchrunner/remote_setup.py#L34), [remote_setup.py:95](../../../implementation/scripts/benchrunner/remote_setup.py#L95), [test_remote_setup.py:31](../../../implementation/scripts/tests/test_remote_setup.py#L31), [test_remote_setup.py:44](../../../implementation/scripts/tests/test_remote_setup.py#L44) |
-| [Machine setup](#machine-setup) | [remote_setup.py:129](../../../implementation/scripts/benchrunner/remote_setup.py#L129), [remote_setup.py:165](../../../implementation/scripts/benchrunner/remote_setup.py#L165), [test_remote_setup.py:70](../../../implementation/scripts/tests/test_remote_setup.py#L70) |
+| [BuildManifest](#buildmanifest) | [remote_setup.py:34](../../../implementation/scripts/benchrunner/remote_setup.py#L34), [remote_setup.py:95](../../../implementation/scripts/benchrunner/remote_setup.py#L95), [test_remote_setup.py:31](../../../implementation/scripts/tests/test_remote_setup.py#L31), [test_remote_setup.py:46](../../../implementation/scripts/tests/test_remote_setup.py#L46) |
+| [Machine setup](#machine-setup) | [remote_setup.py:129](../../../implementation/scripts/benchrunner/remote_setup.py#L129), [remote_setup.py:165](../../../implementation/scripts/benchrunner/remote_setup.py#L165), [test_remote_setup.py:72](../../../implementation/scripts/tests/test_remote_setup.py#L72) |
 <!-- trace:end -->

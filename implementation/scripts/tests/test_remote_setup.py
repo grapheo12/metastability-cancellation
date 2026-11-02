@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/remote_setup/design.md (remote_setup v0.2.0)
+# Source: abstraction/benchmark_runner/remote_setup/design.md (remote_setup v0.3.0)
 import os
 import tempfile
 import unittest
@@ -14,7 +14,7 @@ build = "go build ./..."
 [binaries]
 server = "bin/server"
 loadgen = "bin/loadgen"
-canceller = "bin/canceller"
+ingress = "bin/ingress"
 """
 
 
@@ -34,7 +34,9 @@ class ManifestTest(unittest.TestCase):
         for bad, fragment in [(GOOD, "branch says"), (GOOD.replace('"bin/server"', '"../server"'), "without '..'"),
                               (GOOD.replace('["go"]', '["g o"]'), "command names"),
                               ("extra = 1\n" + GOOD, "optionally thread_env"),
-                              ('thread_env = "1X"\n' + GOOD, "environment variable name")]:
+                              ('thread_env = "1X"\n' + GOOD, "environment variable name"),
+                              (GOOD.replace('ingress = "bin/ingress"', 'canceller = "bin/canceller"'),
+                               "exactly server, loadgen, ingress")]:
             lang = "rust" if fragment == "branch says" else "go"
             with self.assertRaises(remote_setup.PinError) as cm:
                 self.read(bad, lang)
