@@ -93,5 +93,7 @@ downloads each point's results and plots all points together.
 | **PointTable** | One row per SweepPoint with swept values and key metrics | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#pointtable) |
 | **SweepPlots** | The standard figures over all SweepPoints | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#sweepplots) |
 | **ThroughputLatencyPlot** | Latency percentiles against measured goodput, one line per series, points in swept order | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#throughputlatencyplot) |
+| **CancelOfferedFraction** | A point's canceller `cancel_rate` divided by its `global_rate` (PointTable column `cx_offered_fraction`) | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#cancelofferedfraction) |
+| **ThroughputLatencyNormalizedPlot** | ThroughputLatencyPlot with goodput scaled by `1 / (1 - CancelOfferedFraction)` | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#throughputlatencynormalizedplot) |
 
 See [api.md](api.md) for the external interface and [design.md](design.md) for the component breakdown.
