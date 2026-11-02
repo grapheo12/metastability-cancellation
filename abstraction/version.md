@@ -24,3 +24,4 @@
 | 0.3.7 | 2026-11-02T00:00:00Z | Glossary: ProcessPlacement, CancelRateFraction, ThroughputLatencyPlot |
 | 0.3.8 | 2026-11-02T00:00:00Z | `/cancel` wire contract: `202` body is a CancelReplyBody. Child bump: protocol 0.3.0 |
 | 0.3.9 | 2026-11-02T00:00:00Z | Child bump: server 0.2.2 (cancel_tracker 0.2.0) |
+| 0.3.10 | 2026-11-02T00:00:00Z | Child bump: server 0.2.3 (ping_handler 0.3.0) |

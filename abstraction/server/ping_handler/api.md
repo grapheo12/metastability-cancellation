@@ -21,5 +21,5 @@ connection's single worker, so it uses `rng` and the state exclusively. See
 - [../../protocol/api.md](../../protocol/api.md): `parse_body`, `split_request_id`, `build_body`
 - [../../sampling/api.md](../../sampling/api.md): `exponential_us`
 - [../cpu_burner/api.md](../cpu_burner/api.md): `burn`
-- [../cancel_tracker/api.md](../cancel_tracker/api.md): `should_cancel`, `CancelCounters`
+- [../cancel_tracker/api.md](../cancel_tracker/api.md): `should_cancel`, `registry_publish_finished`, `CancelCounters`
 - [../api.md](../api.md#constants): `CHECK_ITER`
