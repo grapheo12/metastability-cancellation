@@ -175,5 +175,6 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [run_point](#run_point) | [executor.py:47](../../../implementation/scripts/benchrunner/executor.py#L47) |
 | [ServerLifecycle](#serverlifecycle) | [executor.py:94](../../../implementation/scripts/benchrunner/executor.py#L94), [executor.py:113](../../../implementation/scripts/benchrunner/executor.py#L113) |
 | [ClientRun](#clientrun) | [executor.py:133](../../../implementation/scripts/benchrunner/executor.py#L133) |
+| [ProcessPlacement](#processplacement) |  |
 | [Point outputs](#point-outputs) | [executor.py:161](../../../implementation/scripts/benchrunner/executor.py#L161), [executor.py:182](../../../implementation/scripts/benchrunner/executor.py#L182) |
 <!-- trace:end -->

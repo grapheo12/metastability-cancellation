@@ -202,5 +202,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 |---|---|
 | [BenchConfig](#benchconfig) | [config.py:13](../../../implementation/scripts/benchrunner/config.py#L13), [config.py:140](../../../implementation/scripts/benchrunner/config.py#L140), [test_config.py:72](../../../implementation/scripts/tests/test_config.py#L72) |
 | [SweepExpansion](#sweepexpansion) | [config.py:250](../../../implementation/scripts/benchrunner/config.py#L250), [test_config.py:47](../../../implementation/scripts/tests/test_config.py#L47), [test_config.py:57](../../../implementation/scripts/tests/test_config.py#L57) |
+| [ProcessPlacement](#processplacement) |  |
+| [CancelRateFraction](#cancelratefraction) |  |
 | [Argument formatting](#argument-formatting) | [config.py:272](../../../implementation/scripts/benchrunner/config.py#L272), [test_config.py:92](../../../implementation/scripts/tests/test_config.py#L92) |
 <!-- trace:end -->

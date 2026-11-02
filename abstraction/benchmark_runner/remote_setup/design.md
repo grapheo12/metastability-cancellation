@@ -86,6 +86,7 @@ Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t imple
 
 - The operator-side git queries (`symbolic-ref`, `status --porcelain --untracked-files=no`, `rev-parse`, `ls-remote`) run through `subprocess.run(["git", "-C", repo_root, ...])`.
 - The manifest is parsed with `tomllib`. Its errors are `PinError`, because they are found while pinning.
+- `thread_env` is checked with the regular expression `[A-Za-z_][A-Za-z0-9_]*` (`re.fullmatch`). `BuildManifest.thread_env`, `MachineReady.thread_env` and `MachineReady.cpu_pinning` are dataclass fields with defaults `None`, `None`, `False`. In the same-machine case the client's MachineReady copies both from the server's.
 - The two machines are set up in parallel with `concurrent.futures.ThreadPoolExecutor(max_workers=2)`. The same-machine case is detected by equal `(host, user, ssh_port, workdir)`, and then setup runs once.
 
 ### Traceability
@@ -96,7 +97,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [SourcePin](#sourcepin) | [remote_setup.py:61](../../../implementation/scripts/benchrunner/remote_setup.py#L61) |
-| [BuildManifest](#buildmanifest) | [remote_setup.py:28](../../../implementation/scripts/benchrunner/remote_setup.py#L28), [remote_setup.py:86](../../../implementation/scripts/benchrunner/remote_setup.py#L86), [test_remote_setup.py:29](../../../implementation/scripts/tests/test_remote_setup.py#L29) |
-| [Machine setup](#machine-setup) | [remote_setup.py:117](../../../implementation/scripts/benchrunner/remote_setup.py#L117), [remote_setup.py:151](../../../implementation/scripts/benchrunner/remote_setup.py#L151) |
+| [SourcePin](#sourcepin) | [remote_setup.py:70](../../../implementation/scripts/benchrunner/remote_setup.py#L70) |
+| [BuildManifest](#buildmanifest) | [remote_setup.py:34](../../../implementation/scripts/benchrunner/remote_setup.py#L34), [remote_setup.py:95](../../../implementation/scripts/benchrunner/remote_setup.py#L95), [test_remote_setup.py:31](../../../implementation/scripts/tests/test_remote_setup.py#L31), [test_remote_setup.py:44](../../../implementation/scripts/tests/test_remote_setup.py#L44) |
+| [Machine setup](#machine-setup) | [remote_setup.py:129](../../../implementation/scripts/benchrunner/remote_setup.py#L129), [remote_setup.py:165](../../../implementation/scripts/benchrunner/remote_setup.py#L165), [test_remote_setup.py:70](../../../implementation/scripts/tests/test_remote_setup.py#L70) |
 <!-- trace:end -->

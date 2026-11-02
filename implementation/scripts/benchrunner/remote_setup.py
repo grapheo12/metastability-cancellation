@@ -1,8 +1,9 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/remote_setup/design.md (remote_setup v0.1.0)
+# Source: abstraction/benchmark_runner/remote_setup/design.md (remote_setup v0.2.0)
 """SourcePin, BuildManifest, and per-machine clone/checkout/tool check/build."""
 
 import os
+import re
 import subprocess
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
@@ -14,6 +15,11 @@ from .transport import quote
 MANIFEST_PATH = "implementation/{lang}/benchmark_manifest.toml"
 BRANCH_PREFIX = "impl/"
 PROGRAMS = ("server", "loadgen", "canceller")
+MANIFEST_KEYS = {"lang", "required_tools", "build", "binaries"}
+OPTIONAL_MANIFEST_KEYS = {"thread_env"}
+
+
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 class PinError(Exception):
@@ -31,6 +37,7 @@ class BuildManifest:
     required_tools: list
     build: str
     binaries: dict
+    thread_env: str | None = None
 
 
 @dataclass
@@ -50,6 +57,8 @@ class MachineReady:
     repo_dir: str
     binaries: dict
     data_addr: str | None
+    thread_env: str | None = None
+    cpu_pinning: bool = False
 
 
 def _git(repo_root, *args):
@@ -89,8 +98,8 @@ def read_manifest(path, lang):
             doc = tomllib.load(f)
     except (OSError, tomllib.TOMLDecodeError) as e:
         raise PinError(f"cannot read BuildManifest {path}: {e}") from None
-    if set(doc) != {"lang", "required_tools", "build", "binaries"}:
-        raise PinError(f"{path}: keys must be exactly lang, required_tools, build, binaries")
+    if not MANIFEST_KEYS <= set(doc) or not set(doc) <= MANIFEST_KEYS | OPTIONAL_MANIFEST_KEYS:
+        raise PinError(f"{path}: keys must be lang, required_tools, build, binaries and optionally thread_env")
     if doc["lang"] != lang:
         raise PinError(f"{path}: lang is {doc['lang']!r}, branch says {lang!r}")
     tools = doc["required_tools"]
@@ -105,7 +114,10 @@ def read_manifest(path, lang):
     for name, rel in binaries.items():
         if not isinstance(rel, str) or not rel or os.path.isabs(rel) or ".." in rel.split("/"):
             raise PinError(f"{path}: binaries.{name} must be a relative path without '..'")
-    return BuildManifest(lang, tools, doc["build"], binaries)
+    thread_env = doc.get("thread_env")
+    if thread_env is not None and not (isinstance(thread_env, str) and _ENV_NAME.fullmatch(thread_env)):
+        raise PinError(f"{path}: thread_env must be an environment variable name")
+    return BuildManifest(lang, tools, doc["build"], binaries, thread_env)
 
 
 def _tail(r, n=20):
@@ -144,7 +156,9 @@ def setup_machine(t, role, machine, pin, timeout_s):
         path = f"{impl_dir}/{pin.manifest.binaries[program]}"
         check(f"test -x {quote(path)}", f"{program} binary missing after build")
         binaries[program] = path
-    return MachineReady(t, role, workdir, repo_dir, binaries, machine.data_addr if role == "server" else None)
+    cpu_pinning = t.run("command -v taskset", 30).exit_status == 0  # absent is not an error
+    return MachineReady(t, role, workdir, repo_dir, binaries, machine.data_addr if role == "server" else None,
+                        pin.manifest.thread_env, cpu_pinning)
 
 
 # Design: abstraction/benchmark_runner/remote_setup/design.md#machine-setup
@@ -155,7 +169,8 @@ def setup_machines(server_t, client_t, config, pin):
     same = (s.host, s.user, s.ssh_port, s.workdir) == (c.host, c.user, c.ssh_port, c.workdir)
     if same:
         ready = setup_machine(server_t, "server", s, pin, timeout)
-        return ready, MachineReady(client_t, "client", ready.workdir, ready.repo_dir, ready.binaries, None)
+        return ready, MachineReady(client_t, "client", ready.workdir, ready.repo_dir, ready.binaries, None,
+                                   ready.thread_env, ready.cpu_pinning)
     with ThreadPoolExecutor(max_workers=2) as pool:
         fs = pool.submit(setup_machine, server_t, "server", s, pin, timeout)
         fc = pool.submit(setup_machine, client_t, "client", c, pin, timeout)

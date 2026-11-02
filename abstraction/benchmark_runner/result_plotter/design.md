@@ -114,4 +114,5 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 |---|---|
 | [PointTable](#pointtable) | [plotter.py:89](../../../implementation/scripts/benchrunner/plotter.py#L89), [test_plotter.py:33](../../../implementation/scripts/tests/test_plotter.py#L33) |
 | [SweepPlots](#sweepplots) | [plotter.py:46](../../../implementation/scripts/benchrunner/plotter.py#L46), [plotter.py:121](../../../implementation/scripts/benchrunner/plotter.py#L121), [test_plotter.py:49](../../../implementation/scripts/tests/test_plotter.py#L49) |
+| [ThroughputLatencyPlot](#throughputlatencyplot) |  |
 <!-- trace:end -->
