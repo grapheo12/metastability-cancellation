@@ -20,3 +20,4 @@
 | 0.3.3 | 2026-11-02T00:00:00Z | Child bump: benchmark_runner 0.1.2 (remote_setup 0.2.0) |
 | 0.3.4 | 2026-11-02T00:00:00Z | Child bump: benchmark_runner 0.1.3 (config 0.2.0) |
 | 0.3.5 | 2026-11-02T00:00:00Z | Child bump: benchmark_runner 0.1.4 (experiment_executor 0.2.0) |
+| 0.3.6 | 2026-11-02T00:00:00Z | Child bump: benchmark_runner 0.1.5 (result_plotter 0.2.0) |
