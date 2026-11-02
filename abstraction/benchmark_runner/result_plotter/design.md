@@ -10,6 +10,7 @@ function build_table(output_dir):
         status = "done" if exists(pdir/done) else "failed" if exists(pdir/failed) else "pending"
         row = {point: params.id, status: status} + params.swept
         for each metric column (api.md#pointrow): read it from its source file if present, else empty
+        row.cx_offered_fraction = cancel_offered_fraction(params)          # CancelOfferedFraction
         rows.append(row)
     swept_keys = keys of params.swept of the first row (they are identical for every point of a run)
     write output_dir/all_points.csv: header = columns in api order, one line per row,
@@ -51,6 +52,7 @@ function plot(output_dir):
 | `outcomes` | `x_key` | `lg_ok / lg_scheduled`, `lg_rejected / lg_scheduled`, `lg_cancelled / lg_scheduled`, `lg_error / lg_scheduled`, `lg_not_sent / lg_scheduled` | linear, 0 to 1 |
 | `server_counters` | `x_key` | `srv_cancelled_before_processing`, `srv_cancelled_during_processing`, `srv_completed_before_cancel` | linear |
 | `throughput_latency` | `lg_goodput` | `e2e_p50_us`, `e2e_p99_us`, `e2e_p999_us` | log |
+| `throughput_latency_normalized` | `lg_goodput / (1 - cx_offered_fraction)` | `e2e_p50_us`, `e2e_p99_us`, `e2e_p999_us` | log |
 | `server_counters_normalized` | `x_key` | `srv_cancelled_before_processing / cx_sent`, `srv_cancelled_during_processing / cx_sent`, `srv_completed_before_cancel / cx_sent` | linear, 0 to 1 |
 
 A fraction is empty when its denominator (`lg_scheduled` or `cx_sent`) is empty or `0`.
@@ -101,3 +103,49 @@ fractions gives 2 lines, labelled `canceller.cancel_rate_fraction=0.01` and `…
 
 With no swept keys there is one line, `all`, of one point. A done point with an empty `lg_goodput` is left out of
 this figure only.
+
+## CancelOfferedFraction
+
+The **CancelOfferedFraction** of a point is the cancel load it offered, relative to its request load: the
+canceller's `cancel_rate` over the load generator's `global_rate`, both read from the point's `params.json`
+argument lists. With a CancelRateFraction sweep it equals the swept fraction up to float rounding
+([../config/design.md#cancelratefraction](../config/design.md#cancelratefraction)).
+
+```
+function cancel_offered_fraction(params):
+    if params.canceller_args is none: return empty                     # canceller disabled
+    c = value of cancel_rate in params.canceller_args                  # empty if absent or not a number
+    g = value of global_rate in params.loadgen_args
+    if c or g is empty, or g == 0: return empty
+    return float(c) / float(g)
+```
+
+| `global_rate` | `cancel_rate` | `cx_offered_fraction` |
+|---|---|---|
+| 1000 | 200.0 | 0.2 |
+| 500 | 5.0 | 0.01 |
+| 1000 | (canceller disabled) | empty |
+
+## ThroughputLatencyNormalizedPlot
+
+The **ThroughputLatencyNormalizedPlot** (`throughput_latency_normalized.png`) is the ThroughputLatencyPlot with
+each point's goodput scaled by `1 / (1 - cx_offered_fraction)`. It answers what goodput the same points would
+show if the share of load the canceller aims at had not been removed. Everything else (subplots, series, swept-order
+joining, y scale, legend) is as in the ThroughputLatencyPlot.
+
+```
+function normalized_goodput(row):
+    if row.lg_goodput is empty: return empty
+    f = row.cx_offered_fraction, or 0 if empty                         # no cancel load
+    if f >= 1: return empty                                            # undefined: point left out
+    return row.lg_goodput / (1 - f)                                    # float division
+```
+
+x-axis label: `lg_goodput / (1 - cx_offered_fraction) (requests/s)`.
+
+| `lg_goodput` | `cx_offered_fraction` | x | Check |
+|---|---|---|---|
+| 819.0 | 0.2 | 1023.75 | 819 / 0.8 |
+| 491.0 | 0.01 | 495.9596… | 491 / 0.99 |
+| 992.0 | empty | 992.0 | f = 0 |
+| 50.0 | 1.0 | empty | point left out |
