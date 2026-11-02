@@ -77,6 +77,8 @@ downloads each point's results and plots all points together.
 | **DrainPhase** | Time after `duration_s` when no new requests are sent and in-flight ones resolve | [load_generator/run_controller/design.md](load_generator/run_controller/design.md#drainphase) |
 | **RequestRecord** | One output row per scheduled arrival | [load_generator/metrics/design.md](load_generator/metrics/design.md#requestrecord) |
 | **LoadCanceller** | Single-sender, open-loop Poisson source of `/cancel` requests | [load_canceller/design.md](load_canceller/design.md#cancelschedule) |
+| **FinishedWatermark** | Per client, the highest RequestId the server has finished with any outcome; reported in every `/cancel` `202` | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#finishedwatermark) |
+| **CancelReplyBody** | JSON body `{"finished":..}` of a `202` answer to `/cancel` | [protocol/design.md](protocol/design.md#cancelreplybody) |
 | **CancelTargetChoice** | Uniform client choice, target = reported FinishedWatermark + a step in `[1, incr_rand_max]` | [load_canceller/design.md](load_canceller/design.md#canceltargetchoice) |
 | **BenchmarkRunner** | Operator-side driver: setup over SSH, sweep execution, result download, plots | [benchmark_runner/design.md](benchmark_runner/design.md#run-flow) |
 | **BenchConfig** | The validated TOML experiment configuration | [benchmark_runner/config/design.md](benchmark_runner/config/design.md#benchconfig) |
