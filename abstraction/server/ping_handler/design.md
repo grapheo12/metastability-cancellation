@@ -138,5 +138,6 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [Sampling order](#sampling-order) | [pinghandler.go:40](../../../implementation/go/internal/server/pinghandler.go#L40) |
 | [CancelCheckPoints](#cancelcheckpoints) | [pinghandler.go:46](../../../implementation/go/internal/server/pinghandler.go#L46) |
 | [last_completed_id](#last_completed_id) | [pinghandler.go:66](../../../implementation/go/internal/server/pinghandler.go#L66) |
+| [FinishedWatermark](#finishedwatermark) |  |
 | [Response status](#response-status) | [pinghandler.go:69](../../../implementation/go/internal/server/pinghandler.go#L69) |
 <!-- trace:end -->

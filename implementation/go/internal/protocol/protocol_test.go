@@ -1,4 +1,4 @@
-// Source: abstraction/protocol/design.md (protocol v0.2.1)
+// Source: abstraction/protocol/design.md (protocol v0.3.0)
 package protocol
 
 import "testing"
@@ -74,5 +74,45 @@ func TestParseBodyRejects(t *testing.T) {
 	}
 	if id, err := ParseBody([]byte(`{"payload":"x","id":"42","extra":[1]}`)); err != nil || id != 42 {
 		t.Errorf("lenient parse failed: %d %v", id, err)
+	}
+}
+
+// Design: abstraction/protocol/design.md#cancelreplybody
+func TestCancelReplyWorkedExamples(t *testing.T) {
+	cases := []struct {
+		finished uint64
+		ok       bool
+		body     string
+		n        int
+	}{
+		{0, false, `{"finished":null}`, 17},
+		{0, true, `{"finished":"0"}`, 16},
+		{12884901893, true, `{"finished":"12884901893"}`, 26},
+		{^uint64(0), true, `{"finished":"18446744073709551615"}`, 35},
+	}
+	for _, c := range cases {
+		b := BuildCancelReply(c.finished, c.ok)
+		if string(b) != c.body || len(b) != c.n {
+			t.Errorf("BuildCancelReply(%d, %v) = %s (%d bytes)", c.finished, c.ok, b, len(b))
+		}
+		f, ok, err := ParseCancelReply(b)
+		if err != nil || ok != c.ok || f != c.finished {
+			t.Errorf("ParseCancelReply(%s) = %d %v %v", b, f, ok, err)
+		}
+	}
+}
+
+// Design: abstraction/protocol/design.md#cancelreplybody
+func TestParseCancelReplyTable(t *testing.T) {
+	if f, ok, err := ParseCancelReply([]byte(`{"finished":"42"}`)); err != nil || !ok || f != 42 {
+		t.Errorf("42: %d %v %v", f, ok, err)
+	}
+	if _, ok, err := ParseCancelReply([]byte(`{ "finished" : null }`)); err != nil || ok {
+		t.Errorf("null: %v %v", ok, err)
+	}
+	for _, s := range []string{`{"finished":42}`, `{}`, ``, `null`, `{"finished":""}`, `{"finished":"4x"}`} {
+		if _, _, err := ParseCancelReply([]byte(s)); err == nil {
+			t.Errorf("ParseCancelReply(%q) accepted", s)
+		}
 	}
 }

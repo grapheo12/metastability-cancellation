@@ -189,7 +189,8 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 - Package `internal/protocol`, file `protocol.go`. Constants are untyped Go constants named in CamelCase after the API names.
 - `ParseError` is the sentinel `protocol.ErrParse`. `ParseBody` unmarshals into `map[string]json.RawMessage` (not a struct), so keys match case-sensitively as the design requires. Then it decodes `id` as a `string`. A JSON `null` decodes to `""` and is rejected by the empty check.
 - `BuildBody` panics if `k < 0`. This cannot happen once `ValidateBodySize` has passed.
-- Tests: `protocol_test.go` checks every worked example and the parse rejection cases.
+- `BuildCancelReply(finished, ok)` and `ParseCancelReply(body) (finished, ok, err)` stand for `u64 | none`: `ok == false` is none. `ParseCancelReply` detects `null` by the raw JSON value `null`. The digit-string checks are shared with `ParseBody` in the helper `parseDecimalString`.
+- Tests: `protocol_test.go` checks every worked example (including the CancelReplyBody byte lengths) and the parse rejection cases.
 
 ### Traceability
 
@@ -203,7 +204,8 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [PaddedJsonBody](#paddedjsonbody) | [protocol.go:49](../../implementation/go/internal/protocol/protocol.go#L49), [protocol.go:54](../../implementation/go/internal/protocol/protocol.go#L54), [protocol_test.go:29](../../implementation/go/internal/protocol/protocol_test.go#L29) |
 | [Minimum body size](#minimum-body-size) | [protocol.go:74](../../implementation/go/internal/protocol/protocol.go#L74), [protocol_test.go:58](../../implementation/go/internal/protocol/protocol_test.go#L58) |
 | [CancelBody](#cancelbody) | [protocol.go:84](../../implementation/go/internal/protocol/protocol.go#L84), [protocol_test.go:50](../../implementation/go/internal/protocol/protocol_test.go#L50) |
-| [Parsing](#parsing) | [protocol.go:92](../../implementation/go/internal/protocol/protocol.go#L92), [protocol_test.go:65](../../implementation/go/internal/protocol/protocol_test.go#L65) |
+| [CancelReplyBody](#cancelreplybody) | [protocol.go:92](../../implementation/go/internal/protocol/protocol.go#L92), [protocol.go:103](../../implementation/go/internal/protocol/protocol.go#L103), [protocol_test.go:81](../../implementation/go/internal/protocol/protocol_test.go#L81), [protocol_test.go:106](../../implementation/go/internal/protocol/protocol_test.go#L106) |
+| [Parsing](#parsing) | [protocol.go:125](../../implementation/go/internal/protocol/protocol.go#L125), [protocol.go:149](../../implementation/go/internal/protocol/protocol.go#L149), [protocol_test.go:65](../../implementation/go/internal/protocol/protocol_test.go#L65) |
 | [Status classification (load-generator client)](#status-classification-load-generator-client) | [client.go:118](../../implementation/go/internal/loadgen/client.go#L118) |
 | [Status classification (load canceller)](#status-classification-load-canceller) | [canceller.go:280](../../implementation/go/internal/canceller/canceller.go#L280) |
 <!-- trace:end -->

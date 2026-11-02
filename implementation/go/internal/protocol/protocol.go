@@ -1,7 +1,7 @@
 // Package protocol implements the /ping and /cancel wire formats shared by
 // the server, the load generator and the load canceller.
 //
-// Source: abstraction/protocol/design.md (protocol v0.2.1)
+// Source: abstraction/protocol/design.md (protocol v0.3.0)
 package protocol
 
 import (
@@ -85,19 +85,44 @@ func BuildCancelBody(id uint64) []byte {
 	return []byte(`{"id":"` + strconv.FormatUint(id, 10) + `"}`)
 }
 
-// ParseBody leniently extracts the RequestId from a PaddedJsonBody or a CancelBody.
-// Keys are matched case-sensitively; "payload" and any other field are ignored.
+// BuildCancelReply returns the CancelReplyBody of a 202 answer to /cancel:
+// {"finished":"<dec>"} when ok is true, {"finished":null} otherwise.
 //
-// Design: abstraction/protocol/design.md#parsing
-func ParseBody(body []byte) (uint64, error) {
+// Design: abstraction/protocol/design.md#cancelreplybody
+func BuildCancelReply(finished uint64, ok bool) []byte {
+	if !ok {
+		return []byte(`{"finished":null}`)
+	}
+	return []byte(`{"finished":"` + strconv.FormatUint(finished, 10) + `"}`)
+}
+
+// ParseCancelReply extracts the FinishedWatermark from a CancelReplyBody.
+// ok is false for a JSON null; err is ErrParse for anything else that is not a decimal string.
+//
+// Design: abstraction/protocol/design.md#cancelreplybody
+func ParseCancelReply(body []byte) (finished uint64, ok bool, err error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(body, &obj); err != nil || obj == nil {
-		return 0, ErrParse
+		return 0, false, ErrParse
 	}
-	raw, ok := obj["id"]
-	if !ok {
-		return 0, ErrParse
+	raw, present := obj["finished"]
+	if !present {
+		return 0, false, ErrParse
 	}
+	if string(raw) == "null" {
+		return 0, false, nil
+	}
+	n, err := parseDecimalString(raw)
+	if err != nil {
+		return 0, false, ErrParse
+	}
+	return n, true, nil
+}
+
+// parseDecimalString decodes a JSON string of 1..20 ASCII digits that fits in a u64.
+//
+// Design: abstraction/protocol/design.md#parsing
+func parseDecimalString(raw json.RawMessage) (uint64, error) {
 	var s string
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return 0, ErrParse
@@ -115,4 +140,20 @@ func ParseBody(body []byte) (uint64, error) {
 		return 0, ErrParse
 	}
 	return n, nil
+}
+
+// ParseBody leniently extracts the RequestId from a PaddedJsonBody or a CancelBody.
+// Keys are matched case-sensitively; "payload" and any other field are ignored.
+//
+// Design: abstraction/protocol/design.md#parsing
+func ParseBody(body []byte) (uint64, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(body, &obj); err != nil || obj == nil {
+		return 0, ErrParse
+	}
+	raw, ok := obj["id"]
+	if !ok {
+		return 0, ErrParse
+	}
+	return parseDecimalString(raw)
 }
