@@ -77,3 +77,29 @@ function choose(lb):
 | (2, 0) | 0 | (0, 2) | 2 | 1 < 2 |
 
 `B = 1`: every policy returns 0 and draws nothing.
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- File `internal/ingress/balancer.go`. BackendStats fields are `atomic.Int64` (`outstanding`) and `atomic.Uint64` (the rest); `ForwardOutcome` is an `int` enum.
+- `round_robin` is `rr.Add(1) - 1` mod B. The `power_of_two` draws happen under `rngMu`; mapping the draws to a backend is the pure function `powerOfTwoChoice(i, j, outstanding)`, so the worked example is tested without randomness.
+- Go 1.21 built-in `min`/`max` order the pair.
+- Tests: `balancer_test.go` checks the worked example of every policy, that `B = 1` picks 0 without drawing, and that `pick`/`finish` keep the counters.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [LoadBalancer](#loadbalancer) | [balancer.go:52](../../../implementation/go/internal/ingress/balancer.go#L52), [balancer.go:64](../../../implementation/go/internal/ingress/balancer.go#L64), [balancer.go:76](../../../implementation/go/internal/ingress/balancer.go#L76), [balancer.go:86](../../../implementation/go/internal/ingress/balancer.go#L86), [balancer.go:115](../../../implementation/go/internal/ingress/balancer.go#L115), [balancer_test.go:69](../../../implementation/go/internal/ingress/balancer_test.go#L69) |
+| [LbPolicy](#lbpolicy) | [balancer.go:128](../../../implementation/go/internal/ingress/balancer.go#L128), [balancer.go:158](../../../implementation/go/internal/ingress/balancer.go#L158), [balancer_test.go:22](../../../implementation/go/internal/ingress/balancer_test.go#L22), [balancer_test.go:33](../../../implementation/go/internal/ingress/balancer_test.go#L33), [balancer_test.go:49](../../../implementation/go/internal/ingress/balancer_test.go#L49), [config.go:26](../../../implementation/go/internal/ingress/config.go#L26) |
+| [Worked examples](#worked-examples) | [balancer_test.go:22](../../../implementation/go/internal/ingress/balancer_test.go#L22), [balancer_test.go:33](../../../implementation/go/internal/ingress/balancer_test.go#L33), [balancer_test.go:49](../../../implementation/go/internal/ingress/balancer_test.go#L49) |
+<!-- trace:end -->
