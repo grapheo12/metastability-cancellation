@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.4.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.5.0)
 """PointTable (all_points.csv), SweepPlots and ThroughputLatencyPlot (plots/*.png)."""
 
 import csv
@@ -23,8 +23,8 @@ METRIC_COLUMNS = [
     ("e2e_p999_us", "loadgen.summary.json", ["e2e_latency_us", "p999"]),
     ("service_p50_us", "loadgen.summary.json", ["service_latency_us", "p50"]),
     ("service_p99_us", "loadgen.summary.json", ["service_latency_us", "p99"]),
-    ("cx_sent", "canceller.summary.json", ["counts", "sent"]),
-    ("cx_accepted", "canceller.summary.json", ["counts", "accepted"]),
+    ("cx_sent", ("ingress.summary.json", "canceller.summary.json"), ["counts", "sent"]),
+    ("cx_accepted", ("ingress.summary.json", "canceller.summary.json"), ["counts", "accepted"]),
     ("srv_cancelled_before_processing", "server_counters.json", ["cancelled_before_processing"]),
     ("srv_cancelled_during_processing", "server_counters.json", ["cancelled_during_processing"]),
     ("srv_completed_before_cancel", "server_counters.json", ["completed_before_cancel"]),
@@ -67,8 +67,8 @@ FIGURES = [
 ]
 X_LABELS = {"lg_goodput": "lg_goodput (requests/s)",
             "lg_goodput_normalized": "lg_goodput / (1 - cx_offered_fraction) (requests/s)"}
-# Derived PointTable column, placed right after cx_accepted (api.md#pointrow).
-DERIVED_AFTER = {"cx_accepted": "cx_offered_fraction"}
+# Derived PointTable columns, placed right after cx_accepted (api.md#pointrow).
+DERIVED_AFTER = {"cx_accepted": ["cx_offered_fraction", "lb_imbalance"]}
 
 
 class NothingToPlot(Exception):
@@ -114,16 +114,20 @@ def build_table(output_dir):
             "failed" if os.path.exists(os.path.join(pdir, "failed")) else "pending"
         row = {"point": params["id"], "status": status, **params["swept"]}
         docs = {}
-        for column, source, keys in METRIC_COLUMNS:
-            if source not in docs:
-                docs[source] = _read_json(os.path.join(pdir, source))
+        for column, sources, keys in METRIC_COLUMNS:
+            for source in (sources if isinstance(sources, tuple) else (sources,)):  # first file present wins
+                if source not in docs:
+                    docs[source] = _read_json(os.path.join(pdir, source))
+                if docs[source] is not None:
+                    break
             row[column] = _dig(docs[source], keys)
         row["cx_offered_fraction"] = cancel_offered_fraction(params)
+        row["lb_imbalance"] = lb_imbalance(_read_json(os.path.join(pdir, "ingress.summary.json")))
         rows.append(row)
     swept_keys = swept_keys or []
     metric_header = []
     for c, _, _ in METRIC_COLUMNS:
-        metric_header += [c] + ([DERIVED_AFTER[c]] if c in DERIVED_AFTER else [])
+        metric_header += [c] + DERIVED_AFTER.get(c, [])
     header = ["point", "status"] + swept_keys + metric_header
     with open(os.path.join(output_dir, "all_points.csv"), "w", newline="") as f:
         w = csv.writer(f, lineterminator="\n")
@@ -152,13 +156,28 @@ def _number(v):
 # Design: abstraction/benchmark_runner/result_plotter/design.md#cancelofferedfraction
 def cancel_offered_fraction(params):
     """cancel_rate / global_rate from params.json; None when undefined."""
-    if params.get("canceller_args") is None:
+    if "ingress_args" in params:
+        c = _number(dict(params["ingress_args"]).get("cancel_rate", 0))  # Ingress default: no cancels
+    elif params.get("canceller_args") is None:  # a run made before the Ingress, canceller disabled
         return None
-    c = _number(dict(params["canceller_args"]).get("cancel_rate"))
+    else:
+        c = _number(dict(params["canceller_args"]).get("cancel_rate"))
     g = _number(dict(params.get("loadgen_args") or []).get("global_rate"))
     if c is None or g is None or g == 0:
         return None
     return float(c) / float(g)
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#lbimbalance
+def lb_imbalance(summary):
+    """max/min of the backends' forwarded counts; None with < 2 backends or a zero count."""
+    backends = (summary or {}).get("backends") or []
+    if len(backends) < 2:
+        return None
+    f = [b.get("forwarded") for b in backends]
+    if not all(_number(x) is not None for x in f) or min(f) == 0:
+        return None
+    return max(f) / min(f)
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#throughputlatencynormalizedplot

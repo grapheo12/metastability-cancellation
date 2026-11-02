@@ -187,7 +187,8 @@ Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t imple
 - Plots use `matplotlib` with the non-interactive `Agg` backend, imported lazily so the table can be built without it. Each figure is one row of subplots (`figsize` 6 in per subplot), saved at 120 dpi.
 - A categorical x-axis is drawn at positions `0..k-1` with tick labels in first-appearance order. A log y scale is applied only when every plotted value is positive.
 - Fractions use one helper, `_frac(name, denominator)`, for both `/ lg_scheduled` and `/ cx_sent`.
-- `cx_offered_fraction` is computed by `cancel_offered_fraction(params)` while building each row, and placed in the CSV right after `cx_accepted` (`DERIVED_AFTER`). The normalized x of the ThroughputLatencyNormalizedPlot is `normalized_goodput(row)`. Both throughput figures share `throughput_latency_line(..., xvalue)`, with the x function looked up in `X_VALUES`.
+- `cx_offered_fraction` and `lb_imbalance` are computed by `cancel_offered_fraction(params)` and `lb_imbalance(ingress summary)` while building each row, and placed in the CSV right after `cx_accepted` (`DERIVED_AFTER`).
+- A metric column may name several source files in order (`cx_*` read `ingress.summary.json`, then `canceller.summary.json`); the first file present is used, so runs made before the Ingress still plot. The normalized x of the ThroughputLatencyNormalizedPlot is `normalized_goodput(row)`. Both throughput figures share `throughput_latency_line(..., xvalue)`, with the x function looked up in `X_VALUES`.
 - `FIGURES` entries carry their x source (`"x_key"` or `"lg_goodput"`). The ThroughputLatencyPlot line is built by the pure function `throughput_latency_line`, so its swept-order rule is unit-tested without `matplotlib`. Its x-axis is always numeric, so categorical tick labels are applied only to `x_key` figures.
 
 ### Traceability
@@ -198,10 +199,10 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [PointTable](#pointtable) | [plotter.py:105](../../../implementation/scripts/benchrunner/plotter.py#L105), [test_plotter.py:33](../../../implementation/scripts/tests/test_plotter.py#L33) |
-| [SweepPlots](#sweepplots) | [plotter.py:48](../../../implementation/scripts/benchrunner/plotter.py#L48), [plotter.py:63](../../../implementation/scripts/benchrunner/plotter.py#L63), [plotter.py:180](../../../implementation/scripts/benchrunner/plotter.py#L180), [test_plotter.py:52](../../../implementation/scripts/tests/test_plotter.py#L52), [test_plotter.py:79](../../../implementation/scripts/tests/test_plotter.py#L79) |
-| [ThroughputLatencyPlot](#throughputlatencyplot) | [plotter.py:59](../../../implementation/scripts/benchrunner/plotter.py#L59), [plotter.py:141](../../../implementation/scripts/benchrunner/plotter.py#L141), [test_plotter.py:69](../../../implementation/scripts/tests/test_plotter.py#L69) |
-| [CancelOfferedFraction](#cancelofferedfraction) | [plotter.py:153](../../../implementation/scripts/benchrunner/plotter.py#L153), [test_plotter.py:89](../../../implementation/scripts/tests/test_plotter.py#L89) |
-| [LbImbalance](#lbimbalance) |  |
-| [ThroughputLatencyNormalizedPlot](#throughputlatencynormalizedplot) | [plotter.py:61](../../../implementation/scripts/benchrunner/plotter.py#L61), [plotter.py:165](../../../implementation/scripts/benchrunner/plotter.py#L165), [test_plotter.py:100](../../../implementation/scripts/tests/test_plotter.py#L100) |
+| [PointTable](#pointtable) | [plotter.py:105](../../../implementation/scripts/benchrunner/plotter.py#L105), [test_plotter.py:33](../../../implementation/scripts/tests/test_plotter.py#L33), [test_plotter.py:120](../../../implementation/scripts/tests/test_plotter.py#L120) |
+| [SweepPlots](#sweepplots) | [plotter.py:48](../../../implementation/scripts/benchrunner/plotter.py#L48), [plotter.py:63](../../../implementation/scripts/benchrunner/plotter.py#L63), [plotter.py:199](../../../implementation/scripts/benchrunner/plotter.py#L199), [test_plotter.py:52](../../../implementation/scripts/tests/test_plotter.py#L52), [test_plotter.py:79](../../../implementation/scripts/tests/test_plotter.py#L79) |
+| [ThroughputLatencyPlot](#throughputlatencyplot) | [plotter.py:59](../../../implementation/scripts/benchrunner/plotter.py#L59), [plotter.py:145](../../../implementation/scripts/benchrunner/plotter.py#L145), [test_plotter.py:69](../../../implementation/scripts/tests/test_plotter.py#L69) |
+| [CancelOfferedFraction](#cancelofferedfraction) | [plotter.py:157](../../../implementation/scripts/benchrunner/plotter.py#L157), [test_plotter.py:89](../../../implementation/scripts/tests/test_plotter.py#L89) |
+| [LbImbalance](#lbimbalance) | [plotter.py:172](../../../implementation/scripts/benchrunner/plotter.py#L172), [test_plotter.py:111](../../../implementation/scripts/tests/test_plotter.py#L111) |
+| [ThroughputLatencyNormalizedPlot](#throughputlatencynormalizedplot) | [plotter.py:61](../../../implementation/scripts/benchrunner/plotter.py#L61), [plotter.py:184](../../../implementation/scripts/benchrunner/plotter.py#L184), [test_plotter.py:102](../../../implementation/scripts/tests/test_plotter.py#L102) |
 <!-- trace:end -->

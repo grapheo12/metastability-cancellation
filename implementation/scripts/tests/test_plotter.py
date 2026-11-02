@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.4.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.5.0)
 import csv
 import json
 import os
@@ -88,7 +88,9 @@ class PointTableTest(unittest.TestCase):
     # Design: abstraction/benchmark_runner/result_plotter/design.md#cancelofferedfraction
     def test_cancel_offered_fraction(self):
         p = {"loadgen_args": [["global_rate", 1000]], "canceller_args": [["cancel_rate", 200.0]]}
-        self.assertEqual(plotter.cancel_offered_fraction(p), 0.2)
+        self.assertEqual(plotter.cancel_offered_fraction(p), 0.2)  # a run made before the Ingress
+        self.assertEqual(plotter.cancel_offered_fraction({"loadgen_args": [["global_rate", 1000]],
+                                                          "ingress_args": [["lb_policy", "round_robin"]]}), 0.0)
         self.assertEqual(plotter.cancel_offered_fraction({"loadgen_args": [["global_rate", 500]],
                                                           "canceller_args": [["cancel_rate", 5.0]]}), 0.01)
         self.assertIsNone(plotter.cancel_offered_fraction({"loadgen_args": [["global_rate", 1000]],
@@ -104,6 +106,35 @@ class PointTableTest(unittest.TestCase):
         self.assertEqual(n({"lg_goodput": 992.0, "cx_offered_fraction": None}), 992.0)
         self.assertIsNone(n({"lg_goodput": 50.0, "cx_offered_fraction": 1.0}))
         self.assertIsNone(n({"lg_goodput": None, "cx_offered_fraction": 0.1}))
+
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#lbimbalance
+    def test_lb_imbalance(self):
+        f = lambda *xs: plotter.lb_imbalance({"backends": [{"forwarded": x} for x in xs]})
+        self.assertEqual(f(15000, 15000), 1.0)
+        self.assertAlmostEqual(f(15300, 14700), 15300 / 14700)
+        self.assertIsNone(f(30000))
+        self.assertIsNone(f(30000, 0))
+        self.assertIsNone(plotter.lb_imbalance(None))
+
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#pointtable
+    def test_ingress_sources(self):
+        with tempfile.TemporaryDirectory() as out:
+            write_point(out, 0, {"load_gen.global_rate": 1000})
+            pdir = os.path.join(out, "points", "point_0000")
+            with open(os.path.join(pdir, "params.json"), "w") as f:
+                json.dump({"id": 0, "swept": {"load_gen.global_rate": 1000}, "server_args": [],
+                           "loadgen_args": [["global_rate", 1000]], "ingress_args": [["cancel_rate", 200.0]]}, f)
+            with open(os.path.join(pdir, "ingress.summary.json"), "w") as f:
+                json.dump({"counts": {"sent": 180, "accepted": 179},
+                           "backends": [{"forwarded": 15300}, {"forwarded": 14700}]}, f)
+            rows, _ = plotter.build_table(out)
+            r = rows[0]
+            self.assertEqual((r["cx_sent"], r["cx_accepted"], r["cx_offered_fraction"]), (180, 179, 0.2))
+            self.assertAlmostEqual(r["lb_imbalance"], 15300 / 14700)
+            with open(os.path.join(out, "all_points.csv")) as f:
+                cols = next(csv.reader(f))
+            i = cols.index("cx_accepted")
+            self.assertEqual(cols[i + 1:i + 3], ["cx_offered_fraction", "lb_imbalance"])
 
     def test_nothing_to_plot(self):
         try:
