@@ -11,6 +11,7 @@ function build_table(output_dir):
         row = {point: params.id, status: status} + params.swept
         for each metric column (api.md#pointrow): read it from its source file if present, else empty
         row.cx_offered_fraction = cancel_offered_fraction(params)          # CancelOfferedFraction
+        row.lb_imbalance = lb_imbalance(pdir/ingress.summary.json)          # LbImbalance
         rows.append(row)
     swept_keys = keys of params.swept of the first row (they are identical for every point of a run)
     write output_dir/all_points.csv: header = columns in api order, one line per row,
@@ -64,7 +65,7 @@ need not add up to 1: ids still pending or in an inbox at shutdown, and stale id
 | `cx_sent` | Counters (before, during, completed) | Plotted | Check |
 |---|---|---|---|
 | 1000 | (600, 50, 300) | (0.6, 0.05, 0.3) | 600/1000, 50/1000, 300/1000 |
-| 0 or empty (canceller disabled) | any | (empty, empty, empty) | no denominator |
+| 0 or empty (no cancels) | any | (empty, empty, empty) | no denominator |
 
 Worked example: with swept keys `[load_gen.global_rate, server.cancel_mode, load_gen.num_clients]`, the x-axis
 is `load_gen.global_rate` and the lines are labelled `server.cancel_mode=ignore, load_gen.num_clients=8`,
@@ -93,8 +94,8 @@ function draw_throughput_latency(figure, done, x_key, series, position):
 Points are joined in swept order, so past saturation, where goodput stops growing or falls while offered load
 rises, a line bends back on itself instead of being re-sorted into a misleading monotone curve.
 
-Worked example: `sweep_order = ["load_gen.global_rate", "canceller.cancel_rate_fraction"]` with 3 rates and 2
-fractions gives 2 lines, labelled `canceller.cancel_rate_fraction=0.01` and `…=0.5`, of 3 points each:
+Worked example: `sweep_order = ["load_gen.global_rate", "ingress.cancel_rate_fraction"]` with 3 rates and 2
+fractions gives 2 lines, labelled `ingress.cancel_rate_fraction=0.01` and `…=0.5`, of 3 points each:
 
 | Line | Points in order (`global_rate` → (goodput, p99)) |
 |---|---|
@@ -107,14 +108,17 @@ this figure only.
 ## CancelOfferedFraction
 
 The **CancelOfferedFraction** of a point is the cancel load it offered, relative to its request load: the
-canceller's `cancel_rate` over the load generator's `global_rate`, both read from the point's `params.json`
+Ingress's `cancel_rate` over the load generator's `global_rate`, both read from the point's `params.json`
 argument lists. With a CancelRateFraction sweep it equals the swept fraction up to float rounding
 ([../config/design.md#cancelratefraction](../config/design.md#cancelratefraction)).
 
 ```
 function cancel_offered_fraction(params):
-    if params.canceller_args is none: return empty                     # canceller disabled
-    c = value of cancel_rate in params.canceller_args                  # empty if absent or not a number
+    if params has ingress_args:
+        c = value of cancel_rate in params.ingress_args, or 0 if absent   # the Ingress default: no cancels
+    else:                                                              # a run made before the Ingress
+        if params.canceller_args is none: return empty                 # canceller disabled
+        c = value of cancel_rate in params.canceller_args
     g = value of global_rate in params.loadgen_args
     if c or g is empty, or g == 0: return empty
     return float(c) / float(g)
@@ -124,13 +128,34 @@ function cancel_offered_fraction(params):
 |---|---|---|
 | 1000 | 200.0 | 0.2 |
 | 500 | 5.0 | 0.01 |
-| 1000 | (canceller disabled) | empty |
+| 1000 | not set (Ingress) | 0.0 |
+| 1000 | (old run, canceller disabled) | empty |
+
+## LbImbalance
+
+**LbImbalance** shows how evenly the Ingress's LoadBalancer spread the point's requests over the backends.
+
+```
+function lb_imbalance(summary_path):
+    backends = read_json(summary_path).backends, or empty if missing
+    if len(backends) < 2: return empty
+    f = [b.forwarded for b in backends]
+    if min(f) == 0: return empty
+    return max(f) / min(f)                                             # float; 1.0 is perfectly even
+```
+
+| `forwarded` per backend | `lb_imbalance` |
+|---|---|
+| (15000, 15000) | 1.0 |
+| (15300, 14700) | 1.0408… (15300 / 14700) |
+| (30000) (one backend) | empty |
+| (30000, 0) | empty |
 
 ## ThroughputLatencyNormalizedPlot
 
 The **ThroughputLatencyNormalizedPlot** (`throughput_latency_normalized.png`) is the ThroughputLatencyPlot with
 each point's goodput scaled by `1 / (1 - cx_offered_fraction)`. It answers what goodput the same points would
-show if the share of load the canceller aims at had not been removed. Everything else (subplots, series, swept-order
+show if the share of load the LoadCanceller aims at had not been removed. Everything else (subplots, series, swept-order
 joining, y scale, legend) is as in the ThroughputLatencyPlot.
 
 ```
