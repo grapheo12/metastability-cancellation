@@ -127,6 +127,6 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [GatedArrival](#gatedarrival) | [client.go:45](../../../implementation/go/internal/loadgen/client.go#L45) |
 | [send_one](#send_one) | [client.go:69](../../../implementation/go/internal/loadgen/client.go#L69) |
 | [SLOCancellation](#slocancellation) | [client.go:95](../../../implementation/go/internal/loadgen/client.go#L95) |
-| [Outcome classification](#outcome-classification) | [client.go:118](../../../implementation/go/internal/loadgen/client.go#L118), [metrics_test.go:36](../../../implementation/go/internal/loadgen/metrics_test.go#L36) |
+| [Outcome classification](#outcome-classification) | [client.go:118](../../../implementation/go/internal/loadgen/client.go#L118), [metrics_test.go:40](../../../implementation/go/internal/loadgen/metrics_test.go#L40) |
 | [State machine](#state-machine) | [client.go:35](../../../implementation/go/internal/loadgen/client.go#L35) |
 <!-- trace:end -->

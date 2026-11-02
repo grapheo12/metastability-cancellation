@@ -71,7 +71,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | Design subsection | Implementation (file:line) |
 |---|---|
 | [RequestRecord](#requestrecord) | [metrics.go:16](../../../implementation/go/internal/loadgen/metrics.go#L16), [metrics.go:141](../../../implementation/go/internal/loadgen/metrics.go#L141) |
-| [Collection](#collection) | [metrics.go:82](../../../implementation/go/internal/loadgen/metrics.go#L82), [metrics_test.go:19](../../../implementation/go/internal/loadgen/metrics_test.go#L19) |
+| [Collection](#collection) | [metrics.go:82](../../../implementation/go/internal/loadgen/metrics.go#L82), [metrics_test.go:23](../../../implementation/go/internal/loadgen/metrics_test.go#L23) |
 | [Summary](#summary) | [metrics.go:82](../../../implementation/go/internal/loadgen/metrics.go#L82) |
-| [Percentiles](#percentiles) | [metrics.go:118](../../../implementation/go/internal/loadgen/metrics.go#L118), [metrics_test.go:7](../../../implementation/go/internal/loadgen/metrics_test.go#L7) |
+| [Percentiles](#percentiles) | [metrics.go:118](../../../implementation/go/internal/loadgen/metrics.go#L118), [metrics_test.go:11](../../../implementation/go/internal/loadgen/metrics_test.go#L11) |
 <!-- trace:end -->
