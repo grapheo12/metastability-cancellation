@@ -15,8 +15,9 @@ One row of the PointTable. The columns, in order, are:
 | `lg_offered_rate`, `lg_goodput` | `loadgen.summary.json` `rates_per_s.offered`, `.goodput` |
 | `e2e_p50_us`, `e2e_p99_us`, `e2e_p999_us` | `loadgen.summary.json` `e2e_latency_us` |
 | `service_p50_us`, `service_p99_us` | `loadgen.summary.json` `service_latency_us` |
-| `cx_sent`, `cx_accepted` | `canceller.summary.json` `counts` (empty if the canceller is disabled) |
-| `cx_offered_fraction` | `params.json`: the canceller's `cancel_rate` divided by the load generator's `global_rate`. Empty if the canceller is disabled or either value is missing, not a number, or `global_rate` is `0`. See [design.md#cancelofferedfraction](design.md#cancelofferedfraction) |
+| `cx_sent`, `cx_accepted` | `ingress.summary.json` `counts`; for runs made before the Ingress, `canceller.summary.json` `counts` (empty if neither exists) |
+| `cx_offered_fraction` | `params.json`: the Ingress's `cancel_rate` (`0` if not set) divided by the load generator's `global_rate`. See [design.md#cancelofferedfraction](design.md#cancelofferedfraction) |
+| `lb_imbalance` | `ingress.summary.json` `backends`: largest `forwarded` divided by smallest. Empty with fewer than 2 backends, or if a backend forwarded nothing. See [design.md#lbimbalance](design.md#lbimbalance) |
 | `srv_cancelled_before_processing`, `srv_cancelled_during_processing`, `srv_completed_before_cancel` | `server_counters.json` |
 
 A value that is missing or `null` is an empty field. See [design.md#pointtable](design.md#pointtable).
@@ -34,4 +35,4 @@ Writes `all_points.csv` and `plots/*.png` ([../api.md#output-directory](../api.m
 
 - [../config/api.md](../config/api.md#sweeppoint): the `params.json` format
 - [../../load_generator/metrics/api.md](../../load_generator/metrics/api.md#summary-json): load generator summary fields
-- [../../ingress/load_canceller/api.md](../../ingress/load_canceller/api.md#outputs): canceller summary fields
+- [../../ingress/api.md](../../ingress/api.md#output_pathsummaryjson): Ingress summary fields (`counts`, `backends`)
