@@ -200,12 +200,12 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [RequestId](#requestid) | [protocol.go:35](../../implementation/go/internal/protocol/protocol.go#L35), [protocol.go:42](../../implementation/go/internal/protocol/protocol.go#L42), [protocol_test.go:7](../../implementation/go/internal/protocol/protocol_test.go#L7) |
-| [PaddedJsonBody](#paddedjsonbody) | [protocol.go:49](../../implementation/go/internal/protocol/protocol.go#L49), [protocol.go:54](../../implementation/go/internal/protocol/protocol.go#L54), [protocol_test.go:29](../../implementation/go/internal/protocol/protocol_test.go#L29) |
-| [Minimum body size](#minimum-body-size) | [protocol.go:74](../../implementation/go/internal/protocol/protocol.go#L74), [protocol_test.go:58](../../implementation/go/internal/protocol/protocol_test.go#L58) |
-| [CancelBody](#cancelbody) | [protocol.go:84](../../implementation/go/internal/protocol/protocol.go#L84), [protocol_test.go:50](../../implementation/go/internal/protocol/protocol_test.go#L50) |
-| [CancelReplyBody](#cancelreplybody) | [protocol.go:92](../../implementation/go/internal/protocol/protocol.go#L92), [protocol.go:103](../../implementation/go/internal/protocol/protocol.go#L103), [protocol_test.go:81](../../implementation/go/internal/protocol/protocol_test.go#L81), [protocol_test.go:106](../../implementation/go/internal/protocol/protocol_test.go#L106) |
-| [Parsing](#parsing) | [protocol.go:125](../../implementation/go/internal/protocol/protocol.go#L125), [protocol.go:149](../../implementation/go/internal/protocol/protocol.go#L149), [protocol_test.go:65](../../implementation/go/internal/protocol/protocol_test.go#L65) |
+| [RequestId](#requestid) | [protocol.go:36](../../implementation/go/internal/protocol/protocol.go#L36), [protocol.go:43](../../implementation/go/internal/protocol/protocol.go#L43), [protocol_test.go:7](../../implementation/go/internal/protocol/protocol_test.go#L7) |
+| [PaddedJsonBody](#paddedjsonbody) | [protocol.go:50](../../implementation/go/internal/protocol/protocol.go#L50), [protocol.go:55](../../implementation/go/internal/protocol/protocol.go#L55), [protocol_test.go:29](../../implementation/go/internal/protocol/protocol_test.go#L29) |
+| [Minimum body size](#minimum-body-size) | [protocol.go:75](../../implementation/go/internal/protocol/protocol.go#L75), [protocol_test.go:58](../../implementation/go/internal/protocol/protocol_test.go#L58) |
+| [CancelBody](#cancelbody) | [protocol.go:85](../../implementation/go/internal/protocol/protocol.go#L85), [protocol_test.go:50](../../implementation/go/internal/protocol/protocol_test.go#L50) |
+| [CancelReplyBody](#cancelreplybody) | [protocol.go:93](../../implementation/go/internal/protocol/protocol.go#L93), [protocol.go:104](../../implementation/go/internal/protocol/protocol.go#L104), [protocol_test.go:81](../../implementation/go/internal/protocol/protocol_test.go#L81), [protocol_test.go:106](../../implementation/go/internal/protocol/protocol_test.go#L106) |
+| [Parsing](#parsing) | [protocol.go:126](../../implementation/go/internal/protocol/protocol.go#L126), [protocol.go:150](../../implementation/go/internal/protocol/protocol.go#L150), [protocol_test.go:65](../../implementation/go/internal/protocol/protocol_test.go#L65) |
 | [Status classification (load-generator client)](#status-classification-load-generator-client) | [client.go:118](../../implementation/go/internal/loadgen/client.go#L118) |
 | [Status classification (load canceller)](#status-classification-load-canceller) | [canceller.go:325](../../implementation/go/internal/canceller/canceller.go#L325) |
 <!-- trace:end -->

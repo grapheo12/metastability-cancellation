@@ -1,4 +1,4 @@
-// Source: abstraction/protocol/design.md (protocol v0.3.0)
+// Source: abstraction/protocol/design.md (protocol v0.3.1)
 package protocol
 
 import "testing"

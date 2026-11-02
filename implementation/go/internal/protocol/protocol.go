@@ -1,7 +1,7 @@
 // Package protocol implements the /ping and /cancel wire formats shared by
 // the server, the load generator and the load canceller.
 //
-// Source: abstraction/protocol/design.md (protocol v0.3.0)
+// Source: abstraction/protocol/design.md (protocol v0.3.1)
 package protocol
 
 import (
@@ -22,6 +22,7 @@ const (
 	StatusBadRequest       = 400
 	StatusNotFound         = 404
 	StatusMethodNotAllowed = 405
+	StatusBadGateway       = 502 // sent only by an Ingress
 	RSTCodeCancel          = 0x8
 	MinBodyBytes           = 42
 )

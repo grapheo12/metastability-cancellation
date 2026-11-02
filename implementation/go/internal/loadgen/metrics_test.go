@@ -1,7 +1,11 @@
 // Source: abstraction/load_generator/metrics/design.md (metrics v0.1.1)
 package loadgen
 
-import "testing"
+import (
+	"testing"
+
+	"testbed/internal/protocol"
+)
 
 // Design: abstraction/load_generator/metrics/design.md#percentiles
 func TestPercentileWorkedExample(t *testing.T) {
@@ -36,7 +40,8 @@ func TestAggregateCounts(t *testing.T) {
 func TestClassify(t *testing.T) {
 	body := []byte(`{"id":"7","payload":""}`)
 	if classify(202, body, 7) != OutcomeOK || classify(503, body, 7) != OutcomeRejected ||
-		classify(500, body, 7) != OutcomeError || classify(202, body, 8) != OutcomeError {
+		classify(500, body, 7) != OutcomeError || classify(202, body, 8) != OutcomeError ||
+		classify(protocol.StatusBadGateway, nil, 7) != OutcomeError { // 502 from an Ingress
 		t.Fatal("classification table")
 	}
 }
