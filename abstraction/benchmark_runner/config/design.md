@@ -6,7 +6,7 @@
 PROGRAM_PARAMS = {
   "server":    ["response_rate", "response_bytes", "cancel_mode", "cancel_check_interval_us", "seed"],
   "load_gen":  ["num_clients", "global_rate", "request_bytes", "slo_ms", "duration_s", "seed"],
-  "canceller": ["cancel_rate", "duration_s", "seed"],
+  "canceller": ["cancel_rate", "incr_rand_max", "duration_s", "seed"],
 }
 PLACEMENT_KEYS = ["threads", "cpu_set"]                                  # ProcessPlacement
 RUNNER_KEYS = { "server":    ["listen_port"] + PLACEMENT_KEYS,
