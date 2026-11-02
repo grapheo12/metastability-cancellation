@@ -52,11 +52,11 @@ function bench_run(config_path):
 
 ```
 function check_placement_support(config, pin):
-    if any of [server], [load_gen], [canceller] sets threads and pin.manifest.thread_env is none:
+    if any of [server], [load_gen], [ingress] sets threads and pin.manifest.thread_env is none:
         PinError("threads is set, but implementation/<lang>/benchmark_manifest.toml has no thread_env")
 
 function warn_unpinned(config, ready_server, ready_client):
-    for (role, ready, sections) in [("server", ready_server, [server]), ("client", ready_client, [load_gen, canceller])]:
+    for (role, ready, sections) in [("server", ready_server, [server]), ("client", ready_client, [load_gen, ingress])]:
         if any of sections sets cpu_set and not ready.cpu_pinning:
             print to stderr, once per role: "warning: cpu_set ignored on <role>: taskset not found"
 ```
