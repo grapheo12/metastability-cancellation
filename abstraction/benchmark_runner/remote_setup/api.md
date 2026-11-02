@@ -32,7 +32,7 @@ The TOML file each implementation provides:
 | `build` | string | Shell command run in `implementation/<lang>/` that builds all three programs |
 | `binaries.server` | path | Server executable, relative to `implementation/<lang>/` |
 | `binaries.loadgen` | path | Load generator executable, same base |
-| `binaries.canceller` | path | Load canceller executable, same base |
+| `binaries.ingress` | path | Ingress executable, same base. A manifest that still names `binaries.canceller` is rejected |
 | `thread_env` | string, optional | Name of the environment variable that sets a program's worker-thread count in this language's runtime. Needed only when a config sets `threads`. Absent: the implementation has no such knob |
 
 See [design.md#buildmanifest](design.md#buildmanifest).

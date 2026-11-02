@@ -27,7 +27,7 @@ file is the same one the machines will check out.
 ```
 function read_manifest(path):
     doc = parse_toml(path)                       # PinError if missing or malformed
-    require the keys lang, required_tools, build, binaries.{server, loadgen, canceller}
+    require the keys lang, required_tools, build, binaries.{server, loadgen, ingress} (exactly these three binaries)
     allow one optional key, thread_env; any other key is a PinError
     if thread_env is present: require a non-empty string of letters, digits and "_" not starting with a digit
     require required_tools to be an array of non-empty strings without whitespace
@@ -56,7 +56,7 @@ function setup_machine(t, role, machine, pin, timeout_s):
         check(t, "command -v <tool>", "<tool> is not installed on <role> (the runner does not install tools)")
     impl_dir = repo_dir + "/implementation/" + pin.lang
     check(t, "cd <impl_dir> && " + pin.manifest.build, timeout_s)     # the build string is used verbatim
-    for program in [server, loadgen, canceller]:
+    for program in [server, loadgen, ingress]:
         path = impl_dir + "/" + manifest.binaries[program]
         check(t, "test -x " + quote(path), "<program> binary missing after build on <role>")
     cpu_pinning = (run(t, "command -v taskset").exit_status == 0)    # absent is not an error
