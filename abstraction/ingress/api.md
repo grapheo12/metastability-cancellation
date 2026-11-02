@@ -2,8 +2,9 @@
 
 ## Program parameters
 
-Each is passed as `--<name> <value>`. Invalid or missing required parameters make the program exit non-zero with a
-one-line error before any network activity ([design.md#configuration-validation](design.md#configuration-validation)).
+Same as [../api.md#ingress-parameters](../api.md#ingress-parameters). Each is passed as `--<name> <value>`. Invalid
+or missing required parameters make the program exit non-zero with a one-line error before any network activity
+([design.md#configuration-validation](design.md#configuration-validation)).
 
 | Parameter | Type / unit | Default | Meaning |
 |---|---|---|---|

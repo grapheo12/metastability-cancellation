@@ -7,3 +7,4 @@
 | 0.1.2 | 2026-11-02T00:00:00Z | Child added: upstream_pool 0.1.0 |
 | 0.1.3 | 2026-11-02T00:00:00Z | Child added: load_canceller 0.3.0 (moved from the root) |
 | 0.1.4 | 2026-11-02T00:00:00Z | Child added: frontend 0.1.0 |
+| 0.1.5 | 2026-11-02T00:00:00Z | Parameters restated from the root `api.md` (Ingress parameters) |

@@ -1,6 +1,6 @@
 # HTTP/2 Cancellation Testbed — Description
 
-Components: Protocol, Sampling, Server, Load Generator, Load Canceller, Benchmark Runner.
+Components: Protocol, Sampling, Server, Load Generator, Ingress, Benchmark Runner.
 
 ## Problem
 
@@ -10,8 +10,8 @@ HTTP/2 service. The testbed covers two cancellation paths:
 - **Client-side SLO cancellation.** A client gives up on a request that has not come back within its
   SLO and resets the stream. The server can keep burning CPU on the abandoned request, or notice the
   reset and stop.
-- **Server-directed cancellation.** A separate **LoadCanceller** sends `DELETE /cancel` naming a
-  RequestId. The server records it in a global **CancelRegistry**. The worker serving that client
+- **Server-directed cancellation.** A **LoadCanceller** inside the Ingress sends `DELETE /cancel` naming a
+  RequestId that is in flight. The server records it in a global **CancelRegistry**. The worker serving that client
   checks for cancellations at fixed **CancelCheckPoints** and stops the request if it matches,
   answering `503`. **CancelCounters** record whether each cancellation landed before processing,
   during processing, or after the request had already completed.
@@ -23,17 +23,19 @@ It exposes `POST /ping` and `DELETE /cancel`. For each `/ping` it busy-loops on 
 time drawn from an exponential distribution, then answers `202` (completed) or `503` (cancelled by
 `/cancel`) with a JSON body of a fixed size. A **Load Generator** simulates `N` clients, each on its
 own connection. Every client has its own Poisson arrival clock (rate `global_rate / N`) but keeps at
-most one request outstanding (a gated closed loop), and cancels requests that go past their SLO. A
-**Load Canceller** sends `/cancel` requests on its own Poisson clock from a single sender, choosing
-client ids uniformly at random and aiming each cancel a small random step past the latest request
-the server reports as finished for that client (the server answers every `/cancel` with it).
-The load generator writes per-request records plus a summary. The canceller writes per-cancel records
-plus a summary. The server prints its CancelCounters when it shuts down.
+most one request outstanding (a gated closed loop), and cancels requests that go past their SLO. The
+clients talk to an **Ingress**, which serves the same `/ping`: for each request it picks a backend server
+with a **LoadBalancer** (`lb_policy`), forwards the request on its own connection for that client and
+backend, waits, and relays the answer. While it waits it records the request in a lock-free
+**InFlightMap**. A **LoadCanceller** inside the Ingress sends `/cancel` requests on its own Poisson clock,
+each naming a request drawn uniformly from the InFlightMap, to the backend serving it. The load generator
+writes per-request records plus a summary. The Ingress writes per-cancel records plus a summary with
+per-backend counts. Each server prints its CancelCounters when it shuts down.
 
 A **BenchmarkRunner** drives whole experiments from an operator's machine. It reads one **BenchConfig**,
 prepares a server machine and a client machine over SSH (clone, pin the exact commit, check tools,
-build), then runs every point of the **SweepExpansion** of the swept parameters. Each point runs the
-server on the server machine and the load generator plus the canceller on the client machine. The runner
+build), then runs every point of the **SweepExpansion** of the swept parameters. Each point runs one or more
+server instances on the server machine, and the Ingress plus the load generator on the client machine. The runner
 downloads each point's results and plots all points together.
 
 ## Goals
@@ -76,10 +78,18 @@ downloads each point's results and plots all points together.
 | **SLOCancellation** | Client resets a stream once `slo_ms` has passed since send | [load_generator/client/design.md](load_generator/client/design.md#slocancellation) |
 | **DrainPhase** | Time after `duration_s` when no new requests are sent and in-flight ones resolve | [load_generator/run_controller/design.md](load_generator/run_controller/design.md#drainphase) |
 | **RequestRecord** | One output row per scheduled arrival | [load_generator/metrics/design.md](load_generator/metrics/design.md#requestrecord) |
-| **LoadCanceller** | Single-sender, open-loop Poisson source of `/cancel` requests | [ingress/load_canceller/design.md](ingress/load_canceller/design.md#cancelschedule) |
+| **LoadCanceller** | Single-sender, open-loop Poisson source of `/cancel` requests inside the Ingress | [ingress/load_canceller/design.md](ingress/load_canceller/design.md#cancelschedule) |
 | **FinishedWatermark** | Per client, the highest RequestId the server has finished with any outcome; reported in every `/cancel` `202` | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#finishedwatermark) |
 | **CancelReplyBody** | JSON body `{"finished":..}` of a `202` answer to `/cancel` | [protocol/design.md](protocol/design.md#cancelreplybody) |
-| **CancelTargetChoice** | Uniform client choice, target = reported FinishedWatermark + a step in `[1, incr_rand_max]` | [ingress/load_canceller/design.md](ingress/load_canceller/design.md#inflightvictimchoice) |
+| **InFlightVictimChoice** | The LoadCanceller's choice: one entry drawn uniformly from an InFlightMap snapshot | [ingress/load_canceller/design.md](ingress/load_canceller/design.md#inflightvictimchoice) |
+| **Ingress** | Program in front of several servers: LoadBalancer, UpstreamPool, InFlightMap and LoadCanceller | [ingress/design.md](ingress/design.md#structure) |
+| **LbPolicy** | `round_robin`, `least_outstanding` or `power_of_two` | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#lbpolicy) |
+| **LoadBalancer** | Picks a backend per `/ping` by LbPolicy and keeps BackendStats | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#loadbalancer) |
+| **BackendStats** | Per-backend atomic counters: outstanding, forwarded and outcomes | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#loadbalancer) |
+| **UpstreamPool** | One h2c connection per (client, backend), dialed once | [ingress/upstream_pool/design.md](ingress/upstream_pool/design.md#upstreampool) |
+| **InFlightMap** | Lock-free `client_id → InFlightEntry` of the requests the Ingress is waiting on | [ingress/inflight_map/design.md](ingress/inflight_map/design.md#inflightmap) |
+| **InFlightEntry** | `(request_id, server_id)` of one forward in progress | [ingress/inflight_map/design.md](ingress/inflight_map/design.md#inflightmap) |
+| **ForwardTask** | The Ingress's handling of one client `/ping`: pick, publish, forward, clear, relay | [ingress/frontend/design.md](ingress/frontend/design.md#forwardtask) |
 | **BenchmarkRunner** | Operator-side driver: setup over SSH, sweep execution, result download, plots | [benchmark_runner/design.md](benchmark_runner/design.md#run-flow) |
 | **BenchConfig** | The validated TOML experiment configuration | [benchmark_runner/config/design.md](benchmark_runner/config/design.md#benchconfig) |
 | **SweepExpansion** | Cross product of every array-valued program parameter, in a fixed order | [benchmark_runner/config/design.md](benchmark_runner/config/design.md#sweepexpansion) |

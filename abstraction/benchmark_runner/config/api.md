@@ -48,7 +48,7 @@ A key set here overrides the SSH configuration ([../remote_transport/design.md#s
 | `enabled` | boolean | `true` | Runner-owned. Whether the canceller runs at all. Cannot be swept |
 | `threads`, `cpu_set` | see [ProcessPlacement keys](#processplacement-keys) | unset | Runner-owned. The canceller's ProcessPlacement. Cannot be swept |
 | `cancel_rate_fraction` | float `> 0`, scalar or non-empty array | unset | Runner-owned **CancelRateFraction**: the canceller's `cancel_rate` becomes `fraction × global_rate` of the same SweepPoint. It **can** be swept. Setting it together with `cancel_rate` is an error. See [design.md#cancelratefraction](design.md#cancelratefraction) |
-| any canceller parameter except `target`, `num_clients`, `output_path` | scalar or non-empty array | `duration_s`: the point's load generator `duration_s`. Others: the program's default | See [../../api.md#canceller-parameters](../../api.md#canceller-parameters) |
+| any canceller parameter except `target`, `num_clients`, `output_path` | scalar or non-empty array | `duration_s`: the point's load generator `duration_s`. Others: the program's default | See [../../api.md#ingress-parameters](../../api.md#ingress-parameters) |
 
 ### ProcessPlacement keys
 

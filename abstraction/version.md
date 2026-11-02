@@ -40,3 +40,4 @@
 | 0.4.12 | 2026-11-02T00:00:00Z | Child bump: ingress 0.1.2 (upstream_pool 0.1.0) |
 | 0.4.13 | 2026-11-02T00:00:00Z | Child moved: load_canceller is now ingress/load_canceller (ingress 0.1.3). Link paths updated only; root content follows |
 | 0.4.14 | 2026-11-02T00:00:00Z | Child bump: ingress 0.1.4 (frontend 0.1.0) |
+| 0.5.0 | 2026-11-02T00:00:00Z | Programs are server, loadgen and ingress: Ingress parameters and outputs replace the canceller program; system summary, glossary (Ingress, LoadBalancer, LbPolicy, BackendStats, UpstreamPool, InFlightMap, InFlightEntry, ForwardTask, InFlightVictimChoice; CancelTargetChoice removed), component diagram, request and cancel flows, time bounds. Child bump: ingress 0.1.5 |
