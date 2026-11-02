@@ -34,3 +34,4 @@
 | 0.4.6 | 2026-11-02T00:00:00Z | Child bump: benchmark_runner 0.1.10 (result_plotter 0.4.0) |
 | 0.4.7 | 2026-11-02T00:00:00Z | Glossary: CancelOfferedFraction, ThroughputLatencyNormalizedPlot |
 | 0.4.8 | 2026-11-02T00:00:00Z | Child bump: protocol 0.3.1 |
+| 0.4.9 | 2026-11-02T00:00:00Z | Child bump: sampling 0.2.2 |
