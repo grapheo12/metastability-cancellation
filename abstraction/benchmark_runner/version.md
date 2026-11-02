@@ -6,3 +6,4 @@
 | 0.1.1 | 2026-10-31T00:00:00Z | Child bump: remote_transport 0.1.1 |
 | 0.1.2 | 2026-11-02T00:00:00Z | Child bump: remote_setup 0.2.0 |
 | 0.1.3 | 2026-11-02T00:00:00Z | Child bump: config 0.2.0. Run flow checks `threads` against the BuildManifest `thread_env` and warns when `cpu_set` cannot be applied |
+| 0.1.4 | 2026-11-02T00:00:00Z | Child bump: experiment_executor 0.2.0. Output directory lists `placement.json` |

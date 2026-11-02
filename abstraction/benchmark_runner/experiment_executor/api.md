@@ -23,12 +23,16 @@ They are used in [design.md#serverlifecycle](design.md#serverlifecycle) and [des
 Runs one SweepPoint and writes `<output_dir>/points/point_<id>/`
 ([../api.md#output-directory](../api.md#output-directory)). See [design.md#run_point](design.md#run_point).
 
+### `placement_prefix(program: "server" | "loadgen" | "canceller", point: SweepPoint, ready: MachineReady) -> list of string`
+The words that go before the program's executable on its command line: thread count and CPU pinning. Used by
+`start_server`, the client run and `placement.json`. See [design.md#processplacement](design.md#processplacement).
+
 ### `stop_server(server: MachineReady, stop_timeout_s) -> ok | FAILED`
 Stops the server recorded in the server machine's pid file, if one is running. It is also used on operator
 interrupt. See [design.md#serverlifecycle](design.md#serverlifecycle).
 
 ## Uses
 
-- [../config/api.md](../config/api.md): `SweepPoint`, `format_arg`
+- [../config/api.md](../config/api.md): `SweepPoint` (including `placement`), `format_arg`
 - [../remote_transport/api.md](../remote_transport/api.md): `run`, `start_background`, `signal`, `alive`, `fetch`, `quote`
-- [../remote_setup/api.md](../remote_setup/api.md): `MachineReady`
+- [../remote_setup/api.md](../remote_setup/api.md): `MachineReady` (including `thread_env`, `cpu_pinning`)
