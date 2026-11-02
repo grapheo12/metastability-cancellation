@@ -44,3 +44,5 @@
 | 0.5.1 | 2026-11-02T00:00:00Z | Child bump: benchmark_runner 0.2.0 (config 0.3.0) |
 | 0.5.2 | 2026-11-02T00:00:00Z | Child bump: benchmark_runner 0.2.1 (remote_setup 0.3.0) |
 | 0.5.3 | 2026-11-02T00:00:00Z | Child bump: benchmark_runner 0.2.2 (experiment_executor 0.3.0) |
+| 0.5.4 | 2026-11-02T00:00:00Z | Child bump: benchmark_runner 0.2.3 (result_plotter 0.5.0) |
+| 0.5.5 | 2026-11-02T00:00:00Z | Glossary: LbImbalance |
