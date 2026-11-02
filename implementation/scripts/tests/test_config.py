@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.2.1)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.2.2)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -77,8 +77,25 @@ class ConfigTest(unittest.TestCase):
         self.assertConfigError(BASE.replace("slo_ms = 5", ""), "load_gen.slo_ms is required")
         self.assertConfigError(BASE.replace("global_rate = [1000, 2000]", "global_rate = []"), "non-empty array")
         self.assertConfigError(BASE + '[run]\nsweep_order = ["server.cancel_mode"]\n', "exactly once")
-        self.assertConfigError(BASE.replace('host = "local"\n[machines.client]', 'host = "h"\n[machines.client]', 1),
-                               "machines.server.user is required")
+        self.assertConfigError(BASE.replace('host = "local"\n[machines.client]', 'host = "h"\nuser = ""\n[machines.client]', 1),
+                               "machines.server.user must be a non-empty string")
+        self.assertConfigError(BASE.replace('host = "local"\n[machines.client]', 'host = "h"\nssh_port = 0\n[machines.client]', 1),
+                               "ssh_port must be an integer")
+
+    # Design: abstraction/benchmark_runner/config/design.md#benchconfig
+    def test_ssh_config_alias_machines(self):
+        from unittest import mock
+        text = BASE.replace('[machines.server]\nhost = "local"', '[machines.server]\nhost = "metafail-exp-1"') \
+            .replace('[machines.client]\nhost = "local"', '[machines.client]\nhost = "metafail-exp-2"')
+        with mock.patch.object(cfg.transport, "ssh_hostname", return_value="18.144.18.190") as resolve:
+            c = self.load(text)
+        resolve.assert_called_once_with("metafail-exp-1")
+        s = c.machines["server"]
+        self.assertEqual((s.user, s.ssh_key, s.ssh_port, s.data_addr), (None, None, None, "18.144.18.190"))
+        with mock.patch.object(cfg.transport, "ssh_hostname") as resolve:
+            c = self.load(text.replace('host = "metafail-exp-1"', 'host = "metafail-exp-1"\ndata_addr = "172.31.23.63"'))
+        resolve.assert_not_called()
+        self.assertEqual(c.machines["server"].data_addr, "172.31.23.63")
 
     def test_defaults(self):
         c = self.load(BASE)

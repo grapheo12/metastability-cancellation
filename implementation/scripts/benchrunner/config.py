@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.2.1)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.2.2)
 """BenchConfig loading and validation, SweepExpansion, argument formatting."""
 
 import datetime
@@ -9,6 +9,8 @@ import re
 import subprocess
 import tomllib
 from dataclasses import dataclass
+
+from . import transport
 
 # Design: abstraction/benchmark_runner/config/design.md#benchconfig
 PROGRAM_PARAMS = {
@@ -45,9 +47,9 @@ class ConfigError(Exception):
 class Machine:
     role: str
     host: str
-    user: str | None
+    user: str | None  # None: from the operator's ~/.ssh/config
     ssh_key: str | None
-    ssh_port: int
+    ssh_port: int | None
     workdir: str
     data_addr: str | None
 
@@ -119,27 +121,31 @@ def _check_keys(table, allowed, where):
             raise ConfigError(f"unknown key {where}.{k}")
 
 
+# Design: abstraction/benchmark_runner/config/design.md#benchconfig
 def _machine(role, t):
+    """validate_machine: unset SSH keys stay None and come from the operator's ~/.ssh/config."""
     _check_keys(t, {"host", "user", "ssh_key", "ssh_port", "workdir"} | ({"data_addr"} if role == "server" else set()),
                 f"machines.{role}")
     host = t.get("host")
     if not isinstance(host, str) or not host:
         raise ConfigError(f"machines.{role}.host is required")
     local = host == "local"
+    for key in ("user", "ssh_key"):
+        if key in t and not (isinstance(t[key], str) and t[key]):
+            raise ConfigError(f"machines.{role}.{key} must be a non-empty string")
     user, key = t.get("user"), t.get("ssh_key")
-    if not local and not (isinstance(user, str) and user):
-        raise ConfigError(f"machines.{role}.user is required")
-    if not local and not (isinstance(key, str) and key):
-        raise ConfigError(f"machines.{role}.ssh_key is required")
-    port = t.get("ssh_port", 22)
-    if not _is_int(port) or not 1 <= port <= 65535:
+    port = t.get("ssh_port")
+    if port is not None and (not _is_int(port) or not 1 <= port <= 65535):
         raise ConfigError(f"machines.{role}.ssh_port must be an integer in 1..=65535")
     workdir = t.get("workdir", "~/cancellation-bench")
     if not isinstance(workdir, str) or not workdir:
         raise ConfigError(f"machines.{role}.workdir must be a non-empty string")
     data_addr = None
     if role == "server":
-        data_addr = t.get("data_addr", "127.0.0.1" if local else host)
+        if "data_addr" in t:
+            data_addr = t["data_addr"]
+        else:  # an alias only the operator's SSH config knows is resolved to its HostName
+            data_addr = "127.0.0.1" if local else transport.ssh_hostname(host)
         if not isinstance(data_addr, str) or not data_addr:
             raise ConfigError("machines.server.data_addr must be a non-empty string")
     return Machine(role, host, user, os.path.expanduser(key) if key else None, port, workdir, data_addr)
