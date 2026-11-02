@@ -103,3 +103,4 @@ separate program, so result tools can read them unchanged (all zero when it is d
 |---|---|
 | In-Flight Map | [inflight_map/api.md](inflight_map/api.md) |
 | Load Balancer | [load_balancer/api.md](load_balancer/api.md) |
+| Upstream Pool | [upstream_pool/api.md](upstream_pool/api.md) |
