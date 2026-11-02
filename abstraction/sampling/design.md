@@ -33,6 +33,8 @@ function derive_seed(base_seed, kind, index):
   `derive_seed(seed, STREAM_SERVER_CONNECTION, c)`. Server reproducibility therefore depends on
   connections being accepted in the same order.
 - The load canceller uses `derive_seed(seed, STREAM_CANCELLER, 0)`.
+- An Ingress LoadBalancer uses `derive_seed(seed, STREAM_INGRESS_LB, 0)`. Its stream is separate from the
+  canceller's, so the canceller's draws do not depend on how many requests were balanced.
 
 ## Generator
 

@@ -9,6 +9,7 @@ Kind tags for [design.md#seedderivation](design.md#seedderivation):
 | `STREAM_CLIENT_ARRIVALS` | `1` | Kind tag for load-generator client arrival streams |
 | `STREAM_SERVER_CONNECTION` | `2` | Kind tag for server per-connection ServiceTime streams |
 | `STREAM_CANCELLER` | `3` | Kind tag for the load canceller's single stream (index `0`) |
+| `STREAM_INGRESS_LB` | `4` | Kind tag for an Ingress LoadBalancer's single stream (index `0`), used by the `power_of_two` policy |
 
 ## Types
 
