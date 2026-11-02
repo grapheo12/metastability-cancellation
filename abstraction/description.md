@@ -25,7 +25,8 @@ time drawn from an exponential distribution, then answers `202` (completed) or `
 own connection. Every client has its own Poisson arrival clock (rate `global_rate / N`) but keeps at
 most one request outstanding (a gated closed loop), and cancels requests that go past their SLO. A
 **Load Canceller** sends `/cancel` requests on its own Poisson clock from a single sender, choosing
-client ids uniformly at random and advancing a per-client sequence counter by small random steps.
+client ids uniformly at random and aiming each cancel a small random step past the latest request
+the server reports as finished for that client (the server answers every `/cancel` with it).
 The load generator writes per-request records plus a summary. The canceller writes per-cancel records
 plus a summary. The server prints its CancelCounters when it shuts down.
 
@@ -76,7 +77,7 @@ downloads each point's results and plots all points together.
 | **DrainPhase** | Time after `duration_s` when no new requests are sent and in-flight ones resolve | [load_generator/run_controller/design.md](load_generator/run_controller/design.md#drainphase) |
 | **RequestRecord** | One output row per scheduled arrival | [load_generator/metrics/design.md](load_generator/metrics/design.md#requestrecord) |
 | **LoadCanceller** | Single-sender, open-loop Poisson source of `/cancel` requests | [load_canceller/design.md](load_canceller/design.md#cancelschedule) |
-| **CancelTargetChoice** | Uniform client choice plus per-client counter advanced by `[1, INCR_RAND_MAX]` | [load_canceller/design.md](load_canceller/design.md#canceltargetchoice) |
+| **CancelTargetChoice** | Uniform client choice, target = reported FinishedWatermark + a step in `[1, incr_rand_max]` | [load_canceller/design.md](load_canceller/design.md#canceltargetchoice) |
 | **BenchmarkRunner** | Operator-side driver: setup over SSH, sweep execution, result download, plots | [benchmark_runner/design.md](benchmark_runner/design.md#run-flow) |
 | **BenchConfig** | The validated TOML experiment configuration | [benchmark_runner/config/design.md](benchmark_runner/config/design.md#benchconfig) |
 | **SweepExpansion** | Cross product of every array-valued program parameter, in a fixed order | [benchmark_runner/config/design.md](benchmark_runner/config/design.md#sweepexpansion) |

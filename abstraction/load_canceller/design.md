@@ -9,6 +9,7 @@ unsigned 64-bit unless stated otherwise.
 function validate(params):
     1 <= num_clients <= 2^32 - 1             else error
     cancel_rate > 0                          else error
+    1 <= incr_rand_max <= 2^32 - 1           else error
     duration_s > 0                           else error
     seed parses as u64                       else error
     target parses as host:port               else error
@@ -62,8 +63,10 @@ function run_schedule(conn, config, rng):
 
 - **Draw order per arrival** (for reproducibility): the first gap is drawn before the loop. Each
   arrival then draws the client, then the step (both in `choose_target`), then the next gap. So
-  the stream reads `gap0, client0, step0, gap1, client1, step1, …`. The schedule and the targets
-  depend only on `seed`, `N` and `cancel_rate`, not on the server.
+  the stream reads `gap0, client0, step0, gap1, client1, step1, …`. The arrival times, clients and
+  steps depend only on `seed`, `N`, `cancel_rate` and `incr_rand_max`. The **targets** also depend on
+  the FinishedWatermarks the server has reported so far, so they can differ between runs with the
+  same seed.
 - **Open loop:** `send_async` opens a stream, sends HEADERS and DATA with END_STREAM, and returns
   without waiting for the response. The sender is late only when `sleep_until` wakes late or when
   the HTTP/2 layer blocks opening a stream at the peer's `MAX_CONCURRENT_STREAMS`. Lateness shows
@@ -72,30 +75,55 @@ function run_schedule(conn, config, rng):
 
 ## CancelTargetChoice
 
+Each target is a small random step past the latest request the server reports as finished for that
+client (its FinishedWatermark, [../protocol/design.md#cancelreplybody](../protocol/design.md#cancelreplybody)).
+
 ```
-last : map u32 -> u64, initially empty               # last counter sent per client
+finished : map u32 -> u32, initially empty    # largest reported finished seq per client
+lock     : mutex guarding finished            # choose_target (sender) reads, note_finished (reader) writes
 
 function choose_target(rng, config):
     client_id = sampling.uniform_int(rng, 0, config.num_clients - 1)
-    step      = sampling.uniform_int(rng, 1, INCR_RAND_MAX)
-    if client_id in last: s = last[client_id] + step
-    else:                 s = step - 1                # first target in [0, INCR_RAND_MAX - 1]
+    step      = sampling.uniform_int(rng, 1, config.incr_rand_max)
+    with lock: base = finished.get(client_id)          # seq or none
+    if base is none: s = step - 1                      # no reply yet: target in [0, incr_rand_max - 1]
+    else:            s = base + step                   # u64 add: base <= 2^32-1, step <= 2^32-1, no wrap
     if s > 2^32 - 1:
-        return (client_id, none)                      # counter exhausted: skipped, last unchanged
-    last[client_id] = s
+        return (client_id, none)                       # past the last possible seq: skipped
     return (client_id, s)
+
+procedure note_finished(client_id, f):                 # f: RequestId from a 202 reply
+    (fseq, fclient) = protocol.split_request_id(f)
+    if fclient != client_id: return                    # reply about another client: ignored
+    with lock:
+        if client_id not in finished or fseq > finished[client_id]:
+            finished[client_id] = fseq                 # max: replies can be read out of order
 ```
 
-Worked example with `INCR_RAND_MAX = 4`:
+- **What a step means.** The client keeps at most one request outstanding, so with base `b` the
+  request in flight is usually `b + 1`. Step `1` aims at it (cancelled before or during
+  processing), steps `2 ..= incr_rand_max` aim at upcoming requests, which wait in the server's
+  pending set until they arrive.
+- **Before the first reply** for a client the target is `step - 1`, as if `b = -1`.
+- **Repeats are allowed.** Two arrivals for the same client before a newer reply can name the same
+  id. The server stores a duplicate once ([../server/cancel_tracker/design.md#cancelmatching](../server/cancel_tracker/design.md#cancelmatching)).
+- `finished` holds one entry per client that has had a `202` reply with a number, at most `N`.
 
-| arrival | client drawn | step drawn | `last` before | target seq | RequestId |
+Worked example with `incr_rand_max = 4` (seqs shown; RequestId = `(client << 32) | seq`):
+
+| Event | client | step | `finished[client]` before | target seq | Note |
 |---|---|---|---|---|---|
-| 0 | 3 | 2 | — | 1 | `(3 << 32) \| 1 = 12884901889` |
-| 1 | 0 | 4 | — | 3 | `3` |
-| 2 | 3 | 1 | 1 | 2 | `12884901890` |
-| 3 | 3 | 3 | 2 | 5 | `12884901893` |
+| arrival 0 | 3 | 2 | none | 1 | `step - 1` |
+| reply to arrival 0 | 3 | — | none | — | `{"finished":"<id(3, 4)>"}`, so `finished[3] = 4` |
+| arrival 1 | 3 | 1 | 4 | 5 | `4 + 1` |
+| arrival 2 | 0 | 4 | none | 3 | `step - 1` |
+| arrival 3 | 3 | 3 | 4 | 7 | `4 + 3`, reply to arrival 1 not read yet |
+| reply to arrival 3 | 3 | — | 4 | — | reports seq 6, so `finished[3] = 6` |
+| reply to arrival 1 | 3 | — | 6 | — | reports seq 5 (read late), `5 < 6`: unchanged |
+| reply to arrival 2 | 0 | — | none | — | `{"finished":null}`: unchanged |
 
-`last` holds one entry per client that has been chosen, at most `min(N, arrivals)` entries.
+Boundary: with `finished[c] = 2^32 - 2` and step `3`, `s = 2^32 + 1 > 2^32 - 1`, so the arrival is
+`skipped`.
 
 ## Response collection
 
@@ -107,7 +135,13 @@ procedure complete(rec, result, outstanding):
     if not rec.state.compare_and_swap(PENDING, DONE): return     # drain already timed it out
     rec.end_ns = now()
     match result:
-        Response(status, body): rec.http_status = status; rec.outcome = classify(status)
+        Response(status, body):
+            rec.http_status = status; rec.outcome = classify(status)
+            if status == 202:
+                f = protocol.parse_cancel_reply(body)               # u64 | none | ParseError
+                if f is a u64:
+                    rec.reported_finished = f
+                    note_finished(rec.client_id, f)                 # CancelTargetChoice
         StreamError or ConnectionError: rec.outcome = error
     outstanding.fetch_sub(1, release)
 ```
@@ -126,7 +160,8 @@ From [../protocol/design.md#status-classification-load-canceller](../protocol/de
 | no result before the drain timeout | `timeout` |
 | counter exhausted | `skipped` |
 
-The response body is ignored. `/cancel` responses are always empty.
+Only a `202` body is read, for the FinishedWatermark ([Response collection](#response-collection)).
+It never changes the outcome: a `202` with a `null` or unparseable body is still `accepted`.
 
 ## CancellerDrain
 

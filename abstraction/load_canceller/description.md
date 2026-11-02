@@ -6,10 +6,12 @@ server-directed cancellations that runs alongside the load generator and indepen
 - Opens **one** HTTP/2 (h2c) connection to the server and sends from a **single sender**.
 - Sends `DELETE /cancel` requests at the arrivals of a Poisson process of rate `cancel_rate`
   (**CancelSchedule**). It is open loop: it never waits for a response before the next arrival.
-- For each arrival it picks a client id uniformly from `0 ..= N-1` and advances that client's
-  counter by a random step in `[1, INCR_RAND_MAX]` (**CancelTargetChoice**). The RequestId it cancels
-  is `(client_id << 32) | counter`. The id is valid by construction, but it may name a request that
-  has already completed, is running, has not been sent yet, or will never be sent.
+- For each arrival it picks a client id uniformly from `0 ..= N-1` and aims a random step in
+  `[1, incr_rand_max]` past the last request the server reported as finished for that client
+  (**CancelTargetChoice**). The server reports that **FinishedWatermark** in every `202` answer to
+  `/cancel`. The RequestId it cancels is `(client_id << 32) | seq`. It usually names the request in
+  flight or one that is about to be sent, but it can still name one that has finished since the last
+  reply, or one that will never be sent.
 - Collects responses as they arrive, stops sending at `duration_s`, waits a bounded time for the
   outstanding responses (**CancellerDrain**), and writes one **CancelRecord** per arrival plus a
   summary.
