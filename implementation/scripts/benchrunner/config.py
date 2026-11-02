@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.2.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.2.1)
 """BenchConfig loading and validation, SweepExpansion, argument formatting."""
 
 import datetime
@@ -14,7 +14,7 @@ from dataclasses import dataclass
 PROGRAM_PARAMS = {
     "server": ["response_rate", "response_bytes", "cancel_mode", "cancel_check_interval_us", "seed"],
     "load_gen": ["num_clients", "global_rate", "request_bytes", "slo_ms", "duration_s", "seed"],
-    "canceller": ["cancel_rate", "duration_s", "seed"],
+    "canceller": ["cancel_rate", "incr_rand_max", "duration_s", "seed"],
 }
 # Design: abstraction/benchmark_runner/config/design.md#processplacement
 PLACEMENT_KEYS = ["threads", "cpu_set"]

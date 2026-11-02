@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.2.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.2.1)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -122,6 +122,12 @@ class ConfigTest(unittest.TestCase):
                                "needs the canceller enabled")
         self.assertConfigError(BASE.replace("global_rate = [1000, 2000]", "")
                                .replace("cancel_rate = 100", "cancel_rate_fraction = 0.1"), "global_rate is required")
+
+    # Design: abstraction/benchmark_runner/config/design.md#benchconfig
+    def test_incr_rand_max_is_a_canceller_param(self):
+        points = cfg.expand_sweep(self.load(BASE.replace("cancel_rate = 100", "cancel_rate = 100\nincr_rand_max = [1, 8]")))
+        self.assertEqual(len(points), 8)
+        self.assertEqual([dict(p.canceller_args)["incr_rand_max"] for p in points[:2]], [1, 8])
 
     # Design: abstraction/benchmark_runner/config/design.md#processplacement
     def test_process_placement(self):
