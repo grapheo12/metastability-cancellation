@@ -169,14 +169,14 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 
 ### Go choices
 
-- Package `internal/canceller`, file `canceller.go`. Flags are parsed in `cmd/canceller/main.go`.
-- `send_async` calls `RoundTrip` on a new goroutine per cancel, because `RoundTrip` blocks until response headers. The sender loop never waits. That goroutine also plays the role of `on_done`.
-- The record state machine has an extra state: `PENDING → COMPLETING → DONE` (instead of `PENDING → DONE`). `drain` spins (`runtime.Gosched`) on `COMPLETING`, so it never reads a record that a response goroutine is still writing. Exactly one of `complete` and `drain` still resolves each record.
+- File `internal/ingress/canceller.go`, in the Ingress package (it reads the In-Flight Map and is started by the Frontend). `canceller_start` is `StartCanceller` and `canceller_stop` is `(*Canceller).Stop`.
+- The sender goroutine dials one `h2client.Dial` connection per backend before its first arrival; a failed dial leaves `nil`, and arrivals for that backend become `error` without sending.
+- `sleep_until` is a `time.Timer` selected against the `stop` channel, so `Stop` wakes the sender at once.
+- `send_async` calls `RoundTrip` on a new goroutine per cancel, because `RoundTrip` blocks until response headers. That goroutine also plays the role of `on_done`; it reads and discards the body (the CancelReplyBody is unused).
+- The record state machine has an extra state: `PENDING → COMPLETING → DONE` (instead of `PENDING → DONE`). The drain spins (`runtime.Gosched`) on `COMPLETING`, so it never reads a record that a response goroutine is still writing.
 - The drain loop polls `outstanding` every 1 ms until it reaches 0 or the deadline passes.
-- `finished` and its lock are the struct `finishedTable` (`map[uint32]uint32` plus a `sync.Mutex`). `note_finished` is `finishedTable.note`, called from `complete` inside the `COMPLETING` window, so a timed-out record never updates it. The pure arithmetic of `choose_target` is `nextTarget(base, hasBase, step)`.
-- The response goroutine reads the whole body (`io.ReadAll`) and passes it to `complete`, which parses it with `protocol.ParseCancelReply` only for a `202`. `reported_finished` is `CancelRecord.ReportedFinished` plus the flag `HasReported`.
-- `incr_rand_max` is the `-incr_rand_max` flag. It is parsed with `strconv.ParseUint(..., 10, 32)`, which enforces `<= 2^32 - 1`, and appears in the summary's `config` after `cancel_rate`, in API order.
-- Tests: `canceller_test.go` checks the CancelTargetChoice worked example (including out-of-order replies and a reply about another client), the skipped boundary, reply parsing in `complete` (watermark, `null`, junk), and `incr_rand_max` validation.
+- `summarize` is `summarizeCancels`; it returns zero rates when `duration_s` is 0 (canceller disabled). The CSV is written by `writeCancelsCSV`; the Ingress calls it at shutdown.
+- Tests: `canceller_test.go` checks that an empty snapshot gives no victim and no draw, that victims are uniform over the snapshot, the outcome table, the summary, and the CSV columns. The end-to-end cancel path is tested with the Frontend.
 
 ### Traceability
 
@@ -186,11 +186,11 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [Startup](#startup) |  |
-| [CancelSchedule](#cancelschedule) |  |
-| [InFlightVictimChoice](#inflightvictimchoice) |  |
-| [Response collection](#response-collection) |  |
-| [Outcome classification](#outcome-classification) |  |
-| [CancellerDrain](#cancellerdrain) |  |
-| [Summary](#summary) |  |
+| [Startup](#startup) | [canceller.go:86](../../../implementation/go/internal/ingress/canceller.go#L86) |
+| [CancelSchedule](#cancelschedule) | [canceller.go:112](../../../implementation/go/internal/ingress/canceller.go#L112), [canceller.go:169](../../../implementation/go/internal/ingress/canceller.go#L169) |
+| [InFlightVictimChoice](#inflightvictimchoice) | [canceller.go:157](../../../implementation/go/internal/ingress/canceller.go#L157), [canceller_test.go:14](../../../implementation/go/internal/ingress/canceller_test.go#L14) |
+| [Response collection](#response-collection) | [canceller.go:189](../../../implementation/go/internal/ingress/canceller.go#L189) |
+| [Outcome classification](#outcome-classification) | [canceller.go:28](../../../implementation/go/internal/ingress/canceller.go#L28), [canceller.go:208](../../../implementation/go/internal/ingress/canceller.go#L208), [canceller_test.go:40](../../../implementation/go/internal/ingress/canceller_test.go#L40) |
+| [CancellerDrain](#cancellerdrain) | [canceller.go:225](../../../implementation/go/internal/ingress/canceller.go#L225) |
+| [Summary](#summary) | [canceller.go:270](../../../implementation/go/internal/ingress/canceller.go#L270), [canceller_test.go:48](../../../implementation/go/internal/ingress/canceller_test.go#L48) |
 <!-- trace:end -->
