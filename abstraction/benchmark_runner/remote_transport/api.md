@@ -24,7 +24,14 @@ cannot be started. Distinct from a command that runs and exits non-zero.
 ## Functions
 
 ### `open(machine) -> Transport`
-Builds the variant chosen by `host`. It does not connect yet. See [design.md#transport](design.md#transport).
+Builds the variant chosen by `host`. It does not connect yet. SSH options left unset in the machine table come from
+the operator's SSH configuration. See [design.md#transport](design.md#transport) and
+[design.md#sshconfighost](design.md#sshconfighost).
+
+### `ssh_hostname(host: string) -> string`
+The `HostName` the operator's SSH configuration gives `host` (from `ssh -G`), or `host` itself if there is none.
+Runs on the operator machine and never connects. Used by the config for the default `data_addr`. See
+[design.md#sshconfighost](design.md#sshconfighost).
 
 ### `run(t, command: string, timeout_s: float) -> CommandResult`
 Runs `command` with `sh -c` on the machine and waits for it, killing it after `timeout_s`. See
