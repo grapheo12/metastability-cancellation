@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.2.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.3.0)
 import csv
 import json
 import os
@@ -58,7 +58,8 @@ class PointTableTest(unittest.TestCase):
                     write_point(out, pid, {"load_gen.global_rate": rate, "server.cancel_mode": mode}, ok=80 + pid)
                     pid += 1
             plotter.plot(out)
-            for name in ("latency_e2e", "goodput", "outcomes", "server_counters", "throughput_latency"):
+            for name in ("latency_e2e", "goodput", "outcomes", "server_counters", "throughput_latency",
+                         "server_counters_normalized"):
                 self.assertTrue(os.path.getsize(os.path.join(out, "plots", f"{name}.png")) > 0)
 
     # Design: abstraction/benchmark_runner/result_plotter/design.md#throughputlatencyplot
@@ -70,6 +71,16 @@ class PointTableTest(unittest.TestCase):
         position = {r["load_gen.global_rate"]: r["load_gen.global_rate"] for r in rows}
         line = plotter.throughput_latency_line(rows, "load_gen.global_rate", position, lambda r: r["e2e_p99_us"])
         self.assertEqual(line, [(9.9, 1100), (950.0, 4000), (600.0, 9000)])
+
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
+    def test_server_counters_normalized_values(self):
+        fig = next(f for f in plotter.FIGURES if f[0] == "server_counters_normalized")
+        row = {"cx_sent": 1000, "srv_cancelled_before_processing": 600, "srv_cancelled_during_processing": 50,
+               "srv_completed_before_cancel": 300}
+        self.assertEqual([value(row) for _, value in fig[2]], [0.6, 0.05, 0.3])
+        for cx in (0, None):
+            self.assertEqual([value(dict(row, cx_sent=cx)) for _, value in fig[2]], [None, None, None])
+        self.assertEqual((fig[1], fig[3], fig[4]), ("x_key", "linear", (0, 1)))
 
     def test_nothing_to_plot(self):
         try:

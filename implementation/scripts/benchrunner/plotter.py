@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.2.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.3.0)
 """PointTable (all_points.csv), SweepPlots and ThroughputLatencyPlot (plots/*.png)."""
 
 import csv
@@ -31,9 +31,10 @@ METRIC_COLUMNS = [
 ]
 
 
-def _frac(name):
+def _frac(name, den_name="lg_scheduled"):
+    """name / den_name; empty when the denominator is empty or 0."""
     def value(row):
-        num, den = row.get(name), row.get("lg_scheduled")
+        num, den = row.get(name), row.get(den_name)
         return None if num is None or not den else num / den
     return value
 
@@ -56,6 +57,11 @@ FIGURES = [
                                                          "srv_completed_before_cancel")], "linear", None),
     # Design: abstraction/benchmark_runner/result_plotter/design.md#throughputlatencyplot
     ("throughput_latency", "lg_goodput", E2E, "log", None),
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
+    ("server_counters_normalized", "x_key", [(f"{m} / cx_sent", _frac(m, "cx_sent"))
+                                             for m in ("srv_cancelled_before_processing",
+                                                       "srv_cancelled_during_processing",
+                                                       "srv_completed_before_cancel")], "linear", (0, 1)),
 ]
 THROUGHPUT_LABEL = "lg_goodput (requests/s)"
 
