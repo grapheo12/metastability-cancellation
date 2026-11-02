@@ -13,9 +13,10 @@ reproducible experiment on two remote machines:
   already be at `repo_url`. Then, once per machine, it clones or updates the repository, checks out that exact
   commit, checks the tools the implementation's **BuildManifest** requires (it never installs them), and builds
   the binaries.
-- **Experiment Executor** runs each SweepPoint. It starts the server on the server machine (**ServerLifecycle**),
-  runs the load canceller and the load generator together on the client machine, stops the server with an
-  interrupt so it prints its CancelCounters, and downloads every output.
+- **Experiment Executor** runs each SweepPoint. It starts the server instances on the server machine
+  (**ServerLifecycle**) and the Ingress on the client machine (**IngressLifecycle**), runs the load generator
+  against the Ingress, stops the Ingress and then the servers with an interrupt so they write their outputs and
+  CancelCounters, and downloads every output.
 - **Result Plotter** builds the **PointTable** of all points and draws the **SweepPlots** over every swept value.
 
 Setup happens once per run. Only the experiment repeats per SweepPoint.

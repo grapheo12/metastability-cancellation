@@ -34,11 +34,12 @@ set `[run] output_dir` to that run's directory.
       loadgen.requests.csv    # loadgen outputs (../load_generator/metrics/api.md#outputs)
       loadgen.summary.json
       loadgen.log
-      canceller.cancels.csv   # canceller outputs, if the canceller is enabled
-      canceller.summary.json
-      canceller.log
-      server.out              # server stdout + stderr
-      server_counters.json    # parsed CancelCounters line
+      ingress.cancels.csv     # Ingress outputs (../ingress/api.md#outputs)
+      ingress.summary.json
+      ingress.log
+      server_<k>.out          # stdout + stderr of server instance k
+      server_counters_<k>.json  # parsed CancelCounters line of instance k
+      server_counters.json    # the instances' CancelCounters, summed
       done | failed           # exactly one marker; "failed" holds the reason
   all_points.csv              # the PointTable
   plots/
@@ -51,8 +52,8 @@ File meanings are defined in [experiment_executor/design.md](experiment_executor
 
 ## Uses
 
-- [../api.md](../api.md): the program parameters of `server`, `loadgen` and `canceller`, the server's
-  `listening on` line and its CancelCounters output line.
+- [../api.md](../api.md): the program parameters of `server`, `loadgen` and `ingress`, the `listening on` line
+  of the server and the Ingress, and the server's CancelCounters output line.
 
 ## Subcomponents
 
