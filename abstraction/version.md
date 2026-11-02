@@ -32,3 +32,4 @@
 | 0.4.4 | 2026-11-02T00:00:00Z | Child bump: benchmark_runner 0.1.8 (config 0.2.2) |
 | 0.4.5 | 2026-11-02T00:00:00Z | Child bump: benchmark_runner 0.1.9 (result_plotter 0.3.0) |
 | 0.4.6 | 2026-11-02T00:00:00Z | Child bump: benchmark_runner 0.1.10 (result_plotter 0.4.0) |
+| 0.4.7 | 2026-11-02T00:00:00Z | Glossary: CancelOfferedFraction, ThroughputLatencyNormalizedPlot |
