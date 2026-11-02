@@ -1,7 +1,7 @@
 // Package sampling provides reproducible, language-independent randomness:
 // SplitMix64 seeding, xoshiro256**, and exponential / uniform-integer samplers.
 //
-// Source: abstraction/sampling/design.md (sampling v0.2.1)
+// Source: abstraction/sampling/design.md (sampling v0.2.2)
 package sampling
 
 import (
@@ -14,6 +14,7 @@ const (
 	StreamClientArrivals   uint32 = 1
 	StreamServerConnection uint32 = 2
 	StreamCanceller        uint32 = 3
+	StreamIngressLB        uint32 = 4 // Ingress LoadBalancer (power_of_two)
 )
 
 // Design: abstraction/sampling/design.md#splitmix64
