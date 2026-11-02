@@ -26,3 +26,4 @@
 | 0.3.9 | 2026-11-02T00:00:00Z | Child bump: server 0.2.2 (cancel_tracker 0.2.0) |
 | 0.3.10 | 2026-11-02T00:00:00Z | Child bump: server 0.2.3 (ping_handler 0.3.0) |
 | 0.4.0 | 2026-11-02T00:00:00Z | Canceller parameter `incr_rand_max`. System summary: the canceller aims past each client's reported FinishedWatermark. Child bump: load_canceller 0.2.0 |
+| 0.4.1 | 2026-11-02T00:00:00Z | Child bump: benchmark_runner 0.1.6 (config 0.2.1) |
