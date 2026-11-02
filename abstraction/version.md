@@ -39,3 +39,4 @@
 | 0.4.11 | 2026-11-02T00:00:00Z | Child bump: ingress 0.1.1 (load_balancer 0.1.0) |
 | 0.4.12 | 2026-11-02T00:00:00Z | Child bump: ingress 0.1.2 (upstream_pool 0.1.0) |
 | 0.4.13 | 2026-11-02T00:00:00Z | Child moved: load_canceller is now ingress/load_canceller (ingress 0.1.3). Link paths updated only; root content follows |
+| 0.4.14 | 2026-11-02T00:00:00Z | Child bump: ingress 0.1.4 (frontend 0.1.0) |
