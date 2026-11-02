@@ -30,12 +30,14 @@ function bench_run(config_path):
     config = config.load_config(config_path)                    # exit 2 on ConfigError
     points = config.expand_sweep(config)
     pin    = remote_setup.source_pin(config.repo_url)           # exit 2 on PinError
+    check_placement_support(config, pin)                        # exit 2 on PinError
     prepare_output_dir(config.run.output_dir, config_path, pin, len(points))
     server_t = remote_transport.open(config.machines.server)
     client_t = remote_transport.open(config.machines.client)
     in parallel:                                                # exit 2 if either fails
         ready_server = remote_setup.setup_machine(server_t, "server", config.machines.server, pin, config.run.setup_timeout_s)
         ready_client = remote_setup.setup_machine(client_t, "client", config.machines.client, pin, config.run.setup_timeout_s)
+    warn_unpinned(config, ready_server, ready_client)
     run_id = last path component of config.run.output_dir
     any_failed = false
     for point in points (in id order):
@@ -47,6 +49,21 @@ function bench_run(config_path):
     result_plotter.plot(config.run.output_dir)
     exit 1 if any_failed else 0
 ```
+
+```
+function check_placement_support(config, pin):
+    if any of [server], [load_gen], [canceller] sets threads and pin.manifest.thread_env is none:
+        PinError("threads is set, but implementation/<lang>/benchmark_manifest.toml has no thread_env")
+
+function warn_unpinned(config, ready_server, ready_client):
+    for (role, ready, sections) in [("server", ready_server, [server]), ("client", ready_client, [load_gen, canceller])]:
+        if any of sections sets cpu_set and not ready.cpu_pinning:
+            print to stderr, once per role: "warning: cpu_set ignored on <role>: taskset not found"
+```
+
+ProcessPlacement ([config/design.md#processplacement](config/design.md#processplacement)) is checked before setup,
+because the manifest is known from the SourcePin. A missing pinning tool is only a warning: the programs still run,
+with their thread counts applied, and each point's `placement.json` records what was actually used.
 
 `bench setup` runs everything up to and including the parallel setup. `bench plot` runs only
 `result_plotter.plot`.
