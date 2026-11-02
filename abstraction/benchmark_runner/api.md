@@ -43,6 +43,7 @@ set `[run] output_dir` to that run's directory.
   all_points.csv              # the PointTable
   plots/
     latency_e2e.png  goodput.png  outcomes.png  server_counters.png  throughput_latency.png
+    server_counters_normalized.png
 ```
 
 File meanings are defined in [experiment_executor/design.md](experiment_executor/design.md#point-outputs) and

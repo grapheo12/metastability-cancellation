@@ -51,8 +51,18 @@ function plot(output_dir):
 | `outcomes` | `x_key` | `lg_ok / lg_scheduled`, `lg_rejected / lg_scheduled`, `lg_cancelled / lg_scheduled`, `lg_error / lg_scheduled`, `lg_not_sent / lg_scheduled` | linear, 0 to 1 |
 | `server_counters` | `x_key` | `srv_cancelled_before_processing`, `srv_cancelled_during_processing`, `srv_completed_before_cancel` | linear |
 | `throughput_latency` | `lg_goodput` | `e2e_p50_us`, `e2e_p99_us`, `e2e_p999_us` | log |
+| `server_counters_normalized` | `x_key` | `srv_cancelled_before_processing / cx_sent`, `srv_cancelled_during_processing / cx_sent`, `srv_completed_before_cancel / cx_sent` | linear, 0 to 1 |
 
-A fraction is empty when `lg_scheduled` is empty or `0`.
+A fraction is empty when its denominator (`lg_scheduled` or `cx_sent`) is empty or `0`.
+
+`server_counters_normalized` shows what share of the cancels sent ended each way on the server. The three shares
+need not add up to 1: ids still pending or in an inbox at shutdown, and stale ids, are never counted
+([../../server/cancel_tracker/design.md#cancelmatching](../../server/cancel_tracker/design.md#cancelmatching)).
+
+| `cx_sent` | Counters (before, during, completed) | Plotted | Check |
+|---|---|---|---|
+| 1000 | (600, 50, 300) | (0.6, 0.05, 0.3) | 600/1000, 50/1000, 300/1000 |
+| 0 or empty (canceller disabled) | any | (empty, empty, empty) | no denominator |
 
 Worked example: with swept keys `[load_gen.global_rate, server.cancel_mode, load_gen.num_clients]`, the x-axis
 is `load_gen.global_rate` and the lines are labelled `server.cancel_mode=ignore, load_gen.num_clients=8`,
