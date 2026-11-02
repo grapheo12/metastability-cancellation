@@ -80,7 +80,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | Design subsection | Implementation (file:line) |
 |---|---|
 | [Configuration validation](#configuration-validation) | [runcontroller.go:20](../../../implementation/go/internal/loadgen/runcontroller.go#L20) |
-| [Startup](#startup) | [h2client.go:28](../../../implementation/go/internal/h2client/h2client.go#L28), [runcontroller.go:78](../../../implementation/go/internal/loadgen/runcontroller.go#L78) |
+| [Startup](#startup) | [h2client.go:31](../../../implementation/go/internal/h2client/h2client.go#L31), [runcontroller.go:78](../../../implementation/go/internal/loadgen/runcontroller.go#L78) |
 | [DrainPhase](#drainphase) | [runcontroller.go:104](../../../implementation/go/internal/loadgen/runcontroller.go#L104) |
-| [Shutdown ordering](#shutdown-ordering) | [h2client.go:52](../../../implementation/go/internal/h2client/h2client.go#L52), [runcontroller.go:108](../../../implementation/go/internal/loadgen/runcontroller.go#L108) |
+| [Shutdown ordering](#shutdown-ordering) | [h2client.go:55](../../../implementation/go/internal/h2client/h2client.go#L55), [runcontroller.go:108](../../../implementation/go/internal/loadgen/runcontroller.go#L108) |
 <!-- trace:end -->

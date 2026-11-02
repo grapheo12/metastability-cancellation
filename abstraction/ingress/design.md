@@ -108,6 +108,8 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 - One Go package `internal/ingress` for the whole subtree, one file per subcomponent: `config.go` (this node's parameters and validation), `inflight.go`, `balancer.go`, `upstream.go`, `canceller.go`, `frontend.go`, and `ingress.go` (lifecycle and outputs). One package avoids import cycles: the Load Canceller reads the In-Flight Map and the Frontend starts the Load Canceller. The program entry point is `cmd/ingress/main.go`.
 - `backends` is split on `,` and each element trimmed with `strings.TrimSpace`; host:port is checked with `net.SplitHostPort`.
 - `num_clients` is parsed with `strconv.ParseUint(..., 10, 32)` and then bounded by `MaxClients`.
+- `shutdown` is `(*Ingress).Shutdown`: `http.Server.Shutdown` with a 100 ms bound sends GOAWAY on every client connection (as in the server), then it waits on the BackendStats `outstanding` sum, stops the canceller, closes upstream and client connections, and writes both outputs. `cmd/ingress/main.go` calls it on SIGINT/SIGTERM and exits `0`, or `1` if writing fails.
+- The summary JSON is the `Summary` struct, marshalled with `json.MarshalIndent`, in API field order.
 
 ### Traceability
 
@@ -117,11 +119,11 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [Structure](#structure) |  |
-| [Shared state](#shared-state) |  |
+| [Structure](#structure) | [ingress.go:47](../../implementation/go/internal/ingress/ingress.go#L47) |
+| [Shared state](#shared-state) | [ingress.go:22](../../implementation/go/internal/ingress/ingress.go#L22) |
 | [Configuration validation](#configuration-validation) | [config.go:68](../../implementation/go/internal/ingress/config.go#L68) |
-| [Concurrency model](#concurrency-model) |  |
-| [Time base](#time-base) |  |
-| [Shutdown](#shutdown) |  |
-| [Why one upstream connection per client and backend](#why-one-upstream-connection-per-client-and-backend) |  |
+| [Concurrency model](#concurrency-model) | [ingress.go:77](../../implementation/go/internal/ingress/ingress.go#L77) |
+| [Time base](#time-base) | [frontend.go:124](../../implementation/go/internal/ingress/frontend.go#L124) |
+| [Shutdown](#shutdown) | [ingress.go:111](../../implementation/go/internal/ingress/ingress.go#L111), [ingress_test.go:75](../../implementation/go/internal/ingress/ingress_test.go#L75) |
+| [Why one upstream connection per client and backend](#why-one-upstream-connection-per-client-and-backend) | [upstream.go:29](../../implementation/go/internal/ingress/upstream.go#L29) |
 <!-- trace:end -->

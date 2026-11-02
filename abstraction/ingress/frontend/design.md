@@ -115,3 +115,32 @@ stateDiagram-v2
 | client SLO fires during the burn | published, then cleared | `reset` | nothing (it reset) |
 | backend down | published, then cleared | `bad_gateway` | `502` |
 | body unparseable | never published | (no pick) | `400` |
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- File `internal/ingress/frontend.go`; the accept loop and lifecycle are in `ingress.go`. Each client connection is served by `http2.Server.ServeConn` on its own goroutine, and `ServeConn` runs the handler for every complete stream on another goroutine while its frame reader keeps running. A client `RST_STREAM` cancels the stream's `r.Context()`.
+- `forward` builds the upstream request with that context (`http.NewRequestWithContext`), so a client reset makes `golang.org/x/net/http2` reset the upstream stream with `CANCEL`, and `RoundTrip` or the body read fails. "Reset wins ties" is decided by `ctx.Err() != nil` at the moment the upstream call fails.
+- A connection is "unusable" when `ClientConn.CanTakeNewRequest()` is false after the failure; only then is it discarded.
+- `Aborted` is `fwdResponse{aborted: true}`; nothing is written, and the handler returns.
+- `start_once` is an `atomic.Bool` compare-and-swap; `run_start` and the canceller are stored under `startMu` so shutdown reads them safely.
+- Tests: `ingress_test.go` runs two in-process servers behind the Ingress: relay and routing errors (`400`, `404`, `405`), round-robin spread and the written outputs; the Load Canceller cancelling an in-flight request (`503`, counted `cancelled_during_processing` on the right backend); a client reset reaching the backend; and `502` for an unreachable backend. The reset reaches the Ingress a few milliseconds after the client gives up, so that test waits for the forward to end before stopping the backend.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [Client connections](#client-connections) | [frontend.go:28](../../../implementation/go/internal/ingress/frontend.go#L28), [ingress.go:77](../../../implementation/go/internal/ingress/ingress.go#L77) |
+| [ForwardTask](#forwardtask) | [frontend.go:56](../../../implementation/go/internal/ingress/frontend.go#L56), [frontend.go:81](../../../implementation/go/internal/ingress/frontend.go#L81), [ingress_test.go:75](../../../implementation/go/internal/ingress/ingress_test.go#L75) |
+| [StartOnce](#startonce) | [frontend.go:124](../../../implementation/go/internal/ingress/frontend.go#L124), [ingress_test.go:122](../../../implementation/go/internal/ingress/ingress_test.go#L122) |
+| [State machine (per ForwardTask)](#state-machine-per-forwardtask) | [ingress_test.go:156](../../../implementation/go/internal/ingress/ingress_test.go#L156) |
+<!-- trace:end -->

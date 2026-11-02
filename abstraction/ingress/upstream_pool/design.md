@@ -78,6 +78,6 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [UpstreamPool](#upstreampool) | [upstream.go:27](../../../implementation/go/internal/ingress/upstream.go#L27), [upstream.go:37](../../../implementation/go/internal/ingress/upstream.go#L37), [upstream.go:89](../../../implementation/go/internal/ingress/upstream.go#L89) |
-| [Get](#get) | [upstream.go:58](../../../implementation/go/internal/ingress/upstream.go#L58), [upstream.go:76](../../../implementation/go/internal/ingress/upstream.go#L76), [upstream_test.go:29](../../../implementation/go/internal/ingress/upstream_test.go#L29) |
+| [UpstreamPool](#upstreampool) | [upstream.go:29](../../../implementation/go/internal/ingress/upstream.go#L29), [upstream.go:39](../../../implementation/go/internal/ingress/upstream.go#L39), [upstream.go:91](../../../implementation/go/internal/ingress/upstream.go#L91) |
+| [Get](#get) | [h2client.go:31](../../../implementation/go/internal/h2client/h2client.go#L31), [upstream.go:60](../../../implementation/go/internal/ingress/upstream.go#L60), [upstream.go:78](../../../implementation/go/internal/ingress/upstream.go#L78), [upstream_test.go:29](../../../implementation/go/internal/ingress/upstream_test.go#L29) |
 <!-- trace:end -->

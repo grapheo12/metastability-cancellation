@@ -2,11 +2,11 @@
 # Contract: abstraction/benchmark_runner/remote_setup/design.md#buildmanifest
 lang = "go"
 required_tools = ["go"]
-build = "CGO_ENABLED=0 go build -o bin/ ./cmd/server ./cmd/loadgen ./cmd/canceller"
+build = "CGO_ENABLED=0 go build -o bin/ ./cmd/server ./cmd/loadgen ./cmd/ingress"
 # ProcessPlacement threads: the Go runtime reads its worker-thread count from GOMAXPROCS.
 thread_env = "GOMAXPROCS"
 
 [binaries]
 server = "bin/server"
 loadgen = "bin/loadgen"
-canceller = "bin/canceller"
+ingress = "bin/ingress"

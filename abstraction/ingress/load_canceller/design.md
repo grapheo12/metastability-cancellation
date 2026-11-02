@@ -186,11 +186,11 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [Startup](#startup) | [canceller.go:86](../../../implementation/go/internal/ingress/canceller.go#L86) |
+| [Startup](#startup) | [h2client.go:31](../../../implementation/go/internal/h2client/h2client.go#L31), [canceller.go:86](../../../implementation/go/internal/ingress/canceller.go#L86) |
 | [CancelSchedule](#cancelschedule) | [canceller.go:112](../../../implementation/go/internal/ingress/canceller.go#L112), [canceller.go:169](../../../implementation/go/internal/ingress/canceller.go#L169) |
-| [InFlightVictimChoice](#inflightvictimchoice) | [canceller.go:157](../../../implementation/go/internal/ingress/canceller.go#L157), [canceller_test.go:14](../../../implementation/go/internal/ingress/canceller_test.go#L14) |
+| [InFlightVictimChoice](#inflightvictimchoice) | [canceller.go:157](../../../implementation/go/internal/ingress/canceller.go#L157), [canceller_test.go:14](../../../implementation/go/internal/ingress/canceller_test.go#L14), [ingress_test.go:122](../../../implementation/go/internal/ingress/ingress_test.go#L122) |
 | [Response collection](#response-collection) | [canceller.go:189](../../../implementation/go/internal/ingress/canceller.go#L189) |
 | [Outcome classification](#outcome-classification) | [canceller.go:28](../../../implementation/go/internal/ingress/canceller.go#L28), [canceller.go:208](../../../implementation/go/internal/ingress/canceller.go#L208), [canceller_test.go:40](../../../implementation/go/internal/ingress/canceller_test.go#L40) |
-| [CancellerDrain](#cancellerdrain) | [canceller.go:225](../../../implementation/go/internal/ingress/canceller.go#L225) |
+| [CancellerDrain](#cancellerdrain) | [h2client.go:55](../../../implementation/go/internal/h2client/h2client.go#L55), [canceller.go:225](../../../implementation/go/internal/ingress/canceller.go#L225) |
 | [Summary](#summary) | [canceller.go:270](../../../implementation/go/internal/ingress/canceller.go#L270), [canceller_test.go:48](../../../implementation/go/internal/ingress/canceller_test.go#L48) |
 <!-- trace:end -->

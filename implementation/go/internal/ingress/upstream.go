@@ -21,9 +21,11 @@ type upstreamSlot struct {
 	conn *h2client.Conn
 }
 
-// UpstreamPool keeps one h2c connection per (client_id, server_id).
+// UpstreamPool keeps one h2c connection per (client_id, server_id), so the
+// servers' per-connection client binding and serial worker hold.
 //
 // Design: abstraction/ingress/upstream_pool/design.md#upstreampool
+// Design: abstraction/ingress/design.md#why-one-upstream-connection-per-client-and-backend
 type UpstreamPool struct {
 	backends []string
 	dial     func(target string) (*h2client.Conn, error) // h2client.Dial; replaceable in tests
