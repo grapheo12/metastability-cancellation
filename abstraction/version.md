@@ -29,3 +29,4 @@
 | 0.4.1 | 2026-11-02T00:00:00Z | Child bump: benchmark_runner 0.1.6 (config 0.2.1) |
 | 0.4.2 | 2026-11-02T00:00:00Z | Glossary: FinishedWatermark, CancelReplyBody |
 | 0.4.3 | 2026-11-02T00:00:00Z | Child bump: benchmark_runner 0.1.7 (remote_transport 0.2.0) |
+| 0.4.4 | 2026-11-02T00:00:00Z | Child bump: benchmark_runner 0.1.8 (config 0.2.2) |
