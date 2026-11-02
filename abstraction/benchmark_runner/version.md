@@ -10,3 +10,4 @@
 | 0.1.5 | 2026-11-02T00:00:00Z | Child bump: result_plotter 0.2.0. Output directory lists `throughput_latency.png` |
 | 0.1.6 | 2026-11-02T00:00:00Z | Child bump: config 0.2.1 |
 | 0.1.7 | 2026-11-02T00:00:00Z | Child bump: remote_transport 0.2.0 |
+| 0.1.8 | 2026-11-02T00:00:00Z | Child bump: config 0.2.2 |

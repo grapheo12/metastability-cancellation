@@ -17,12 +17,14 @@ Both tables are required.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `host` | string | required | SSH host name or IP, or `"local"` to use the operator machine itself |
-| `user` | string | required unless `host = "local"` | SSH user |
-| `ssh_key` | path | required unless `host = "local"` | Private key file. A leading `~` is the operator's home |
-| `ssh_port` | integer `1..=65535` | `22` | SSH port |
+| `host` | string | required | SSH host name, IP, or a `Host` alias from the operator's `~/.ssh/config`; or `"local"` to use the operator machine itself |
+| `user` | string | unset: from the operator's SSH configuration | SSH user. Ignored for `local` |
+| `ssh_key` | path | unset: from the operator's SSH configuration | Private key file. A leading `~` is the operator's home. Ignored for `local` |
+| `ssh_port` | integer `1..=65535` | unset: from the operator's SSH configuration, else 22 | SSH port. Ignored for `local` |
 | `workdir` | path on that machine | `"~/cancellation-bench"` | Where the clone and per-point files live. A leading `~` is that machine's home |
-| `data_addr` | string | `host` (`"127.0.0.1"` when `host = "local"`) | Server table only: the address the client machine uses to reach the server |
+| `data_addr` | string | the `HostName` of `host` in the operator's SSH configuration, else `host` (`"127.0.0.1"` when `host = "local"`) | Server table only: the address the client machine uses to reach the server. Set it to a private address when the machines share a network |
+
+A key set here overrides the SSH configuration ([../remote_transport/design.md#sshconfighost](../remote_transport/design.md#sshconfighost)).
 
 ### `[server]`
 

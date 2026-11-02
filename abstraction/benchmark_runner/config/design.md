@@ -21,7 +21,7 @@ function load_config(path):
     allowed tables: repo, machines (with exactly server, client), server, load_gen, canceller, run
     repo_url = doc.repo.url if present else git_origin_url_of_operator_repo()
     if repo_url is none: ConfigError("[repo] url is required (no origin remote)")
-    for m in [server, client]: validate machine table (types, ranges, required keys, defaults)
+    for m in [server, client]: validate_machine(m)
     for section in [server, load_gen, canceller]:
         for key, value in doc[section] in file order:
             if key in FORBIDDEN[section]: ConfigError("<section>.<key> is set by the runner")
@@ -50,6 +50,31 @@ Error messages for the runner keys added with ProcessPlacement and CancelRateFra
 | `cpu_set` not a string matching the CPU list pattern | `<section>.cpu_set must be a CPU list like "0-3" or "0,2,4-5"` |
 | `cancel_rate_fraction` (or an element) not a number, or `<= 0` | `canceller.cancel_rate_fraction must be a number > 0` |
 | `cancel_rate_fraction` is an empty array | `canceller.cancel_rate_fraction must be a scalar or a non-empty array of scalars` |
+
+```
+function validate_machine(role, table):
+    allowed keys: host, user, ssh_key, ssh_port, workdir, plus data_addr for the server
+    host: non-empty string                                   else ConfigError("machines.<role>.host is required")
+    user, ssh_key: absent, or non-empty strings              else ConfigError("machines.<role>.<key> must be a non-empty string")
+    ssh_port: absent, or integer in 1..=65535                else ConfigError("machines.<role>.ssh_port must be an integer in 1..=65535")
+    workdir: non-empty string, default "~/cancellation-bench"
+    if role == server:
+        data_addr = table.data_addr if present
+                    else "127.0.0.1" if host == "local"
+                    else remote_transport.ssh_hostname(host)    # resolves a ~/.ssh/config alias
+    return Machine(role, host, user or none, expand_operator_home(ssh_key) or none, ssh_port or none, workdir, data_addr)
+```
+
+Unset SSH keys stay unset (none). The transport then leaves them to the operator's SSH configuration
+([../remote_transport/design.md#sshconfighost](../remote_transport/design.md#sshconfighost)). The same-machine rule
+of setup compares `(host, user, ssh_port, workdir)` with unset values compared as none.
+
+| Machine table | Result |
+|---|---|
+| `host = "metafail-exp-1"` only (server) | user, key and port none; `data_addr` = `HostName` from `ssh -G`, e.g. `18.144.18.190` |
+| `host = "metafail-exp-1"`, `data_addr = "172.31.23.63"` | `data_addr = "172.31.23.63"` (explicit wins) |
+| `host = "local"` | `data_addr = "127.0.0.1"`; SSH keys ignored |
+| `user = ""` | ConfigError `machines.server.user must be a non-empty string` |
 
 The names in `PROGRAM_PARAMS` are the parameter tables of [../../api.md](../../api.md). The runner checks only
 names and shapes. Values are validated by the programs themselves, which fail fast on bad values
