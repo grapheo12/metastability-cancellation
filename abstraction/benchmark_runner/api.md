@@ -42,7 +42,7 @@ set `[run] output_dir` to that run's directory.
       done | failed           # exactly one marker; "failed" holds the reason
   all_points.csv              # the PointTable
   plots/
-    latency_e2e.png  goodput.png  outcomes.png  server_counters.png
+    latency_e2e.png  goodput.png  outcomes.png  server_counters.png  throughput_latency.png
 ```
 
 File meanings are defined in [experiment_executor/design.md](experiment_executor/design.md#point-outputs) and
