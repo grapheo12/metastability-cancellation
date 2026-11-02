@@ -7,8 +7,9 @@ Leaf component. A **Transport** is the runner's only way to act on an experiment
   it is still alive;
 - copy a file from the machine to the operator machine.
 
-There are two variants with the same interface. The **SSH** variant uses the system SSH client with the
-configured key and never prompts. The **local** variant (`host = "local"`) does the same things on the operator
+There are two variants with the same interface. The **SSH** variant uses the system SSH client and never prompts.
+Any of user, key and port left out of the BenchConfig comes from the operator's SSH configuration
+(**SshConfigHost**), so a machine can be named by a `~/.ssh/config` alias alone. The **local** variant (`host = "local"`) does the same things on the operator
 machine, so the whole runner can be tested without remote hosts.
 
 Parent: [../design.md](../design.md). API: [api.md](api.md). Design: [design.md](design.md).
