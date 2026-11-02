@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.1.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.2.0)
 import csv
 import json
 import os
@@ -58,8 +58,18 @@ class PointTableTest(unittest.TestCase):
                     write_point(out, pid, {"load_gen.global_rate": rate, "server.cancel_mode": mode}, ok=80 + pid)
                     pid += 1
             plotter.plot(out)
-            for name in ("latency_e2e", "goodput", "outcomes", "server_counters"):
+            for name in ("latency_e2e", "goodput", "outcomes", "server_counters", "throughput_latency"):
                 self.assertTrue(os.path.getsize(os.path.join(out, "plots", f"{name}.png")) > 0)
+
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#throughputlatencyplot
+    def test_throughput_latency_line_keeps_swept_order(self):
+        rows = [{"load_gen.global_rate": 1000, "lg_goodput": 950.0, "e2e_p99_us": 4000},
+                {"load_gen.global_rate": 10, "lg_goodput": 9.9, "e2e_p99_us": 1100},
+                {"load_gen.global_rate": 2000, "lg_goodput": 600.0, "e2e_p99_us": 9000},  # past saturation
+                {"load_gen.global_rate": 100, "lg_goodput": None, "e2e_p99_us": 1300}]  # left out
+        position = {r["load_gen.global_rate"]: r["load_gen.global_rate"] for r in rows}
+        line = plotter.throughput_latency_line(rows, "load_gen.global_rate", position, lambda r: r["e2e_p99_us"])
+        self.assertEqual(line, [(9.9, 1100), (950.0, 4000), (600.0, 9000)])
 
     def test_nothing_to_plot(self):
         try:

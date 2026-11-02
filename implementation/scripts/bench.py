@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/design.md (benchmark_runner v0.1.1)
+# Source: abstraction/benchmark_runner/design.md (benchmark_runner v0.1.5)
 """bench: the BenchmarkRunner.
 
 Usage (from anywhere inside an impl/<lang> checkout):

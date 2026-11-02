@@ -1,6 +1,6 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.1.0)
-"""PointTable (all_points.csv) and SweepPlots (plots/*.png)."""
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.2.0)
+"""PointTable (all_points.csv), SweepPlots and ThroughputLatencyPlot (plots/*.png)."""
 
 import csv
 import glob
@@ -43,16 +43,21 @@ def _col(name):
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
+# (file name, x, [(subplot title, value of a row)], y scale, y limits); x is "x_key" or a metric column
+E2E = [("e2e_p50_us", _col("e2e_p50_us")), ("e2e_p99_us", _col("e2e_p99_us")), ("e2e_p999_us", _col("e2e_p999_us"))]
 FIGURES = [
-    ("latency_e2e", [("e2e_p50_us", _col("e2e_p50_us")), ("e2e_p99_us", _col("e2e_p99_us")),
-                     ("e2e_p999_us", _col("e2e_p999_us"))], "log", None),
-    ("goodput", [("lg_goodput", _col("lg_goodput"))], "linear", None),
-    ("outcomes", [(f"{m} / lg_scheduled", _frac(m))
-                  for m in ("lg_ok", "lg_rejected", "lg_cancelled", "lg_error", "lg_not_sent")], "linear", (0, 1)),
-    ("server_counters", [(m, _col(m)) for m in ("srv_cancelled_before_processing",
-                                                "srv_cancelled_during_processing",
-                                                "srv_completed_before_cancel")], "linear", None),
+    ("latency_e2e", "x_key", E2E, "log", None),
+    ("goodput", "x_key", [("lg_goodput", _col("lg_goodput"))], "linear", None),
+    ("outcomes", "x_key", [(f"{m} / lg_scheduled", _frac(m))
+                           for m in ("lg_ok", "lg_rejected", "lg_cancelled", "lg_error", "lg_not_sent")],
+     "linear", (0, 1)),
+    ("server_counters", "x_key", [(m, _col(m)) for m in ("srv_cancelled_before_processing",
+                                                         "srv_cancelled_during_processing",
+                                                         "srv_completed_before_cancel")], "linear", None),
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#throughputlatencyplot
+    ("throughput_latency", "lg_goodput", E2E, "log", None),
 ]
+THROUGHPUT_LABEL = "lg_goodput (requests/s)"
 
 
 class NothingToPlot(Exception):
@@ -117,6 +122,14 @@ def _is_number(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
+# Design: abstraction/benchmark_runner/result_plotter/design.md#throughputlatencyplot
+def throughput_latency_line(members, x_key, position, value):
+    """(goodput, metric) points of one series, joined in swept order, not sorted by goodput."""
+    kept = [r for r in members if r.get("lg_goodput") is not None and value(r) is not None]
+    kept.sort(key=lambda r: position[r[x_key]])
+    return [(r["lg_goodput"], value(r)) for r in kept]
+
+
 # Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
 def plot(output_dir):
     import matplotlib
@@ -145,20 +158,23 @@ def plot(output_dir):
         return ", ".join(f"{k}={_cell(v)}" for k, v in zip(series_keys, combo)) or "all"
 
     os.makedirs(os.path.join(output_dir, "plots"), exist_ok=True)
-    for name, metrics, yscale, ylim in FIGURES:
+    for name, x, metrics, yscale, ylim in FIGURES:
         fig, axes = plt.subplots(1, len(metrics), figsize=(6 * len(metrics), 4.5), squeeze=False)
         for ax, (title, value) in zip(axes[0], metrics):
             for combo, members in series.items():
-                pts = sorted((position[r[x_key]], value(r)) for r in members if value(r) is not None)
+                if x == "x_key":
+                    pts = sorted((position[r[x_key]], value(r)) for r in members if value(r) is not None)
+                else:  # ThroughputLatencyPlot
+                    pts = throughput_latency_line(members, x_key, position, value)
                 if pts:
                     ax.plot([p[0] for p in pts], [p[1] for p in pts], marker="o", label=label(combo))
             ax.set_title(title)
-            ax.set_xlabel(x_key)
+            ax.set_xlabel(x_key if x == "x_key" else THROUGHPUT_LABEL)
             if yscale == "log" and any(line.get_ydata().min() > 0 for line in ax.get_lines()):
                 ax.set_yscale("log")
             if ylim:
                 ax.set_ylim(*ylim)
-            if ticks is not None:
+            if ticks is not None and x == "x_key":
                 ax.set_xticks(range(len(ticks)), ticks)
             if len(series) > 1 and ax is axes[0][0]:
                 ax.legend(fontsize="small")

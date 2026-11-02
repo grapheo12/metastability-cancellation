@@ -103,6 +103,7 @@ Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t imple
 - `all_points.csv` is written with the `csv` module (strings with commas get quoted). Floats are written with `repr`, and `None` becomes an empty field.
 - Plots use `matplotlib` with the non-interactive `Agg` backend, imported lazily so the table can be built without it. Each figure is one row of subplots (`figsize` 6 in per subplot), saved at 120 dpi.
 - A categorical x-axis is drawn at positions `0..k-1` with tick labels in first-appearance order. A log y scale is applied only when every plotted value is positive.
+- `FIGURES` entries carry their x source (`"x_key"` or `"lg_goodput"`). The ThroughputLatencyPlot line is built by the pure function `throughput_latency_line`, so its swept-order rule is unit-tested without `matplotlib`. Its x-axis is always numeric, so categorical tick labels are applied only to `x_key` figures.
 
 ### Traceability
 
@@ -112,7 +113,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [PointTable](#pointtable) | [plotter.py:89](../../../implementation/scripts/benchrunner/plotter.py#L89), [test_plotter.py:33](../../../implementation/scripts/tests/test_plotter.py#L33) |
-| [SweepPlots](#sweepplots) | [plotter.py:46](../../../implementation/scripts/benchrunner/plotter.py#L46), [plotter.py:121](../../../implementation/scripts/benchrunner/plotter.py#L121), [test_plotter.py:49](../../../implementation/scripts/tests/test_plotter.py#L49) |
-| [ThroughputLatencyPlot](#throughputlatencyplot) |  |
+| [PointTable](#pointtable) | [plotter.py:94](../../../implementation/scripts/benchrunner/plotter.py#L94), [test_plotter.py:33](../../../implementation/scripts/tests/test_plotter.py#L33) |
+| [SweepPlots](#sweepplots) | [plotter.py:47](../../../implementation/scripts/benchrunner/plotter.py#L47), [plotter.py:134](../../../implementation/scripts/benchrunner/plotter.py#L134), [test_plotter.py:49](../../../implementation/scripts/tests/test_plotter.py#L49) |
+| [ThroughputLatencyPlot](#throughputlatencyplot) | [plotter.py:58](../../../implementation/scripts/benchrunner/plotter.py#L58), [plotter.py:126](../../../implementation/scripts/benchrunner/plotter.py#L126), [test_plotter.py:65](../../../implementation/scripts/tests/test_plotter.py#L65) |
 <!-- trace:end -->
