@@ -8,8 +8,8 @@
 | `PING_METHOD` | `POST` | Only allowed method on `/ping` | [../api.md#wire-contract-ping](../api.md#wire-contract-ping) |
 | `CANCEL_PATH` | `/cancel` | Cancellation route | [../api.md#wire-contract-cancel](../api.md#wire-contract-cancel) |
 | `CANCEL_METHOD` | `DELETE` | Only allowed method on `/cancel` | [../api.md#wire-contract-cancel](../api.md#wire-contract-cancel) |
-| `CONTENT_TYPE_JSON` | `application/json` | Content type of every non-empty body | [design.md#paddedjsonbody](design.md#paddedjsonbody), [design.md#cancelbody](design.md#cancelbody) |
-| `STATUS_OK` | `202` | `/ping`: work completed. `/cancel`: id accepted | [design.md#status-classification-load-generator-client](design.md#status-classification-load-generator-client), [design.md#status-classification-load-canceller](design.md#status-classification-load-canceller) |
+| `CONTENT_TYPE_JSON` | `application/json` | Content type of every non-empty body | [design.md#paddedjsonbody](design.md#paddedjsonbody), [design.md#cancelbody](design.md#cancelbody), [design.md#cancelreplybody](design.md#cancelreplybody) |
+| `STATUS_OK` | `202` | `/ping`: work completed. `/cancel`: id accepted, body is a CancelReplyBody | [design.md#status-classification-load-generator-client](design.md#status-classification-load-generator-client), [design.md#status-classification-load-canceller](design.md#status-classification-load-canceller) |
 | `STATUS_REJECTED` | `503` | `/ping`: work cancelled by `/cancel` (padded body). `/cancel`: registry full (empty body) | [design.md#status-classification-load-generator-client](design.md#status-classification-load-generator-client), [design.md#status-classification-load-canceller](design.md#status-classification-load-canceller) |
 | `STATUS_BAD_REQUEST` | `400` | Body could not be parsed, or a `/ping` client id differs from the connection's. Empty body | [design.md#parsing](design.md#parsing), [design.md#status-classification-load-canceller](design.md#status-classification-load-canceller) |
 | `STATUS_NOT_FOUND` | `404` | Path other than `/ping` and `/cancel`. Empty body | [../api.md#wire-contract-ping](../api.md#wire-contract-ping) |
@@ -33,6 +33,14 @@ Returns a PaddedJsonBody whose length is exactly `total_bytes`. Precondition:
 
 ### `build_cancel_body(id: u64) -> bytes`
 Returns the CancelBody `{"id":"<dec>"}`. See [design.md#cancelbody](design.md#cancelbody).
+
+### `build_cancel_reply(finished: u64 | none) -> bytes`
+Returns the CancelReplyBody `{"finished":"<dec>"}`, or `{"finished":null}` for none. The server uses it for every
+`202` answer to `/cancel`. See [design.md#cancelreplybody](design.md#cancelreplybody).
+
+### `parse_cancel_reply(body: bytes) -> u64 | none | ParseError`
+Pulls the FinishedWatermark out of a CancelReplyBody: a u64, or none for `null`. The load canceller calls it on
+every `202`. See [design.md#cancelreplybody](design.md#cancelreplybody).
 
 ### `parse_body(body: bytes) -> u64 | ParseError`
 Pulls the RequestId out of a PaddedJsonBody or a CancelBody. See [design.md#parsing](design.md#parsing).
