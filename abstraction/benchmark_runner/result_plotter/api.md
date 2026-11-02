@@ -34,4 +34,4 @@ Writes `all_points.csv` and `plots/*.png` ([../api.md#output-directory](../api.m
 
 - [../config/api.md](../config/api.md#sweeppoint): the `params.json` format
 - [../../load_generator/metrics/api.md](../../load_generator/metrics/api.md#summary-json): load generator summary fields
-- [../../load_canceller/api.md](../../load_canceller/api.md#outputs): canceller summary fields
+- [../../ingress/load_canceller/api.md](../../ingress/load_canceller/api.md#outputs): canceller summary fields
