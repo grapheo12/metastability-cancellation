@@ -160,37 +160,3 @@ With the LoadCanceller disabled (`cancel_rate = 0`) every count, rate and `clien
 Whether an accepted cancel actually stopped work is visible only in the servers' CancelCounters
 ([../../server/api.md#cancelcounters-output](../../server/api.md#cancelcounters-output)) and in the load
 generator's `rejected` count.
-
-## Design specific to Go
-
-Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
-Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
-loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
-
-### Go choices
-
-- Package `internal/canceller`, file `canceller.go`. Flags are parsed in `cmd/canceller/main.go`.
-- `send_async` calls `RoundTrip` on a new goroutine per cancel, because `RoundTrip` blocks until response headers. The sender loop never waits. That goroutine also plays the role of `on_done`.
-- The record state machine has an extra state: `PENDING → COMPLETING → DONE` (instead of `PENDING → DONE`). `drain` spins (`runtime.Gosched`) on `COMPLETING`, so it never reads a record that a response goroutine is still writing. Exactly one of `complete` and `drain` still resolves each record.
-- The drain loop polls `outstanding` every 1 ms until it reaches 0 or the deadline passes.
-- `finished` and its lock are the struct `finishedTable` (`map[uint32]uint32` plus a `sync.Mutex`). `note_finished` is `finishedTable.note`, called from `complete` inside the `COMPLETING` window, so a timed-out record never updates it. The pure arithmetic of `choose_target` is `nextTarget(base, hasBase, step)`.
-- The response goroutine reads the whole body (`io.ReadAll`) and passes it to `complete`, which parses it with `protocol.ParseCancelReply` only for a `202`. `reported_finished` is `CancelRecord.ReportedFinished` plus the flag `HasReported`.
-- `incr_rand_max` is the `-incr_rand_max` flag. It is parsed with `strconv.ParseUint(..., 10, 32)`, which enforces `<= 2^32 - 1`, and appears in the summary's `config` after `cancel_rate`, in API order.
-- Tests: `canceller_test.go` checks the CancelTargetChoice worked example (including out-of-order replies and a reply about another client), the skipped boundary, reply parsing in `complete` (watermark, `null`, junk), and `incr_rand_max` validation.
-
-### Traceability
-
-Generated from the `// Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
-Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`.
-
-<!-- trace:begin -->
-| Design subsection | Implementation (file:line) |
-|---|---|
-| [Startup](#startup) |  |
-| [CancelSchedule](#cancelschedule) |  |
-| [InFlightVictimChoice](#inflightvictimchoice) |  |
-| [Response collection](#response-collection) |  |
-| [Outcome classification](#outcome-classification) |  |
-| [CancellerDrain](#cancellerdrain) |  |
-| [Summary](#summary) |  |
-<!-- trace:end -->
