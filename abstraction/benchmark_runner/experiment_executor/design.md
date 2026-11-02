@@ -228,7 +228,9 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | Design subsection | Implementation (file:line) |
 |---|---|
 | [run_point](#run_point) | [executor.py:47](../../../implementation/scripts/benchrunner/executor.py#L47) |
+| [BackgroundProgram](#backgroundprogram) |  |
 | [ServerLifecycle](#serverlifecycle) | [executor.py:95](../../../implementation/scripts/benchrunner/executor.py#L95), [executor.py:115](../../../implementation/scripts/benchrunner/executor.py#L115) |
+| [IngressLifecycle](#ingresslifecycle) |  |
 | [ClientRun](#clientrun) | [executor.py:135](../../../implementation/scripts/benchrunner/executor.py#L135), [test_executor.py:60](../../../implementation/scripts/tests/test_executor.py#L60) |
 | [ProcessPlacement](#processplacement) | [executor.py:165](../../../implementation/scripts/benchrunner/executor.py#L165), [executor.py:176](../../../implementation/scripts/benchrunner/executor.py#L176), [test_executor.py:27](../../../implementation/scripts/tests/test_executor.py#L27), [test_executor.py:37](../../../implementation/scripts/tests/test_executor.py#L37) |
 | [Point outputs](#point-outputs) | [executor.py:185](../../../implementation/scripts/benchrunner/executor.py#L185), [executor.py:206](../../../implementation/scripts/benchrunner/executor.py#L206) |

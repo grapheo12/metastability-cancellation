@@ -63,7 +63,7 @@ def check_placement_support(config, pin):
 
 # Design: abstraction/benchmark_runner/design.md#run-flow
 def warn_unpinned(config, server, client):
-    for role, ready, sections in (("server", server, ["server"]), ("client", client, ["load_gen", "canceller"])):
+    for role, ready, sections in (("server", server, ["server"]), ("client", client, ["load_gen", "ingress"])):
         if any(config.placement[s]["cpu_set"] is not None for s in sections) and not ready.cpu_pinning:
             print(f"warning: cpu_set ignored on {role}: taskset not found", file=sys.stderr, flush=True)
 
