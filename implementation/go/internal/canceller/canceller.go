@@ -1,7 +1,7 @@
 // Package canceller implements the LoadCanceller: a single-sender, open-loop
 // Poisson source of DELETE /cancel requests.
 //
-// Source: abstraction/load_canceller/design.md (load_canceller v0.1.1)
+// Source: abstraction/load_canceller/design.md (load_canceller v0.2.0)
 package canceller
 
 import (
@@ -16,6 +16,7 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,37 +26,36 @@ import (
 )
 
 // API: abstraction/load_canceller/api.md#constants
-const (
-	IncrRandMax             = 4
-	CancellerDrainTimeoutMs = 1000
-)
+const CancellerDrainTimeoutMs = 1000
 
 // Config is the validated CancellerConfig.
 //
 // API: abstraction/load_canceller/api.md#cancellerconfig
 type Config struct {
-	Target     string
-	NumClients uint32
-	CancelRate float64
-	DurationS  float64
-	Seed       uint64
-	OutputPath string
-	DurationNs int64
+	Target      string
+	NumClients  uint32
+	CancelRate  float64
+	IncrRandMax uint64
+	DurationS   float64
+	Seed        uint64
+	OutputPath  string
+	DurationNs  int64
 }
 
 // Params holds the raw command-line values, named after the API parameters.
 type Params struct {
-	Target     string
-	NumClients string
-	CancelRate string
-	DurationS  string
-	Seed       string
-	OutputPath string
+	Target      string
+	NumClients  string
+	CancelRate  string
+	IncrRandMax string
+	DurationS   string
+	Seed        string
+	OutputPath  string
 }
 
 // DefaultParams returns the defaults from abstraction/load_canceller/api.md#program-parameters.
 func DefaultParams() Params {
-	return Params{Target: "127.0.0.1:8080", Seed: "0", OutputPath: "cancels"}
+	return Params{Target: "127.0.0.1:8080", IncrRandMax: "4", Seed: "0", OutputPath: "cancels"}
 }
 
 // Validate turns Params into a Config or returns a one-line error.
@@ -71,6 +71,11 @@ func Validate(p Params) (Config, error) {
 	if c.CancelRate, err = parsePositive(p.CancelRate); err != nil {
 		return c, errors.New("cancel_rate " + err.Error())
 	}
+	m, err := strconv.ParseUint(p.IncrRandMax, 10, 32)
+	if err != nil || m < 1 {
+		return c, errors.New("incr_rand_max must be an integer in 1 ..= 2^32-1")
+	}
+	c.IncrRandMax = m
 	if c.DurationS, err = parsePositive(p.DurationS); err != nil {
 		return c, errors.New("duration_s " + err.Error())
 	}
@@ -136,7 +141,41 @@ type CancelRecord struct {
 	SendNs      int64
 	EndNs       int64
 	HasEnd      bool
-	state       atomic.Uint32
+	// ReportedFinished is the FinishedWatermark (a RequestId) from a 202 reply.
+	ReportedFinished uint64
+	HasReported      bool
+	state            atomic.Uint32
+}
+
+// finishedTable holds the largest reported finished seq per client. The
+// response goroutines write it and the sender reads it, under one mutex.
+//
+// Design: abstraction/load_canceller/design.md#canceltargetchoice
+type finishedTable struct {
+	mu  sync.Mutex
+	seq map[uint32]uint32
+}
+
+func (f *finishedTable) get(clientID uint32) (uint32, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	v, ok := f.seq[clientID]
+	return v, ok
+}
+
+// note is note_finished: keep the max, ignore replies about another client.
+//
+// Design: abstraction/load_canceller/design.md#canceltargetchoice
+func (f *finishedTable) note(clientID uint32, finished uint64) {
+	fseq, fclient := protocol.SplitRequestID(finished)
+	if fclient != clientID {
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if old, ok := f.seq[clientID]; !ok || fseq > old {
+		f.seq[clientID] = fseq
+	}
 }
 
 type sender struct {
@@ -145,7 +184,7 @@ type sender struct {
 	rng         *sampling.Rng
 	runStart    time.Time
 	outstanding atomic.Int64
-	last        map[uint32]uint64 // last counter sent per client
+	finished    finishedTable
 	records     []*CancelRecord
 }
 
@@ -163,8 +202,8 @@ func Run(cfg Config) error {
 		cfg:  cfg,
 		conn: conn,
 		rng:  sampling.NewRng(sampling.DeriveSeed(cfg.Seed, sampling.StreamCanceller, 0)),
-		last: map[uint32]uint64{},
 	}
+	s.finished.seq = map[uint32]uint32{}
 	s.runStart = time.Now()
 	s.runSchedule()
 	s.drain()
@@ -217,47 +256,47 @@ func (s *sender) sendAsync(rec *CancelRecord) {
 	go func() {
 		resp, err := s.conn.CC.RoundTrip(req)
 		status := 0
+		var respBody []byte
 		if err == nil {
-			_, err = io.Copy(io.Discard, resp.Body) // body is ignored
+			respBody, err = io.ReadAll(resp.Body) // a 202 carries the CancelReplyBody
 			resp.Body.Close()
 			status = resp.StatusCode
 		}
-		s.complete(rec, status, err)
+		s.complete(rec, status, respBody, err)
 	}()
 }
 
-// chooseTarget draws a uniform client, then a uniform step in [1, INCR_RAND_MAX].
+// chooseTarget draws a uniform client, then a uniform step in [1, incr_rand_max],
+// and aims the step past the client's last reported FinishedWatermark.
 //
 // Design: abstraction/load_canceller/design.md#canceltargetchoice
 func (s *sender) chooseTarget() (clientID, seq uint32, ok bool) {
 	clientID = uint32(s.rng.UniformInt(0, uint64(s.cfg.NumClients)-1))
-	step := s.rng.UniformInt(1, IncrRandMax)
-	seq, ok = nextTarget(s.last, clientID, step)
+	step := s.rng.UniformInt(1, s.cfg.IncrRandMax)
+	base, hasBase := s.finished.get(clientID)
+	seq, ok = nextTarget(base, hasBase, step)
 	return clientID, seq, ok
 }
 
-// nextTarget advances the client's counter; the first target is step-1.
-// A counter that would leave u32 is "skipped" and last stays unchanged.
+// nextTarget is base + step, or step - 1 with no reply yet. A target past
+// 2^32 - 1 is "skipped". u64 arithmetic: base, step <= 2^32 - 1, no wrap.
 //
 // Design: abstraction/load_canceller/design.md#canceltargetchoice
-func nextTarget(last map[uint32]uint64, clientID uint32, step uint64) (uint32, bool) {
-	var t uint64
-	if prev, seen := last[clientID]; seen {
-		t = prev + step
-	} else {
-		t = step - 1
+func nextTarget(base uint32, hasBase bool, step uint64) (uint32, bool) {
+	t := step - 1
+	if hasBase {
+		t = uint64(base) + step
 	}
 	if t > math.MaxUint32 {
 		return 0, false
 	}
-	last[clientID] = t
 	return uint32(t), true
 }
 
 // complete records a response unless drain already timed the record out.
 //
 // Design: abstraction/load_canceller/design.md#response-collection
-func (s *sender) complete(rec *CancelRecord, status int, err error) {
+func (s *sender) complete(rec *CancelRecord, status int, body []byte, err error) {
 	if !rec.state.CompareAndSwap(statePending, stateCompleting) {
 		return
 	}
@@ -268,6 +307,12 @@ func (s *sender) complete(rec *CancelRecord, status int, err error) {
 	} else {
 		rec.HTTPStatus = status
 		rec.Outcome = classify(status)
+		if status == protocol.StatusOK {
+			if f, ok, perr := protocol.ParseCancelReply(body); perr == nil && ok {
+				rec.ReportedFinished, rec.HasReported = f, true
+				s.finished.note(rec.ClientID, f) // CancelTargetChoice
+			}
+		}
 	}
 	rec.state.Store(stateDone)
 	s.outstanding.Add(-1)
@@ -311,12 +356,13 @@ func (s *sender) drain() {
 }
 
 type summaryConfig struct {
-	Target     string  `json:"target"`
-	NumClients uint32  `json:"num_clients"`
-	CancelRate float64 `json:"cancel_rate"`
-	DurationS  float64 `json:"duration_s"`
-	Seed       uint64  `json:"seed"`
-	OutputPath string  `json:"output_path"`
+	Target      string  `json:"target"`
+	NumClients  uint32  `json:"num_clients"`
+	CancelRate  float64 `json:"cancel_rate"`
+	IncrRandMax uint64  `json:"incr_rand_max"`
+	DurationS   float64 `json:"duration_s"`
+	Seed        uint64  `json:"seed"`
+	OutputPath  string  `json:"output_path"`
 }
 
 type summaryCounts struct {
@@ -350,7 +396,7 @@ type Summary struct {
 // Design: abstraction/load_canceller/design.md#summary
 func summarize(records []*CancelRecord, cfg Config, runEndNs int64) Summary {
 	var s Summary
-	s.Config = summaryConfig{cfg.Target, cfg.NumClients, cfg.CancelRate, cfg.DurationS, cfg.Seed, cfg.OutputPath}
+	s.Config = summaryConfig{cfg.Target, cfg.NumClients, cfg.CancelRate, cfg.IncrRandMax, cfg.DurationS, cfg.Seed, cfg.OutputPath}
 	s.RunEndS = float64(runEndNs) / 1e9
 	targeted := map[uint32]struct{}{}
 	for _, r := range records {
@@ -392,9 +438,9 @@ func writeCancelsCSV(path string, records []*CancelRecord) error {
 		return err
 	}
 	w := bufio.NewWriter(f)
-	w.WriteString("arrival,cancel_id,client_id,target_seq,outcome,http_status,scheduled_ns,send_ns,end_ns\n")
+	w.WriteString("arrival,cancel_id,client_id,target_seq,outcome,http_status,scheduled_ns,send_ns,end_ns,reported_finished\n")
 	for _, r := range records {
-		cancelID, seq, status, send, end := "", "", "", "", ""
+		cancelID, seq, status, send, end, reported := "", "", "", "", "", ""
 		if !r.Skipped {
 			cancelID, seq = strconv.FormatUint(r.CancelID, 10), strconv.FormatUint(uint64(r.TargetSeq), 10)
 			send = strconv.FormatInt(r.SendNs, 10)
@@ -405,8 +451,12 @@ func writeCancelsCSV(path string, records []*CancelRecord) error {
 		if r.HasEnd {
 			end = strconv.FormatInt(r.EndNs, 10)
 		}
+		if r.HasReported {
+			reported = strconv.FormatUint(r.ReportedFinished, 10)
+		}
 		w.WriteString(strconv.FormatUint(r.Arrival, 10) + "," + cancelID + "," + strconv.FormatUint(uint64(r.ClientID), 10) + "," +
-			seq + "," + string(r.Outcome) + "," + status + "," + strconv.FormatInt(r.ScheduledNs, 10) + "," + send + "," + end + "\n")
+			seq + "," + string(r.Outcome) + "," + status + "," + strconv.FormatInt(r.ScheduledNs, 10) + "," + send + "," + end + "," +
+			reported + "\n")
 	}
 	if err := w.Flush(); err != nil {
 		f.Close()

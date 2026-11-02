@@ -1,6 +1,6 @@
 // Command canceller runs the LoadCanceller.
 //
-// Source: abstraction/load_canceller/api.md (load_canceller v0.1.1)
+// Source: abstraction/load_canceller/api.md (load_canceller v0.2.0)
 package main
 
 import (
@@ -18,6 +18,7 @@ func main() {
 	fs.StringVar(&p.Target, "target", p.Target, "server host:port")
 	fs.StringVar(&p.NumClients, "num_clients", p.NumClients, "number of load-generator clients N (required)")
 	fs.StringVar(&p.CancelRate, "cancel_rate", p.CancelRate, "cancel arrival rate in cancels/s (required)")
+	fs.StringVar(&p.IncrRandMax, "incr_rand_max", p.IncrRandMax, "largest step past the reported FinishedWatermark")
 	fs.StringVar(&p.DurationS, "duration_s", p.DurationS, "sending phase length in s (required)")
 	fs.StringVar(&p.Seed, "seed", p.Seed, "base seed")
 	fs.StringVar(&p.OutputPath, "output_path", p.OutputPath, "output path prefix")

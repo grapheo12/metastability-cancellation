@@ -208,7 +208,10 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 - `send_async` calls `RoundTrip` on a new goroutine per cancel, because `RoundTrip` blocks until response headers. The sender loop never waits. That goroutine also plays the role of `on_done`.
 - The record state machine has an extra state: `PENDING → COMPLETING → DONE` (instead of `PENDING → DONE`). `drain` spins (`runtime.Gosched`) on `COMPLETING`, so it never reads a record that a response goroutine is still writing. Exactly one of `complete` and `drain` still resolves each record.
 - The drain loop polls `outstanding` every 1 ms until it reaches 0 or the deadline passes.
-- `last` is a `map[uint32]uint64`.
+- `finished` and its lock are the struct `finishedTable` (`map[uint32]uint32` plus a `sync.Mutex`). `note_finished` is `finishedTable.note`, called from `complete` inside the `COMPLETING` window, so a timed-out record never updates it. The pure arithmetic of `choose_target` is `nextTarget(base, hasBase, step)`.
+- The response goroutine reads the whole body (`io.ReadAll`) and passes it to `complete`, which parses it with `protocol.ParseCancelReply` only for a `202`. `reported_finished` is `CancelRecord.ReportedFinished` plus the flag `HasReported`.
+- `incr_rand_max` is the `-incr_rand_max` flag. It is parsed with `strconv.ParseUint(..., 10, 32)`, which enforces `<= 2^32 - 1`, and appears in the summary's `config` after `cancel_rate`, in API order.
+- Tests: `canceller_test.go` checks the CancelTargetChoice worked example (including out-of-order replies and a reply about another client), the skipped boundary, reply parsing in `complete` (watermark, `null`, junk), and `incr_rand_max` validation.
 
 ### Traceability
 
@@ -218,12 +221,12 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [Configuration validation](#configuration-validation) | [canceller.go:64](../../implementation/go/internal/canceller/canceller.go#L64) |
-| [Startup](#startup) | [canceller.go:157](../../implementation/go/internal/canceller/canceller.go#L157), [h2client.go:28](../../implementation/go/internal/h2client/h2client.go#L28) |
-| [CancelSchedule](#cancelschedule) | [canceller.go:182](../../implementation/go/internal/canceller/canceller.go#L182), [canceller.go:212](../../implementation/go/internal/canceller/canceller.go#L212) |
-| [CancelTargetChoice](#canceltargetchoice) | [canceller.go:232](../../implementation/go/internal/canceller/canceller.go#L232), [canceller.go:243](../../implementation/go/internal/canceller/canceller.go#L243), [canceller_test.go:14](../../implementation/go/internal/canceller/canceller_test.go#L14) |
-| [Response collection](#response-collection) | [canceller.go:260](../../implementation/go/internal/canceller/canceller.go#L260) |
-| [Outcome classification](#outcome-classification) | [canceller.go:103](../../implementation/go/internal/canceller/canceller.go#L103), [canceller.go:280](../../implementation/go/internal/canceller/canceller.go#L280), [canceller_test.go:40](../../implementation/go/internal/canceller/canceller_test.go#L40) |
-| [CancellerDrain](#cancellerdrain) | [canceller.go:296](../../implementation/go/internal/canceller/canceller.go#L296), [h2client.go:52](../../implementation/go/internal/h2client/h2client.go#L52) |
-| [Summary](#summary) | [canceller.go:351](../../implementation/go/internal/canceller/canceller.go#L351) |
+| [Configuration validation](#configuration-validation) | [canceller.go:64](../../implementation/go/internal/canceller/canceller.go#L64), [canceller_test.go:87](../../implementation/go/internal/canceller/canceller_test.go#L87) |
+| [Startup](#startup) | [canceller.go:196](../../implementation/go/internal/canceller/canceller.go#L196), [h2client.go:28](../../implementation/go/internal/h2client/h2client.go#L28) |
+| [CancelSchedule](#cancelschedule) | [canceller.go:221](../../implementation/go/internal/canceller/canceller.go#L221), [canceller.go:251](../../implementation/go/internal/canceller/canceller.go#L251) |
+| [CancelTargetChoice](#canceltargetchoice) | [canceller.go:154](../../implementation/go/internal/canceller/canceller.go#L154), [canceller.go:169](../../implementation/go/internal/canceller/canceller.go#L169), [canceller.go:273](../../implementation/go/internal/canceller/canceller.go#L273), [canceller.go:285](../../implementation/go/internal/canceller/canceller.go#L285), [canceller_test.go:14](../../implementation/go/internal/canceller/canceller_test.go#L14), [canceller_test.go:49](../../implementation/go/internal/canceller/canceller_test.go#L49) |
+| [Response collection](#response-collection) | [canceller.go:299](../../implementation/go/internal/canceller/canceller.go#L299), [canceller_test.go:62](../../implementation/go/internal/canceller/canceller_test.go#L62) |
+| [Outcome classification](#outcome-classification) | [canceller.go:108](../../implementation/go/internal/canceller/canceller.go#L108), [canceller.go:325](../../implementation/go/internal/canceller/canceller.go#L325), [canceller_test.go:106](../../implementation/go/internal/canceller/canceller_test.go#L106) |
+| [CancellerDrain](#cancellerdrain) | [canceller.go:341](../../implementation/go/internal/canceller/canceller.go#L341), [h2client.go:52](../../implementation/go/internal/h2client/h2client.go#L52) |
+| [Summary](#summary) | [canceller.go:397](../../implementation/go/internal/canceller/canceller.go#L397) |
 <!-- trace:end -->

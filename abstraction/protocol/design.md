@@ -207,5 +207,5 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [CancelReplyBody](#cancelreplybody) | [protocol.go:92](../../implementation/go/internal/protocol/protocol.go#L92), [protocol.go:103](../../implementation/go/internal/protocol/protocol.go#L103), [protocol_test.go:81](../../implementation/go/internal/protocol/protocol_test.go#L81), [protocol_test.go:106](../../implementation/go/internal/protocol/protocol_test.go#L106) |
 | [Parsing](#parsing) | [protocol.go:125](../../implementation/go/internal/protocol/protocol.go#L125), [protocol.go:149](../../implementation/go/internal/protocol/protocol.go#L149), [protocol_test.go:65](../../implementation/go/internal/protocol/protocol_test.go#L65) |
 | [Status classification (load-generator client)](#status-classification-load-generator-client) | [client.go:118](../../implementation/go/internal/loadgen/client.go#L118) |
-| [Status classification (load canceller)](#status-classification-load-canceller) | [canceller.go:280](../../implementation/go/internal/canceller/canceller.go#L280) |
+| [Status classification (load canceller)](#status-classification-load-canceller) | [canceller.go:325](../../implementation/go/internal/canceller/canceller.go#L325) |
 <!-- trace:end -->
