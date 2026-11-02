@@ -57,3 +57,27 @@ function discard(pool, c, s, conn):
 | `get`, dial fails | none | DialError (→ `502`) | none |
 | `get`, dial succeeds | none | connection Y | Y |
 | late `discard(2, 1, X)` | Y | — | Y |
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- File `internal/ingress/upstream.go`. `open_h2c_connection` is `h2client.Dial`, which bounds both the TCP connect and the PING round trip by 5 s (`UPSTREAM_DIAL_TIMEOUT_MS`). The pool's `dial` field holds it, so tests can count or fail dials.
+- `slots` is a `map[pairKey]*upstreamSlot` under `mapMu`; each slot has its own `sync.Mutex`, held during the first dial.
+- Tests: `upstream_test.go` runs the event table against an in-process server: eight concurrent first `get`s share one dial, a failed dial is not cached, and a late `discard` keeps the newer connection.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [UpstreamPool](#upstreampool) | [upstream.go:27](../../../implementation/go/internal/ingress/upstream.go#L27), [upstream.go:37](../../../implementation/go/internal/ingress/upstream.go#L37), [upstream.go:89](../../../implementation/go/internal/ingress/upstream.go#L89) |
+| [Get](#get) | [upstream.go:58](../../../implementation/go/internal/ingress/upstream.go#L58), [upstream.go:76](../../../implementation/go/internal/ingress/upstream.go#L76), [upstream_test.go:29](../../../implementation/go/internal/ingress/upstream_test.go#L29) |
+<!-- trace:end -->
