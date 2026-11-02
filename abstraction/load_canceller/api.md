@@ -9,6 +9,7 @@ Same as [../api.md#canceller-parameters](../api.md#canceller-parameters):
 | `target` | `host:port` | `127.0.0.1:8080` |
 | `num_clients` (`N`) | integer, `1 ..= 2^32-1` | required |
 | `cancel_rate` | float, cancels/s, `> 0` | required |
+| `incr_rand_max` | integer, `1 ..= 2^32-1` | `4` |
 | `duration_s` | float, s, `> 0` | required |
 | `seed` | u64 | `0` |
 | `output_path` | path prefix | `cancels` |
@@ -17,7 +18,6 @@ Same as [../api.md#canceller-parameters](../api.md#canceller-parameters):
 
 | Name | Value | Meaning |
 |---|---|---|
-| `INCR_RAND_MAX` | `4` | Largest per-client counter step. Steps are uniform in `[1, INCR_RAND_MAX]` ([design.md#canceltargetchoice](design.md#canceltargetchoice)) |
 | `CANCELLER_DRAIN_TIMEOUT_MS` | `1000` | Longest wait for outstanding responses after the sending phase ([design.md#cancellerdrain](design.md#cancellerdrain)) |
 
 ## Types
@@ -44,6 +44,7 @@ One per arrival. Created by [design.md#cancelschedule](design.md#cancelschedule)
 | `scheduled_ns` | integer | Scheduled arrival time, ns since `run_start` |
 | `send_ns` | integer or empty | When the stream was opened. Empty for `skipped` |
 | `end_ns` | integer or empty | When the response completed or failed. Empty for `timeout` and `skipped` |
+| `reported_finished` | u64 or empty | FinishedWatermark (a RequestId) from the `202` CancelReplyBody. Empty for any other outcome, for a `null` reply, and for a body that does not parse ([design.md#response-collection](design.md#response-collection)) |
 
 ## Outputs
 
@@ -51,7 +52,7 @@ One per arrival. Created by [design.md#cancelschedule](design.md#cancelschedule)
 UTF-8, comma-separated, `\n` line endings, one header line, rows in `arrival` order:
 
 ```
-arrival,cancel_id,client_id,target_seq,outcome,http_status,scheduled_ns,send_ns,end_ns
+arrival,cancel_id,client_id,target_seq,outcome,http_status,scheduled_ns,send_ns,end_ns,reported_finished
 ```
 
 Integers are written in decimal. Empty fields are written as nothing between the commas. Rows are
@@ -78,5 +79,5 @@ established, or if the output files cannot be written.
 
 ## Uses
 
-- [../protocol/api.md](../protocol/api.md): `make_request_id`, `build_cancel_body`, `CANCEL_PATH`, `CANCEL_METHOD`, canceller status classification
+- [../protocol/api.md](../protocol/api.md): `make_request_id`, `split_request_id`, `build_cancel_body`, `parse_cancel_reply`, `CANCEL_PATH`, `CANCEL_METHOD`, canceller status classification
 - [../sampling/api.md](../sampling/api.md): `derive_seed`, `rng_new`, `exponential_ns`, `uniform_int`, `STREAM_CANCELLER`
