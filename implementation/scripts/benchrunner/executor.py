@@ -1,6 +1,6 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.2.0)
-"""run_point: ServerLifecycle, ClientRun and point outputs for one SweepPoint."""
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.3.0)
+"""run_point: ServerLifecycle, IngressLifecycle, ClientRun and point outputs for one SweepPoint."""
 
 import json
 import os
@@ -15,7 +15,7 @@ from .transport import TransportError, join, quote
 READY_LINE = "listening on"
 COUNTERS_PREFIX = '{"cancelled_before_processing":'
 POLL_INTERVAL_S = 0.2
-CANCELLER_DRAIN_S = 1.0
+MAX_INSTANCES = 64
 
 
 @dataclass
@@ -58,17 +58,21 @@ def run_point(point, config, server, client, run_id):
     try:
         server.transport.run(f"mkdir -p {quote(rd_server)}", 30)
         client.transport.run(f"mkdir -p {quote(rd_client)}", 30)
-        stop_server(server, config.run.stop_timeout_s)  # leftover from a crash
-        start_server(point, config, server, rd_server)
-        if not client_run(point, config, server, client, rd_client):
+        stop_ingress(client, config.run.stop_timeout_s)  # leftovers from a crash
+        stop_leftover_servers(server, config.run.stop_timeout_s)
+        start_servers(point, config, server, rd_server)
+        start_ingress(point, config, client, rd_client)
+        if not client_run(point, config, client, rd_client):
             reason = "client run failed or timed out"
     except (PointFailure, TransportError) as e:
         reason = str(e)
     except KeyboardInterrupt:
         reason, interrupted = "interrupted", True
-    finally:
+    finally:  # reverse start order
         try:
-            if not stop_server(server, config.run.stop_timeout_s) and reason is None:
+            if not stop_ingress(client, config.run.stop_timeout_s) and reason is None:
+                reason = "ingress did not stop on SIGINT"
+            if not stop_servers(server, point.server_instances, config.run.stop_timeout_s) and reason is None:
                 reason = "server did not stop on SIGINT"
             collect_outputs(point, server, client, rd_server, rd_client, pdir)
         except TransportError as e:
@@ -87,77 +91,112 @@ def run_point(point, config, server, client, run_id):
     return result
 
 
-def _pid_file(server):
-    return f"{server.workdir}/server.pid"
-
-
-# Design: abstraction/benchmark_runner/experiment_executor/design.md#serverlifecycle
-def start_server(point, config, server, rd):
-    t = server.transport
-    log = f"{rd}/server.out"
-    words = placement_prefix("server", point, server) + \
-        [server.binaries["server"], "--listen_addr", f"0.0.0.0:{config.listen_port}"] + arg_words(point.server_args)
-    pid = t.start_background("exec " + join(words), log)  # exec: the pid is the server itself
-    t.run(f"echo {pid} > {quote(_pid_file(server))}", 30)
-    deadline = time.monotonic() + config.run.server_ready_timeout_s
+# Design: abstraction/benchmark_runner/experiment_executor/design.md#backgroundprogram
+def start_program(m, name, words, log, pid_file, ready_timeout_s):
+    """Start `exec <words>` in the background, record its pid, wait for READY_LINE."""
+    t = m.transport
+    pid = t.start_background("exec " + join(words), log)  # exec: the pid is the program itself
+    t.run(f"echo {pid} > {quote(pid_file)}", 30)
+    deadline = time.monotonic() + ready_timeout_s
     while True:
         if t.run(f"grep -q {quote(READY_LINE)} {quote(log)}", 30).exit_status == 0:
             return
         if not t.alive(pid):
             tail = t.run(f"tail -n 20 {quote(log)}", 30).stdout.strip()
-            raise PointFailure(f"server exited during startup: {tail}")
+            raise PointFailure(f"{name} exited during startup: {tail}")
         if time.monotonic() >= deadline:
-            raise PointFailure(f"server not ready after {config.run.server_ready_timeout_s} s")
+            raise PointFailure(f"{name} not ready after {ready_timeout_s} s")
         time.sleep(POLL_INTERVAL_S)
 
 
-# Design: abstraction/benchmark_runner/experiment_executor/design.md#serverlifecycle
-def stop_server(server, stop_timeout_s):
-    """Interrupt the recorded server, if any. False if it had to be killed."""
-    t = server.transport
-    r = t.run(f"cat {quote(_pid_file(server))}", 30)
+# Design: abstraction/benchmark_runner/experiment_executor/design.md#backgroundprogram
+def stop_program(m, pid_file, stop_timeout_s):
+    """Interrupt the recorded program, if any. False if it had to be killed."""
+    t = m.transport
+    r = t.run(f"cat {quote(pid_file)}", 30)
     if r.exit_status != 0 or not r.stdout.strip().isdigit():
-        return True  # no server recorded
+        return True  # nothing recorded
     pid, ok = int(r.stdout.strip()), True
     if t.alive(pid):
-        t.signal(pid, "INT")  # the server prints CancelCounters and exits 0
+        t.signal(pid, "INT")  # it writes its outputs and exits 0
         deadline = time.monotonic() + stop_timeout_s
         while t.alive(pid) and time.monotonic() < deadline:
             time.sleep(POLL_INTERVAL_S)
         if t.alive(pid):
             t.signal(pid, "KILL")
             ok = False
-    t.run(f"rm -f {quote(_pid_file(server))}", 30)
+    t.run(f"rm -f {quote(pid_file)}", 30)
     return ok
 
 
+def _server_pid_file(server, k):
+    return f"{server.workdir}/server_{k}.pid"
+
+
+def _ingress_pid_file(client):
+    return f"{client.workdir}/ingress.pid"
+
+
+# Design: abstraction/benchmark_runner/experiment_executor/design.md#serverlifecycle
+def start_servers(point, config, server, rd):
+    for k in range(point.server_instances):
+        words = placement_prefix("server", point, server) + \
+            [server.binaries["server"], "--listen_addr", f"0.0.0.0:{config.listen_port + k}"] + \
+            arg_words(point.server_args)
+        start_program(server, f"server {k}", words, f"{rd}/server_{k}.out", _server_pid_file(server, k),
+                      config.run.server_ready_timeout_s)
+
+
+# Design: abstraction/benchmark_runner/experiment_executor/design.md#serverlifecycle
+def stop_servers(server, count, stop_timeout_s):
+    ok = True
+    for k in range(count):
+        ok = stop_program(server, _server_pid_file(server, k), stop_timeout_s) and ok
+    return ok
+
+
+# Design: abstraction/benchmark_runner/experiment_executor/design.md#run_point
+def stop_leftover_servers(server, stop_timeout_s):
+    """Stop every server_<k>.pid present (k < MAX_INSTANCES), listed in one command."""
+    r = server.transport.run(f"cd {quote(server.workdir)} 2>/dev/null && ls -1 server_*.pid 2>/dev/null; true", 30)
+    ks = sorted(int(n[len("server_"):-len(".pid")]) for n in r.stdout.split()
+                if n.startswith("server_") and n.endswith(".pid") and n[len("server_"):-len(".pid")].isdigit())
+    for k in ks:
+        if k < MAX_INSTANCES:
+            stop_program(server, _server_pid_file(server, k), stop_timeout_s)
+
+
+# Design: abstraction/benchmark_runner/experiment_executor/design.md#ingresslifecycle
+def start_ingress(point, config, client, rd):
+    words = placement_prefix("ingress", point, client) + \
+        [client.binaries["ingress"], "--listen_addr", f"0.0.0.0:{config.ingress_port}"] + \
+        arg_words(point.ingress_args) + ["--output_path", f"{rd}/ingress"]
+    start_program(client, "ingress", words, f"{rd}/ingress.log", _ingress_pid_file(client),
+                  config.run.server_ready_timeout_s)
+
+
+# Design: abstraction/benchmark_runner/experiment_executor/design.md#ingresslifecycle
+def stop_ingress(client, stop_timeout_s):
+    return stop_program(client, _ingress_pid_file(client), stop_timeout_s)
+
+
 # Design: abstraction/benchmark_runner/experiment_executor/design.md#clientrun
-def client_run(point, config, server, client, rd):
-    target = f"{server.data_addr}:{config.listen_port}"
+def client_run(point, config, client, rd):
+    target = f"127.0.0.1:{config.ingress_port}"
     lg = placement_prefix("loadgen", point, client) + \
         [client.binaries["loadgen"], "--target", target] + arg_words(point.loadgen_args) + \
         ["--output_path", f"{rd}/loadgen"]
-    lines = [f"cd {quote(rd)} || exit 97", "CP=; C=0"]
-    enabled = point.canceller_args is not None
-    if enabled:
-        cx = placement_prefix("canceller", point, client) + \
-            [client.binaries["canceller"], "--target", target] + arg_words(point.canceller_args) + \
-            ["--output_path", f"{rd}/canceller"]
-        lines += [f"{join(cx)} > {quote(rd + '/canceller.log')} 2>&1 &",
-                  f"CP=$!; echo $CP > {quote(rd + '/canceller.pid')}"]
-    lines += [f"{join(lg)} > {quote(rd + '/loadgen.log')} 2>&1 &",
-              f"LP=$!; echo $LP > {quote(rd + '/loadgen.pid')}",
-              "wait $LP; L=$?"]
-    if enabled:
-        lines.append("wait $CP; C=$?")
-    lines += ['echo "loadgen_exit=$L canceller_exit=$C"', '[ "$L" -eq 0 ] && [ "$C" -eq 0 ]']
+    lines = [f"cd {quote(rd)} || exit 97",
+             f"{join(lg)} > {quote(rd + '/loadgen.log')} 2>&1 &",
+             f"LP=$!; echo $LP > {quote(rd + '/loadgen.pid')}",
+             "wait $LP; L=$?",
+             'echo "loadgen_exit=$L"',
+             '[ "$L" -eq 0 ]']
     expected = _float(point.arg("loadgen", "duration_s")) + _float(point.arg("loadgen", "slo_ms")) / 1000
-    if enabled:
-        expected = max(expected, _float(point.arg("canceller", "duration_s")) + CANCELLER_DRAIN_S)
     r = client.transport.run("\n".join(lines), expected + config.run.client_timeout_margin_s)
     if r.exit_status == -1:  # timed out: kill what is left
-        pids = " ".join(quote(f"{rd}/{p}.pid") for p in ("loadgen", "canceller"))
-        client.transport.run(f'for f in {pids}; do [ -f "$f" ] && kill -s KILL "$(cat "$f")"; done; true', 30)
+        pid = quote(f"{rd}/loadgen.pid")
+        client.transport.run(f'[ -f {pid} ] && kill -s KILL "$(cat {pid})"; true', 30)
     return r.exit_status == 0
 
 
@@ -174,40 +213,57 @@ def placement_prefix(program, point, ready):
 
 # Design: abstraction/benchmark_runner/experiment_executor/design.md#processplacement
 def write_placement(point, server, client, pdir):
-    doc = {"server": placement_prefix("server", point, server), "loadgen": placement_prefix("loadgen", point, client)}
-    if point.canceller_args is not None:
-        doc["canceller"] = placement_prefix("canceller", point, client)
+    doc = {"server": placement_prefix("server", point, server),  # the same for every instance
+           "loadgen": placement_prefix("loadgen", point, client),
+           "ingress": placement_prefix("ingress", point, client)}
     with open(os.path.join(pdir, "placement.json"), "w") as f:
         json.dump(doc, f, indent=2)
 
 
+COUNTER_KEYS = ("cancelled_before_processing", "cancelled_during_processing", "completed_before_cancel")
+
+
 # Design: abstraction/benchmark_runner/experiment_executor/design.md#point-outputs
 def collect_outputs(point, server, client, rd_server, rd_client, pdir):
-    names = ["loadgen.requests.csv", "loadgen.summary.json", "loadgen.log"]
-    if point.canceller_args is not None:
-        names += ["canceller.cancels.csv", "canceller.summary.json", "canceller.log"]
-    for name in names:
+    for name in ("loadgen.requests.csv", "loadgen.summary.json", "loadgen.log",
+                 "ingress.cancels.csv", "ingress.summary.json", "ingress.log"):
         client.transport.fetch(f"{rd_client}/{name}", os.path.join(pdir, name))
-    server.transport.fetch(f"{rd_server}/server.out", os.path.join(pdir, "server.out"))
-    out = os.path.join(pdir, "server.out")
-    if os.path.exists(out):
-        with open(out, encoding="utf-8", errors="replace") as f:
-            lines = [l.strip() for l in f if l.startswith(COUNTERS_PREFIX)]
-        if lines:
-            try:
-                counters = json.loads(lines[-1])
-            except json.JSONDecodeError:
-                return
-            with open(os.path.join(pdir, "server_counters.json"), "w") as f:
-                json.dump(counters, f, indent=2)
+    counters = []
+    for k in range(point.server_instances):
+        out = os.path.join(pdir, f"server_{k}.out")
+        server.transport.fetch(f"{rd_server}/server_{k}.out", out)
+        c = _last_counters(out)
+        if c is not None:
+            with open(os.path.join(pdir, f"server_counters_{k}.json"), "w") as f:
+                json.dump(c, f, indent=2)
+            counters.append(c)
+    if len(counters) == point.server_instances:  # every instance reported
+        total = {key: sum(c.get(key, 0) for c in counters) for key in COUNTER_KEYS}
+        with open(os.path.join(pdir, "server_counters.json"), "w") as f:
+            json.dump(total, f, indent=2)
+
+
+def _last_counters(path):
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8", errors="replace") as f:
+        lines = [l.strip() for l in f if l.startswith(COUNTERS_PREFIX)]
+    if not lines:
+        return None
+    try:
+        return json.loads(lines[-1])
+    except json.JSONDecodeError:
+        return None
 
 
 # Design: abstraction/benchmark_runner/experiment_executor/design.md#point-outputs
 def validate_outputs(point, pdir):
     if not os.path.exists(os.path.join(pdir, "loadgen.summary.json")):
         return "loadgen summary missing"
-    if point.canceller_args is not None and not os.path.exists(os.path.join(pdir, "canceller.summary.json")):
-        return "canceller summary missing"
+    if not os.path.exists(os.path.join(pdir, "ingress.summary.json")):
+        return "ingress summary missing"
     if not os.path.exists(os.path.join(pdir, "server_counters.json")):
-        return "server CancelCounters line missing"
+        missing = [k for k in range(point.server_instances)
+                   if not os.path.exists(os.path.join(pdir, f"server_counters_{k}.json"))]
+        return f"server CancelCounters line missing (instance {', '.join(map(str, missing)) or '?'})"
     return None

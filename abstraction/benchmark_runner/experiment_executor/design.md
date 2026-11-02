@@ -214,10 +214,12 @@ Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t imple
 
 ### Python choices
 
-- `run_point` uses `try / except / finally`. `finally` always stops the server and collects outputs. `KeyboardInterrupt` is recorded as reason `interrupted` and re-raised after the `failed` marker is written.
+- `run_point` uses `try / except / finally`. `finally` always stops the Ingress, then the servers, and collects outputs. `KeyboardInterrupt` is recorded as reason `interrupted` and re-raised after the `failed` marker is written.
 - Waiting uses `time.monotonic()` deadlines and `time.sleep(POLL_INTERVAL_S)`.
-- `params.json`, `placement.json` and `server_counters.json` are written with `json.dump(..., indent=2)`. `placement.json` is written right after `params.json`, before any remote command, so even a point that fails early records its placement.
-- `placement_prefix` returns plain words. They go through the same `join` (POSIX quoting) as the rest of the command line, so `GOMAXPROCS=4` and `0-3` are passed unquoted and unchanged.
+- `params.json`, `placement.json` and the `server_counters*.json` files are written with `json.dump(..., indent=2)`. `placement.json` is written right after `params.json`, before any remote command, so even a point that fails early records its placement.
+- BackgroundProgram is `start_program(m, name, words, log, pid_file, ready_timeout_s)` and `stop_program(m, pid_file, stop_timeout_s)`; `start_servers`, `stop_servers`, `start_ingress` and `stop_ingress` are thin wrappers.
+- Leftover cleanup (`stop_leftover_servers`) lists the existing `server_*.pid` files with one `ls` instead of probing all `MAX_INSTANCES` paths, which would cost one SSH round trip each; only indices below `MAX_INSTANCES` are stopped, as specified.
+- - `placement_prefix` returns plain words. They go through the same `join` (POSIX quoting) as the rest of the command line, so `GOMAXPROCS=4` and `0-3` are passed unquoted and unchanged.
 
 ### Traceability
 
@@ -227,11 +229,11 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [run_point](#run_point) | [executor.py:47](../../../implementation/scripts/benchrunner/executor.py#L47) |
-| [BackgroundProgram](#backgroundprogram) |  |
-| [ServerLifecycle](#serverlifecycle) | [executor.py:95](../../../implementation/scripts/benchrunner/executor.py#L95), [executor.py:115](../../../implementation/scripts/benchrunner/executor.py#L115) |
-| [IngressLifecycle](#ingresslifecycle) |  |
-| [ClientRun](#clientrun) | [executor.py:135](../../../implementation/scripts/benchrunner/executor.py#L135), [test_executor.py:60](../../../implementation/scripts/tests/test_executor.py#L60) |
-| [ProcessPlacement](#processplacement) | [executor.py:165](../../../implementation/scripts/benchrunner/executor.py#L165), [executor.py:176](../../../implementation/scripts/benchrunner/executor.py#L176), [test_executor.py:27](../../../implementation/scripts/tests/test_executor.py#L27), [test_executor.py:37](../../../implementation/scripts/tests/test_executor.py#L37) |
-| [Point outputs](#point-outputs) | [executor.py:185](../../../implementation/scripts/benchrunner/executor.py#L185), [executor.py:206](../../../implementation/scripts/benchrunner/executor.py#L206) |
+| [run_point](#run_point) | [executor.py:47](../../../implementation/scripts/benchrunner/executor.py#L47), [executor.py:159](../../../implementation/scripts/benchrunner/executor.py#L159) |
+| [BackgroundProgram](#backgroundprogram) | [executor.py:95](../../../implementation/scripts/benchrunner/executor.py#L95), [executor.py:113](../../../implementation/scripts/benchrunner/executor.py#L113) |
+| [ServerLifecycle](#serverlifecycle) | [executor.py:141](../../../implementation/scripts/benchrunner/executor.py#L141), [executor.py:151](../../../implementation/scripts/benchrunner/executor.py#L151) |
+| [IngressLifecycle](#ingresslifecycle) | [executor.py:170](../../../implementation/scripts/benchrunner/executor.py#L170), [executor.py:179](../../../implementation/scripts/benchrunner/executor.py#L179) |
+| [ClientRun](#clientrun) | [executor.py:184](../../../implementation/scripts/benchrunner/executor.py#L184), [test_executor.py:57](../../../implementation/scripts/tests/test_executor.py#L57) |
+| [ProcessPlacement](#processplacement) | [executor.py:204](../../../implementation/scripts/benchrunner/executor.py#L204), [executor.py:215](../../../implementation/scripts/benchrunner/executor.py#L215), [test_executor.py:27](../../../implementation/scripts/tests/test_executor.py#L27), [test_executor.py:37](../../../implementation/scripts/tests/test_executor.py#L37) |
+| [Point outputs](#point-outputs) | [executor.py:227](../../../implementation/scripts/benchrunner/executor.py#L227), [executor.py:260](../../../implementation/scripts/benchrunner/executor.py#L260), [test_executor.py:80](../../../implementation/scripts/tests/test_executor.py#L80) |
 <!-- trace:end -->
