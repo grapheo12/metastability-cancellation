@@ -191,6 +191,8 @@ Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t imple
 - `BenchConfig`, `Machine`, `RunOptions` and `SweepPoint` are `dataclasses`. Program parameters are plain `dict`s in insertion order.
 - Integers exclude `bool` (Python's `bool` is a subclass of `int`). `format_arg` checks `bool` before `int`, and writes floats with `repr`, which is the shortest round-trip form.
 - `itertools.product` gives the cross product with the last key varying fastest.
+- The CPU list pattern is a compiled `re` pattern used with `fullmatch`. `BenchConfig.placement` is keyed by section (`server`, `load_gen`, `canceller`) and `SweepPoint.placement` by program (`server`, `loadgen`, `canceller`), so each point holds its own copy.
+- `cancel_rate_fraction` is kept outside the program parameter dicts, in `BenchConfig.cancel_rate_fraction`, so it is never passed to a program. `lookup("canceller.cancel_rate_fraction")` returns it. The swept keys in file order are collected while parsing (`BenchConfig.file_swept`), so the fraction keeps its place among the `[canceller]` keys.
 
 ### Traceability
 
@@ -200,9 +202,9 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [BenchConfig](#benchconfig) | [config.py:13](../../../implementation/scripts/benchrunner/config.py#L13), [config.py:140](../../../implementation/scripts/benchrunner/config.py#L140), [test_config.py:72](../../../implementation/scripts/tests/test_config.py#L72) |
-| [SweepExpansion](#sweepexpansion) | [config.py:250](../../../implementation/scripts/benchrunner/config.py#L250), [test_config.py:47](../../../implementation/scripts/tests/test_config.py#L47), [test_config.py:57](../../../implementation/scripts/tests/test_config.py#L57) |
-| [ProcessPlacement](#processplacement) |  |
-| [CancelRateFraction](#cancelratefraction) |  |
-| [Argument formatting](#argument-formatting) | [config.py:272](../../../implementation/scripts/benchrunner/config.py#L272), [test_config.py:92](../../../implementation/scripts/tests/test_config.py#L92) |
+| [BenchConfig](#benchconfig) | [config.py:14](../../../implementation/scripts/benchrunner/config.py#L14), [config.py:156](../../../implementation/scripts/benchrunner/config.py#L156), [test_config.py:72](../../../implementation/scripts/tests/test_config.py#L72) |
+| [SweepExpansion](#sweepexpansion) | [config.py:308](../../../implementation/scripts/benchrunner/config.py#L308), [test_config.py:47](../../../implementation/scripts/tests/test_config.py#L47), [test_config.py:57](../../../implementation/scripts/tests/test_config.py#L57) |
+| [ProcessPlacement](#processplacement) | [config.py:20](../../../implementation/scripts/benchrunner/config.py#L20), [config.py:201](../../../implementation/scripts/benchrunner/config.py#L201), [config.py:330](../../../implementation/scripts/benchrunner/config.py#L330), [test_config.py:127](../../../implementation/scripts/tests/test_config.py#L127) |
+| [CancelRateFraction](#cancelratefraction) | [config.py:27](../../../implementation/scripts/benchrunner/config.py#L27), [config.py:210](../../../implementation/scripts/benchrunner/config.py#L210), [config.py:264](../../../implementation/scripts/benchrunner/config.py#L264), [config.py:279](../../../implementation/scripts/benchrunner/config.py#L279), [config.py:326](../../../implementation/scripts/benchrunner/config.py#L326), [test_config.py:97](../../../implementation/scripts/tests/test_config.py#L97), [test_config.py:110](../../../implementation/scripts/tests/test_config.py#L110) |
+| [Argument formatting](#argument-formatting) | [config.py:336](../../../implementation/scripts/benchrunner/config.py#L336), [test_config.py:92](../../../implementation/scripts/tests/test_config.py#L92) |
 <!-- trace:end -->

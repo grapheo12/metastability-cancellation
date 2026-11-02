@@ -54,6 +54,20 @@ def prepare_output_dir(config, config_path, pin, n_points):
                    "points": n_points}, f, indent=2)
 
 
+# Design: abstraction/benchmark_runner/design.md#run-flow
+def check_placement_support(config, pin):
+    if any(p["threads"] is not None for p in config.placement.values()) and pin.manifest.thread_env is None:
+        raise remote_setup.PinError(f"threads is set, but implementation/{pin.lang}/benchmark_manifest.toml "
+                                    "has no thread_env")
+
+
+# Design: abstraction/benchmark_runner/design.md#run-flow
+def warn_unpinned(config, server, client):
+    for role, ready, sections in (("server", server, ["server"]), ("client", client, ["load_gen", "canceller"])):
+        if any(config.placement[s]["cpu_set"] is not None for s in sections) and not ready.cpu_pinning:
+            print(f"warning: cpu_set ignored on {role}: taskset not found", file=sys.stderr, flush=True)
+
+
 def require_matplotlib():
     try:
         import matplotlib  # noqa: F401
@@ -72,6 +86,7 @@ def bench_run(config_path, setup_only):
             require_matplotlib()
         pin = remote_setup.source_pin(config.repo_url, repo_root())
         log(f"pinned {pin.branch} @ {pin.commit[:12]} ({len(points)} sweep points)")
+        check_placement_support(config, pin)
         if not setup_only:
             prepare_output_dir(config, config_path, pin, len(points))
         server_t = transport.open_transport(config.machines["server"])
@@ -83,6 +98,7 @@ def bench_run(config_path, setup_only):
         print(f"error: {e}", file=sys.stderr)
         return 2
     log("setup done")
+    warn_unpinned(config, server, client)
     if setup_only:
         return 0
 
