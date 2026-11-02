@@ -16,29 +16,31 @@ function handle_ping(task, config, rng, cancel_ctx):
         return Response(400, empty)
 
     service_us = sampling.exponential_us(rng, config.response_rate)      # see Sampling order
+    finish = () -> cancel_tracker.registry_publish_finished(cancel_ctx.registry, st, id)   # FinishedWatermark
 
     if config.cancel_mode == cooperative:
         id_check = () -> cancel_tracker.should_cancel(st, cancel_ctx.registry, cancel_ctx.counters, id)
 
         # CancelCheckPoint 1: before processing
         if task.cancelled.load():
-            return Aborted                                               # RST wins
+            finish(); return Aborted                                     # RST wins
         if id_check():
             cancel_ctx.counters.cancelled_before_processing.fetch_add(1, relaxed)
-            return Response(503, protocol.build_body(id, config.response_bytes))
+            finish(); return Response(503, protocol.build_body(id, config.response_bytes))
 
         # CancelCheckPoint 2: during processing
         outcome = cpu_burner.burn(service_us, task.cancelled, config.cancel_check_interval_us,
                                   id_check, CHECK_ITER)
         if outcome == CANCELLED_RST:
-            return Aborted
+            finish(); return Aborted
         if outcome == CANCELLED_ID:
             cancel_ctx.counters.cancelled_during_processing.fetch_add(1, relaxed)
-            return Response(503, protocol.build_body(id, config.response_bytes))
+            finish(); return Response(503, protocol.build_body(id, config.response_bytes))
     else:  # ignore
         cpu_burner.burn(service_us, NONE, config.cancel_check_interval_us, NONE, CHECK_ITER)
 
     st.last_completed_id = id                                            # in both modes
+    finish()
     return Response(202, protocol.build_body(id, config.response_bytes))
 ```
 
@@ -75,6 +77,33 @@ The id is set only when the burn **completes** (`202`), never for `503`, `Aborte
 arrive in increasing order, so `last_completed_id` only grows. CancelMatching uses it to tell
 "already completed" cancels from stale ones
 ([../cancel_tracker/design.md#cancelmatching](../cancel_tracker/design.md#cancelmatching)).
+
+## FinishedWatermark
+
+`finish()` publishes the request's id as the client's FinishedWatermark
+([../cancel_tracker/design.md#finishedwatermark](../cancel_tracker/design.md#finishedwatermark)). It runs **once
+for every request that parses and matches the binding**, on every way out of `handle_ping` after the ServiceTime
+is drawn, in both modes, and before the response is returned for writing:
+
+| Outcome | `last_completed_id` | FinishedWatermark |
+|---|---|---|
+| `202` (burn completed) | set to `id` | published |
+| `503` (`/cancel` matched at check point 1 or 2) | unchanged | published |
+| `Aborted` (RST at check point 1 or during the burn) | unchanged | published |
+| `400` (unparseable, or client id mismatch) | unchanged | not published |
+
+A `202` that the Connection Handler then drops because of a late RST (check point 3) has still finished its burn,
+so its id is already published. Publishing before the write means a `/cancel` answered after the client
+received its response never reports an older id for that request.
+
+Worked example for client 0 in `cooperative` mode, `/cancel` for id 1 registered before request 1 starts:
+
+| Request | Outcome | FinishedWatermark after |
+|---|---|---|
+| 0 | `202` | 0 |
+| 1 | `503` at check point 1 | 1 |
+| 2 | RST during the burn → `Aborted` | 2 |
+| 3 | `202` | 3 |
 
 ## Response status
 
