@@ -8,7 +8,11 @@ PROGRAM_PARAMS = {
   "load_gen":  ["num_clients", "global_rate", "request_bytes", "slo_ms", "duration_s", "seed"],
   "canceller": ["cancel_rate", "duration_s", "seed"],
 }
-RUNNER_KEYS = { "server": ["listen_port"], "load_gen": [], "canceller": ["enabled"] }
+PLACEMENT_KEYS = ["threads", "cpu_set"]                                  # ProcessPlacement
+RUNNER_KEYS = { "server":    ["listen_port"] + PLACEMENT_KEYS,
+                "load_gen":  PLACEMENT_KEYS,
+                "canceller": ["enabled", "cancel_rate_fraction"] + PLACEMENT_KEYS }
+SWEEPABLE_RUNNER_KEYS = ["canceller.cancel_rate_fraction"]               # CancelRateFraction
 FORBIDDEN   = { "server": ["listen_addr"], "load_gen": ["target", "output_path"],
                 "canceller": ["target", "num_clients", "output_path"] }
 
@@ -22,18 +26,30 @@ function load_config(path):
         for key, value in doc[section] in file order:
             if key in FORBIDDEN[section]: ConfigError("<section>.<key> is set by the runner")
             if key in RUNNER_KEYS[section]:
-                if value is an array: ConfigError("<section>.<key> cannot be swept")
-                check type and range
+                if value is an array and "<section>.<key>" not in SWEEPABLE_RUNNER_KEYS:
+                    ConfigError("<section>.<key> cannot be swept")
+                check type and range (of every element, for an array)           # see api.md
             else if key in PROGRAM_PARAMS[section]:
                 if value is an array: require non-empty, every element a scalar
                 else: require a scalar
             else: ConfigError("unknown key <section>.<key>")
     for key in ["num_clients", "duration_s", "slo_ms"]:          # the runner itself needs these
         if key not in doc.load_gen: ConfigError("load_gen.<key> is required")
+    check_cancel_rate_fraction(doc)                              # CancelRateFraction
     validate run table; fill defaults
     if sweep_order given: require it to be a permutation of the swept keys
+    # swept keys: every array-valued program parameter and every array-valued SWEEPABLE_RUNNER_KEY
     return BenchConfig
 ```
+
+Error messages for the runner keys added with ProcessPlacement and CancelRateFraction:
+
+| Situation | ConfigError message |
+|---|---|
+| `threads` not an integer, or `< 1` | `<section>.threads must be an integer >= 1` |
+| `cpu_set` not a string matching the CPU list pattern | `<section>.cpu_set must be a CPU list like "0-3" or "0,2,4-5"` |
+| `cancel_rate_fraction` (or an element) not a number, or `<= 0` | `canceller.cancel_rate_fraction must be a number > 0` |
+| `cancel_rate_fraction` is an empty array | `canceller.cancel_rate_fraction must be a scalar or a non-empty array of scalars` |
 
 The names in `PROGRAM_PARAMS` are the parameter tables of [../../api.md](../../api.md). The runner checks only
 names and shapes. Values are validated by the programs themselves, which fail fast on bad values
@@ -57,9 +73,17 @@ function expand_sweep(config):
             canceller_args.append(("num_clients", value of num_clients in loadgen_args))
             if "duration_s" not in canceller_args:
                 canceller_args.append(("duration_s", value of duration_s in loadgen_args))
+            if config.canceller has cancel_rate_fraction:                       # CancelRateFraction
+                f = choose.get("canceller.cancel_rate_fraction", config.canceller.cancel_rate_fraction)
+                canceller_args.append(("cancel_rate", derived_cancel_rate(value of global_rate in loadgen_args, f)))
         else:
             canceller_args = none
-        points.append(SweepPoint(id, ordered(choose by swept_keys), server_args, loadgen_args, canceller_args))
+        placement = { program: { "threads": config[section].threads or none,     # ProcessPlacement
+                                 "cpu_set": config[section].cpu_set or none }
+                      for (program, section) in [("server", "server"), ("loadgen", "load_gen"),
+                                                 ("canceller", "canceller")] }
+        points.append(SweepPoint(id, ordered(choose by swept_keys), server_args, loadgen_args, canceller_args,
+                                 placement))
     return points          # with no swept keys: exactly one point, id 0
 ```
 
@@ -79,6 +103,68 @@ plots ([../result_plotter/design.md#sweepplots](../result_plotter/design.md#swee
 
 `num_clients` is required by the load generator, and the canceller always receives the same value, so the
 canceller's client ids match the load generator's clients at every point.
+
+## ProcessPlacement
+
+A program's **ProcessPlacement** is its pair (`threads`, `cpu_set`) from its section of the config. Both are fixed
+for the whole run: they describe the machine split, not a parameter under study. Config only validates and records
+them in every SweepPoint's `placement`. It never turns them into program arguments. The Experiment Executor applies
+them when it starts each program, and the run flow ([../design.md#run-flow](../design.md#run-flow)) checks that the
+implementation can honour `threads`.
+
+The CPU list pattern is `^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$`, the list format of `taskset -c`. Config does not
+check that the CPUs exist or that ranges are ascending. The pinning tool rejects bad lists when the program starts,
+and the point then fails.
+
+| Config | `placement` of the point |
+|---|---|
+| `[server] threads = 4, cpu_set = "0-3"`, nothing in the others | `{"server": {"threads": 4, "cpu_set": "0-3"}, "loadgen": {"threads": none, "cpu_set": none}, "canceller": {"threads": none, "cpu_set": none}}` |
+| nothing set anywhere | all six values none |
+
+## CancelRateFraction
+
+**CancelRateFraction** sets the canceller's rate relative to the load generator's offered rate of the same point,
+so a sweep over `global_rate` keeps the cancel load proportional.
+
+```
+function check_cancel_rate_fraction(doc):
+    if "cancel_rate_fraction" not in doc.canceller: return
+    if "cancel_rate" in doc.canceller:
+        ConfigError("set canceller.cancel_rate or canceller.cancel_rate_fraction, not both")
+    if doc.canceller.enabled is false:
+        ConfigError("canceller.cancel_rate_fraction needs the canceller enabled")
+    if "global_rate" not in doc.load_gen:
+        ConfigError("load_gen.global_rate is required with canceller.cancel_rate_fraction")
+    if any value of doc.load_gen.global_rate (the scalar, or each array element) is not a number:
+        ConfigError("load_gen.global_rate must be numeric with canceller.cancel_rate_fraction")
+
+function derived_cancel_rate(global_rate, fraction):
+    return float(global_rate) * float(fraction)     # IEEE 754 double multiply, round to nearest even
+```
+
+The result is always a float, so `format_arg` writes it as the shortest decimal that parses back to the same double
+([Argument formatting](#argument-formatting)). It is appended to `canceller_args` as `cancel_rate`, after
+`num_clients` and the defaulted `duration_s`. The fraction itself is never passed to any program. When it is an
+array it is a swept key named `canceller.cancel_rate_fraction`, at its position in the `[canceller]` table (file
+order) or in `sweep_order`.
+
+Worked example: `[load_gen] global_rate = [10, 700]`, `[canceller] cancel_rate_fraction = [0.01, 0.75]`, no
+`sweep_order`:
+
+| id | `load_gen.global_rate` | `canceller.cancel_rate_fraction` | `cancel_rate` passed | Check |
+|---|---|---|---|---|
+| 0 | 10 | 0.01 | `0.1` | 10 × 0.01 = 0.1 |
+| 1 | 10 | 0.75 | `7.5` | 10 × 0.75 = 7.5 |
+| 2 | 700 | 0.01 | `7.0` | 700 × 0.01 = 7.0 |
+| 3 | 700 | 0.75 | `525.0` | 700 × 0.75 = 525.0 |
+
+Boundary cases:
+
+| `global_rate` | fraction | `cancel_rate` passed | Note |
+|---|---|---|---|
+| 3 | 0.1 | `0.30000000000000004` | The double product is written as is. It is not rounded to the decimal the operator had in mind |
+| 1000 | 1.0 | `1000.0` | Fraction 1 gives the same rate as the load generator |
+| 10 | 2.5 | `25.0` | Fractions above 1 are allowed |
 
 ## Argument formatting
 
