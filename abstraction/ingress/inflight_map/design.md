@@ -66,3 +66,29 @@ Worked example, `num_clients = 4`:
 |---|---|
 | A, null, null, B | `[(0, A), (3, B)]` |
 | null, null, null, null | `[]` |
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- File `internal/ingress/inflight.go`. `slots` is `[]atomic.Pointer[InFlightEntry]`. Go atomics are sequentially consistent, which subsumes release/acquire.
+- `clear` is `CompareAndSwap(e, nil)` on the pointer, so identity (not field equality) decides. Entries are freed by the garbage collector once no slot or snapshot refers to them.
+- `snapshot` returns `[]Victim{ClientID, Entry}`.
+- Tests: `inflight_test.go` checks the publish/clear table and snapshot order, and churns 64 clients concurrently against snapshots (run with `-race`).
+
+### Traceability
+
+Generated from the `// Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [InFlightMap](#inflightmap) | [inflight.go:19](../../../implementation/go/internal/ingress/inflight.go#L19), [inflight.go:32](../../../implementation/go/internal/ingress/inflight.go#L32) |
+| [Publish and clear](#publish-and-clear) | [inflight.go:39](../../../implementation/go/internal/ingress/inflight.go#L39), [inflight.go:46](../../../implementation/go/internal/ingress/inflight.go#L46), [inflight_test.go:12](../../../implementation/go/internal/ingress/inflight_test.go#L12) |
+| [Snapshot](#snapshot) | [inflight.go:53](../../../implementation/go/internal/ingress/inflight.go#L53), [inflight_test.go:33](../../../implementation/go/internal/ingress/inflight_test.go#L33) |
+<!-- trace:end -->

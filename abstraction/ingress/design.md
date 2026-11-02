@@ -96,3 +96,32 @@ The server binds each connection to the client id of its first `/ping` and serve
 ([../server/description.md](../server/description.md)). Giving each (client, backend) pair its own connection
 keeps both rules true behind the Ingress without changing the server. A shared connection would mix client ids and
 get `400`s.
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- One Go package `internal/ingress` for the whole subtree, one file per subcomponent: `config.go` (this node's parameters and validation), `inflight.go`, `balancer.go`, `upstream.go`, `canceller.go`, `frontend.go`, and `ingress.go` (lifecycle and outputs). One package avoids import cycles: the Load Canceller reads the In-Flight Map and the Frontend starts the Load Canceller. The program entry point is `cmd/ingress/main.go`.
+- `backends` is split on `,` and each element trimmed with `strings.TrimSpace`; host:port is checked with `net.SplitHostPort`.
+- `num_clients` is parsed with `strconv.ParseUint(..., 10, 32)` and then bounded by `MaxClients`.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [Structure](#structure) |  |
+| [Shared state](#shared-state) |  |
+| [Configuration validation](#configuration-validation) | [config.go:68](../../implementation/go/internal/ingress/config.go#L68) |
+| [Concurrency model](#concurrency-model) |  |
+| [Time base](#time-base) |  |
+| [Shutdown](#shutdown) |  |
+| [Why one upstream connection per client and backend](#why-one-upstream-connection-per-client-and-backend) |  |
+<!-- trace:end -->
