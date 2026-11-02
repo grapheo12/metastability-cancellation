@@ -38,3 +38,4 @@
 | 0.4.10 | 2026-11-02T00:00:00Z | New child (not yet linked from the root documents): ingress 0.1.0 (inflight_map 0.1.0) |
 | 0.4.11 | 2026-11-02T00:00:00Z | Child bump: ingress 0.1.1 (load_balancer 0.1.0) |
 | 0.4.12 | 2026-11-02T00:00:00Z | Child bump: ingress 0.1.2 (upstream_pool 0.1.0) |
+| 0.4.13 | 2026-11-02T00:00:00Z | Child moved: load_canceller is now ingress/load_canceller (ingress 0.1.3). Link paths updated only; root content follows |

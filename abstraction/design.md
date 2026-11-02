@@ -41,7 +41,7 @@ flowchart LR
 | Sampling | Seeded RNG, exponential and uniform-integer samplers, per-stream seed derivation | [sampling/description.md](sampling/description.md) |
 | Server | Accepts connections, serves `/ping` with a CPU-bound cost, applies RST and `/cancel` cancellation | [server/description.md](server/description.md) |
 | Load Generator | Simulates N clients, applies SLOCancellation, records latency | [load_generator/description.md](load_generator/description.md) |
-| Load Canceller | Sends `/cancel` requests on a Poisson clock to random clients | [load_canceller/description.md](load_canceller/description.md) |
+| Load Canceller | Sends `/cancel` requests on a Poisson clock to random clients | [ingress/load_canceller/description.md](ingress/load_canceller/description.md) |
 | Benchmark Runner | Sets up two machines, runs a parameter sweep of the three programs, downloads and plots results | [benchmark_runner/description.md](benchmark_runner/description.md) |
 
 Protocol and Sampling are shared leaves. Server, Load Generator and Load Canceller all depend on
@@ -97,5 +97,5 @@ The active phase is `[0, duration_s)` from the run start. The DrainPhase that fo
 most `slo_ms`, because every in-flight request is resolved by its response or its SLO timer. See
 [load_generator/run_controller/design.md](load_generator/run_controller/design.md#drainphase).
 The canceller has its own `duration_s` and drain timeout
-([load_canceller/design.md](load_canceller/design.md#cancellerdrain)). The operator starts both
+([ingress/load_canceller/design.md](ingress/load_canceller/design.md#cancellerdrain)). The operator starts both
 programs together.

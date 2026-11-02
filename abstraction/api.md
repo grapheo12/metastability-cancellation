@@ -43,7 +43,7 @@ The minimum body size of 42 bytes comes from [protocol/design.md](protocol/desig
 | `target` | `host:port` | `127.0.0.1:8080` | Server address |
 | `num_clients` (`N`) | integer, `1 ..= 2^32-1` | required | Client ids are drawn uniformly from `0 ..= N-1`. Should match the load generator's `N` |
 | `cancel_rate` | float, cancels/s, `> 0` | required | Rate of the canceller's Poisson arrival process |
-| `incr_rand_max` | integer, `1 ..= 2^32-1` | `4` | Largest step past the client's reported FinishedWatermark. Steps are uniform in `[1, incr_rand_max]` ([load_canceller/design.md#canceltargetchoice](load_canceller/design.md#canceltargetchoice)) |
+| `incr_rand_max` | integer, `1 ..= 2^32-1` | `4` | Largest step past the client's reported FinishedWatermark. Steps are uniform in `[1, incr_rand_max]` ([load_canceller/design.md#canceltargetchoice](ingress/load_canceller/design.md#inflightvictimchoice)) |
 | `duration_s` | float, s, `> 0` | required | Length of the sending phase |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for the canceller's random choices |
 | `output_path` | path prefix | `cancels` | Outputs go to `<output_path>.cancels.csv` and `<output_path>.summary.json` |
@@ -97,9 +97,9 @@ See [server/api.md](server/api.md#cancelcounters-output). Counter semantics are 
 
 ### Canceller outputs
 - `<output_path>.cancels.csv` and `<output_path>.summary.json`. Formats are in
-  [load_canceller/api.md](load_canceller/api.md#outputs). Produced by
-  [load_canceller/design.md#cancelschedule](load_canceller/design.md#cancelschedule) and
-  [load_canceller/design.md#summary](load_canceller/design.md#summary).
+  [ingress/load_canceller/api.md](ingress/load_canceller/api.md#outputs). Produced by
+  [ingress/load_canceller/design.md#cancelschedule](ingress/load_canceller/design.md#cancelschedule) and
+  [ingress/load_canceller/design.md#summary](ingress/load_canceller/design.md#summary).
 
 ## Benchmark runner
 
@@ -129,5 +129,5 @@ non-zero if a connection cannot be established at startup. The server's lifecycl
 | Sampling | [sampling/api.md](sampling/api.md) |
 | Server | [server/api.md](server/api.md) |
 | Load Generator | [load_generator/api.md](load_generator/api.md) |
-| Load Canceller | [load_canceller/api.md](load_canceller/api.md) |
+| Load Canceller | [ingress/load_canceller/api.md](ingress/load_canceller/api.md) |
 | Benchmark Runner | [benchmark_runner/api.md](benchmark_runner/api.md) |

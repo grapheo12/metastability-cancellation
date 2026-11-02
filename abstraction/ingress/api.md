@@ -61,8 +61,9 @@ One record per backend, all fields atomic u64 starting at 0, kept by the LoadBal
 
 ### `<output_path>.cancels.csv`
 
-The LoadCanceller's CancelRecords, one per arrival, in the format the Load Canceller subcomponent defines. It is
-written even when the LoadCanceller is disabled (header only).
+The LoadCanceller's CancelRecords, one per arrival. The format is in
+[load_canceller/api.md](load_canceller/api.md#output_pathcancelscsv). It is written even when the LoadCanceller is
+disabled (header only).
 
 ### `<output_path>.summary.json`
 
@@ -104,3 +105,4 @@ separate program, so result tools can read them unchanged (all zero when it is d
 | In-Flight Map | [inflight_map/api.md](inflight_map/api.md) |
 | Load Balancer | [load_balancer/api.md](load_balancer/api.md) |
 | Upstream Pool | [upstream_pool/api.md](upstream_pool/api.md) |
+| Load Canceller | [load_canceller/api.md](load_canceller/api.md) |
