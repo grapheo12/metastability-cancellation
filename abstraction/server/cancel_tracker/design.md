@@ -10,6 +10,7 @@ and slots are never deleted.
 ```
 keys  : array[cap] of atomic u64, all EMPTY_KEY (0)     # stored key = client_id + 1
 heads : array[cap] of atomic pointer to Node, all null  # CancelInbox per slot
+finished : array[cap] of atomic u64, all 0             # FinishedWatermark per slot: id + 1, 0 = none
 Node  : { id: u64, next: pointer to Node }              # immutable once published
 
 function registry_new(capacity):
@@ -70,6 +71,47 @@ Why this is safe without locks:
   may free them.
 - The `release` on a successful push CAS paired with the `acq_rel` exchange makes each node's `id`
   and `next` visible to the drainer.
+
+## FinishedWatermark
+
+The **FinishedWatermark** of a client is the highest RequestId of that client whose `/ping` its worker has
+finished, with any outcome (`202`, `503` or stopped by RST). The Ping Handler publishes it when a request
+finishes, and `handle_cancel`
+reports it in every CancelReplyBody
+([../../protocol/design.md#cancelreplybody](../../protocol/design.md#cancelreplybody)).
+
+```
+function registry_publish_finished(registry, state, id):    # worker only
+    if state.slot is none:
+        i = find_slot(registry, state.client_id, insert = true)
+        if i is Full: return                              # registry full: nothing published; replies say null
+        state.slot = i                                    # registry_drain reuses the cached slot
+    finished[state.slot].store(id + 1, release)
+
+function registry_finished(registry, client_id):           # any thread
+    i = find_slot(registry, client_id, insert = false)
+    if i is none: return none
+    v = finished[i].load(acquire)
+    return none if v == 0 else v - 1
+```
+
+- **Single writer.** Only the worker bound to `client_id` stores to its slot. The ids it handles increase
+  ([../connection_handler/design.md#serialstreamworker](../connection_handler/design.md#serialstreamworker)), so the
+  stored value only grows, and a plain store is enough (no compare-and-swap).
+- **No overflow.** `client_id <= 2^32 - 2` because `N <= 2^32 - 1`, so `id <= 2^64 - 2^32 - 1` and `id + 1` cannot
+  wrap to the "none" value `0`.
+- **Separate from `last_completed_id`.** CancelMatching and the CancelCounters still use the `202`-only
+  `last_completed_id`. The FinishedWatermark exists only for the reply.
+- **Readers race with the worker.** A reply carries whatever value the load sees. A request that finishes right
+  after the load is reported by the next reply.
+
+| Events for client 3 (ids are seqs; RequestId = `(3 << 32) \| seq`) | `finished` slot value | `registry_finished` |
+|---|---|---|
+| nothing yet (no slot) | — | none |
+| seq 0 → `202` | 1 + id(0) | id(0) |
+| seq 1 → `503` (matched `/cancel`) | 1 + id(1) | id(1) |
+| seq 2 → stopped by RST | 1 + id(2) | id(2) |
+| seq 3 → `400` (client id mismatch: not this client's request) | unchanged | id(2) |
 
 ## CancelMatching
 
@@ -132,11 +174,22 @@ load after every Connection Handler has returned, so the values are final.
 function handle_cancel(body, config, registry):
     id = protocol.parse_body(body)
     if id is ParseError: return Response(400, empty)
-    if config.cancel_mode == ignore: return Response(202, empty)       # accepted, discarded
     (seq, client_id) = protocol.split_request_id(id)
-    if registry_push(registry, client_id, id) is Full: return Response(503, empty)
-    return Response(202, empty)
+    if config.cancel_mode == cooperative:                               # ignore: accepted, discarded
+        if registry_push(registry, client_id, id) is Full: return Response(503, empty)
+    reply = protocol.build_cancel_reply(registry_finished(registry, client_id))   # FinishedWatermark
+    return Response(202, reply)                                         # content-type: application/json
 ```
 
 `handle_cancel` does not check that `client_id < N`, because the server does not know `N`. An id
-for a client that never connects sits in its inbox and is never drained.
+for a client that never connects sits in its inbox and is never drained, and its replies say `null`.
+
+The watermark is read **after** the push, so a reply never reports a value older than the push. In `ignore` mode
+nothing is pushed, but the reply still carries the watermark: workers publish it in both modes.
+
+| Mode | Body parses | Registry | Response |
+|---|---|---|---|
+| any | no | any | `400`, empty |
+| `cooperative` | yes | full, client new | `503`, empty |
+| `cooperative` | yes | has room or client known | `202`, CancelReplyBody |
+| `ignore` | yes | any | `202`, CancelReplyBody (nothing pushed) |

@@ -83,6 +83,10 @@ RST (client SLO) cases:
 
 When RST and `/cancel` both apply, RST wins: no write, no counter.
 
+In both modes every `202` answer to `/cancel` carries the target client's FinishedWatermark
+([cancel_tracker/design.md#finishedwatermark](cancel_tracker/design.md#finishedwatermark)), so "thrown away" in
+`ignore` mode still returns a useful reply.
+
 In both modes the ServiceTime is sampled for every `POST /ping` request whose body parses and
 whose client id matches the connection, cancelled or not, so the random sequence depends only on
 request arrival order ([ping_handler/design.md](ping_handler/design.md#sampling-order)).

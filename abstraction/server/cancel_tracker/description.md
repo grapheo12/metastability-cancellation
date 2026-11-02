@@ -10,6 +10,9 @@ Leaf component. It holds everything the server needs for server-directed cancell
   moves drained ids into a local ordered pending set and decides whether the current request is
   cancelled. Along the way it counts cancels that arrived too late.
 - **CancelCounters**: three process-wide atomic counters.
-- **`handle_cancel`**: the `/cancel` request handler.
+- **FinishedWatermark**: per client, the highest RequestId its worker has finished with any outcome, kept in the
+  client's registry slot.
+- **`handle_cancel`**: the `/cancel` request handler. It answers with the target client's FinishedWatermark, so
+  the canceller can aim at requests that have not finished yet.
 
 Parent: [../design.md](../design.md). API: [api.md](api.md). Design: [design.md](design.md).
