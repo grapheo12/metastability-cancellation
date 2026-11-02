@@ -10,6 +10,7 @@ function run_point(point, config, server, client, run_id):
     pdir = <output_dir>/points/point_<id>
     if exists(pdir/done): return SKIPPED
     empty pdir (delete any previous partial attempt), then write pdir/params.json (the SweepPoint)
+    write pdir/placement.json (see ProcessPlacement)
     reason = none
     try:
         for m in [server, client]: run(m.transport, "mkdir -p " + quote(RD_m))
@@ -33,7 +34,8 @@ function run_point(point, config, server, client, run_id):
 function start_server(point, config, server):
     log  = RD_server + "/server.out"
     args = ["--listen_addr", "0.0.0.0:" + listen_port] + flatten([("--" + k, format_arg(v)) for k, v in point.server_args])
-    pid  = start_background(server.transport, "exec " + join(quote(w) for w in [server.binaries.server] + args), log)
+    words = placement_prefix("server", point, server) + [server.binaries.server] + args     # ProcessPlacement
+    pid  = start_background(server.transport, "exec " + join(quote(w) for w in words), log)
     run(server.transport, "echo " + pid + " > " + quote(<workdir>/server.pid))
     deadline = now + config.run.server_ready_timeout_s
     loop:
@@ -56,6 +58,8 @@ function stop_server(server, stop_timeout_s):
 
 `exec` makes the background pid the server process itself, so SIGINT reaches the server
 ([../remote_transport/design.md#background-processes](../remote_transport/design.md#background-processes)).
+The placement prefix keeps this true, because `env` and `taskset` both replace themselves with the program they
+run (see [ProcessPlacement](#processplacement)).
 
 ## ClientRun
 
@@ -65,13 +69,15 @@ written to a file, so a timed-out run can be cleaned up:
 ```
 function client_run(point, config, server, client):
     target = server.data_addr + ":" + listen_port
-    lg = [client.binaries.loadgen, "--target", target] + args(point.loadgen_args) + ["--output_path", RD + "/loadgen"]
+    lg = placement_prefix("loadgen", point, client) +
+         [client.binaries.loadgen, "--target", target] + args(point.loadgen_args) + ["--output_path", RD + "/loadgen"]
+    cx = placement_prefix("canceller", point, client) +
+         [client.binaries.canceller, "--target", target] + args(point.canceller_args) + ["--output_path", RD + "/canceller"]
     script lines:
         cd RD || exit 97
         CP=; C=0
         if canceller enabled:
-            <canceller words: binary, --target target, args(point.canceller_args), --output_path RD/canceller>
-                > RD/canceller.log 2>&1 &
+            <cx words> > RD/canceller.log 2>&1 &
             CP=$!; echo $CP > RD/canceller.pid
         <lg words> > RD/loadgen.log 2>&1 &
         LP=$!; echo $LP > RD/loadgen.pid
@@ -89,6 +95,41 @@ function client_run(point, config, server, client):
 
 The load generator and the canceller start within milliseconds of each other. That is enough because their
 schedules are independent by design ([../../design.md#time-bounds-of-a-run](../../design.md#time-bounds-of-a-run)).
+
+## ProcessPlacement
+
+Each program starts behind a prefix of words built from its ProcessPlacement
+([../config/design.md#processplacement](../config/design.md#processplacement)) and the facts its machine reported at
+setup ([../remote_setup/api.md#machineready](../remote_setup/api.md#machineready)):
+
+```
+function placement_prefix(program, point, ready):          # program: "server" | "loadgen" | "canceller"
+    p = point.placement[program]
+    words = []
+    if p.threads is not none:
+        words += ["env", ready.thread_env + "=" + decimal(p.threads)]   # thread_env is set: the run flow checked it
+    if p.cpu_set is not none and ready.cpu_pinning:
+        words += ["taskset", "-c", p.cpu_set]
+    return words                                            # empty when nothing is set
+
+function write_placement(point, server, client, pdir):
+    doc = { "server": placement_prefix("server", point, server),
+            "loadgen": placement_prefix("loadgen", point, client) }
+    if point.canceller_args is not none: doc["canceller"] = placement_prefix("canceller", point, client)
+    write pdir/placement.json = doc                         # the prefixes actually used, as word lists
+```
+
+`env` comes before `taskset`, so the thread count is set and then the CPUs are pinned. Both programs `exec` the
+rest of the line. So the pid of a backgrounded or `exec`ed line is the pid of the program itself, and signals and
+`wait` behave exactly as without a prefix.
+
+| `threads` | `cpu_set` | `cpu_pinning` | Prefix (with `thread_env = GOMAXPROCS`) |
+|---|---|---|---|
+| none | none | any | (empty) |
+| 4 | none | any | `env GOMAXPROCS=4` |
+| none | `"4-7"` | true | `taskset -c 4-7` |
+| 4 | `"0-3"` | true | `env GOMAXPROCS=4 taskset -c 0-3` |
+| 1 | `"8"` | false | `env GOMAXPROCS=1` (pinning dropped; the run flow has already warned) |
 
 ## Point outputs
 

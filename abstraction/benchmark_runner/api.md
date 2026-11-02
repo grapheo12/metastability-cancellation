@@ -30,6 +30,7 @@ set `[run] output_dir` to that run's directory.
   points/
     point_<id, 4 digits>/
       params.json             # the SweepPoint (see config/api.md#sweeppoint)
+      placement.json          # prefix words used per program (experiment_executor/design.md#processplacement)
       loadgen.requests.csv    # loadgen outputs (../load_generator/metrics/api.md#outputs)
       loadgen.summary.json
       loadgen.log

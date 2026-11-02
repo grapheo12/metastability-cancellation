@@ -7,6 +7,7 @@ Leaf component. It runs one SweepPoint from start to finish and leaves a self-co
   CancelCounters line and exits.
 - **ClientRun**: on the client machine, start the load canceller (if enabled) and the load generator together
   against the server, and wait for both, with a timeout.
+- **ProcessPlacement**: start each program with its thread count and, where the machine can pin, its CPU set.
 - **Point outputs**: download every output file, parse the server's CancelCounters, and mark the point `done` or
   `failed` with a reason. Points already `done` are skipped, so an interrupted run can be resumed.
 
