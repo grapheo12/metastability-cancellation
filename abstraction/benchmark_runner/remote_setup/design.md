@@ -27,10 +27,12 @@ file is the same one the machines will check out.
 ```
 function read_manifest(path):
     doc = parse_toml(path)                       # PinError if missing or malformed
-    require exactly the keys lang, required_tools, build, binaries.{server, loadgen, canceller}
+    require the keys lang, required_tools, build, binaries.{server, loadgen, canceller}
+    allow one optional key, thread_env; any other key is a PinError
+    if thread_env is present: require a non-empty string of letters, digits and "_" not starting with a digit
     require required_tools to be an array of non-empty strings without whitespace
     require the binaries to be relative paths without ".."
-    return BuildManifest
+    return BuildManifest          # thread_env = none when absent
 ```
 
 The manifest is the language hook of the [Shared tooling](../../../AGENTS.md#shared-tooling) rules. Each
@@ -57,7 +59,9 @@ function setup_machine(t, role, machine, pin, timeout_s):
     for program in [server, loadgen, canceller]:
         path = impl_dir + "/" + manifest.binaries[program]
         check(t, "test -x " + quote(path), "<program> binary missing after build on <role>")
-    return MachineReady(t, role, workdir, repo_dir, binaries, machine.data_addr if role == "server")
+    cpu_pinning = (run(t, "command -v taskset").exit_status == 0)    # absent is not an error
+    return MachineReady(t, role, workdir, repo_dir, binaries, machine.data_addr if role == "server",
+                        pin.manifest.thread_env, cpu_pinning)
 
 function check(t, command, message_or_timeout):
     r = run(t, command, timeout)                  # default timeout 120 s

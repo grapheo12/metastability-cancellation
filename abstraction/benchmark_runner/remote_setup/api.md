@@ -33,6 +33,7 @@ The TOML file each implementation provides:
 | `binaries.server` | path | Server executable, relative to `implementation/<lang>/` |
 | `binaries.loadgen` | path | Load generator executable, same base |
 | `binaries.canceller` | path | Load canceller executable, same base |
+| `thread_env` | string, optional | Name of the environment variable that sets a program's worker-thread count in this language's runtime. Needed only when a config sets `threads`. Absent: the implementation has no such knob |
 
 See [design.md#buildmanifest](design.md#buildmanifest).
 
@@ -46,6 +47,8 @@ See [design.md#buildmanifest](design.md#buildmanifest).
 | `data_addr` | string | Server only: the `data_addr` of its machine table, used by the client as the target host |
 | `repo_dir` | absolute path | `<workdir>/repo` |
 | `binaries` | map program → absolute path | The three executables |
+| `thread_env` | string or none | The BuildManifest's `thread_env` |
+| `cpu_pinning` | boolean | Whether the machine can pin a process to CPUs: `taskset` is on its `PATH` |
 
 See [design.md#machine-setup](design.md#machine-setup).
 
