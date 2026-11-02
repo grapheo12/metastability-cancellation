@@ -4,8 +4,8 @@ Leaf component. It reads every point directory of a run and produces:
 
 - the **PointTable** (`all_points.csv`): one row per SweepPoint with its swept values, its status, and the key
   metrics from the load generator summary, the canceller summary and the server's CancelCounters;
-- the **SweepPlots**: five standard figures (end-to-end latency percentiles, goodput, outcome mix, server
-  counters, and the throughput–latency curve). The first swept key is the x-axis, except in the
+- the **SweepPlots**: six standard figures (end-to-end latency percentiles, goodput, outcome mix, server
+  counters, server counters per cancel sent, and the throughput–latency curve). The first swept key is the x-axis, except in the
   **ThroughputLatencyPlot**, where measured goodput is the x-axis and the first swept key orders the points.
   Every combination of the other swept keys is one line.
 
