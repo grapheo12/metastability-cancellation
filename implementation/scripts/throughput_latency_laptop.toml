@@ -1,0 +1,36 @@
+# Throughput–latency sweep on one machine (both roles "local").
+# Schema: abstraction/benchmark_runner/config/api.md
+# server: 4 threads on CPUs 0-3; load generator: 4 threads on CPUs 4-7; canceller: 1 thread on CPU 8.
+# Where taskset is missing (e.g. macOS) the runner warns and runs unpinned; thread counts still apply.
+# One ThroughputLatencyPlot line per cancel_rate_fraction, one point per global_rate.
+
+[machines.server]
+host = "local"
+
+[machines.client]
+host = "local"
+
+[server]
+response_rate = 1000
+response_bytes = 128
+threads = 4
+cpu_set = "0-3"
+
+[load_gen]
+num_clients = 4
+global_rate = [10, 50, 100, 200, 500, 700, 1000]
+request_bytes = 128
+slo_ms = 1000
+duration_s = 30
+threads = 4
+cpu_set = "4-7"
+
+[canceller]
+enabled = true
+cancel_rate_fraction = [0.01, 0.02, 0.1, 0.2, 0.5, 0.75, 1.0]
+threads = 1
+cpu_set = "8"
+
+[run]
+sweep_order = ["load_gen.global_rate", "canceller.cancel_rate_fraction"]
+cooldown_s = 2
