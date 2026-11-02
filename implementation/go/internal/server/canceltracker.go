@@ -1,4 +1,4 @@
-// Source: abstraction/server/cancel_tracker/design.md (cancel_tracker v0.1.1)
+// Source: abstraction/server/cancel_tracker/design.md (cancel_tracker v0.2.0)
 package server
 
 import (
@@ -33,9 +33,10 @@ type inboxNode struct {
 //
 // Design: abstraction/server/cancel_tracker/design.md#cancelregistry
 type CancelRegistry struct {
-	mask  uint64
-	keys  []atomic.Uint64
-	heads []atomic.Pointer[inboxNode]
+	mask     uint64
+	keys     []atomic.Uint64
+	heads    []atomic.Pointer[inboxNode]
+	finished []atomic.Uint64 // FinishedWatermark per slot: id + 1, 0 = none
 }
 
 // NewCancelRegistry allocates capacity slots; capacity must be a power of two.
@@ -46,9 +47,10 @@ func NewCancelRegistry(capacity int) *CancelRegistry {
 		panic("cancel registry capacity must be a power of two")
 	}
 	return &CancelRegistry{
-		mask:  uint64(capacity - 1),
-		keys:  make([]atomic.Uint64, capacity),
-		heads: make([]atomic.Pointer[inboxNode], capacity),
+		mask:     uint64(capacity - 1),
+		keys:     make([]atomic.Uint64, capacity),
+		heads:    make([]atomic.Pointer[inboxNode], capacity),
+		finished: make([]atomic.Uint64, capacity),
 	}
 }
 
@@ -116,6 +118,37 @@ func (r *CancelRegistry) Drain(st *ConnectionCancelState) []uint64 {
 		ids = append(ids, h.id)
 	}
 	return ids
+}
+
+// PublishFinished records id as st's client's FinishedWatermark. Only the
+// worker bound to that client calls it; ids increase, so a plain Store suffices.
+// If the registry is full the call does nothing (replies then say null).
+//
+// Design: abstraction/server/cancel_tracker/design.md#finishedwatermark
+func (r *CancelRegistry) PublishFinished(st *ConnectionCancelState, id uint64) {
+	if st.slot < 0 {
+		s, ok := r.findSlot(st.clientID, true)
+		if !ok {
+			return
+		}
+		st.slot = s // Drain reuses the cached slot
+	}
+	r.finished[st.slot].Store(id + 1) // id <= 2^64 - 2^32 - 1: no wrap to 0
+}
+
+// Finished returns clientID's FinishedWatermark; ok is false for none.
+//
+// Design: abstraction/server/cancel_tracker/design.md#finishedwatermark
+func (r *CancelRegistry) Finished(clientID uint32) (id uint64, ok bool) {
+	i, found := r.findSlot(clientID, false)
+	if !found {
+		return 0, false
+	}
+	v := r.finished[i].Load()
+	if v == 0 {
+		return 0, false
+	}
+	return v - 1, true
 }
 
 // CancelCounters are the three process-wide /cancel outcome counters.
@@ -211,7 +244,8 @@ func ShouldCancel(st *ConnectionCancelState, registry *CancelRegistry, counters 
 	return false // ids > targetID stay pending
 }
 
-// HandleCancel serves a routed DELETE /cancel. Every response has an empty body.
+// HandleCancel serves a routed DELETE /cancel. A 202 carries the target
+// client's FinishedWatermark in a CancelReplyBody; 400 and 503 are empty.
 //
 // Design: abstraction/server/cancel_tracker/design.md#handle_cancel
 func HandleCancel(body []byte, cfg Config, registry *CancelRegistry) Response {
@@ -219,12 +253,13 @@ func HandleCancel(body []byte, cfg Config, registry *CancelRegistry) Response {
 	if err != nil {
 		return Response{Status: protocol.StatusBadRequest}
 	}
-	if cfg.CancelMode == CancelIgnore {
-		return Response{Status: protocol.StatusOK} // accepted, discarded
-	}
 	_, clientID := protocol.SplitRequestID(id)
-	if registry.Push(clientID, id) != nil {
-		return Response{Status: protocol.StatusRejected}
+	if cfg.CancelMode == CancelCooperative { // ignore: accepted, discarded
+		if registry.Push(clientID, id) != nil {
+			return Response{Status: protocol.StatusRejected}
+		}
 	}
-	return Response{Status: protocol.StatusOK}
+	// Design: abstraction/server/cancel_tracker/design.md#finishedwatermark
+	finished, ok := registry.Finished(clientID) // read after the push
+	return Response{Status: protocol.StatusOK, Body: protocol.BuildCancelReply(finished, ok)}
 }

@@ -1,4 +1,4 @@
-// Source: abstraction/server/cancel_tracker/design.md (cancel_tracker v0.1.1)
+// Source: abstraction/server/cancel_tracker/design.md (cancel_tracker v0.2.0)
 package server
 
 import (
@@ -119,13 +119,13 @@ func TestRegistryFull(t *testing.T) {
 func TestHandleCancel(t *testing.T) {
 	reg := NewCancelRegistry(16)
 	coop := Config{CancelMode: CancelCooperative}
-	if r := HandleCancel([]byte(`{"id":"12884901889"}`), coop, reg); r.Status != 202 || len(r.Body) != 0 {
+	if r := HandleCancel([]byte(`{"id":"12884901889"}`), coop, reg); r.Status != 202 || string(r.Body) != `{"finished":null}` {
 		t.Fatalf("got %+v", r)
 	}
 	if ids := reg.Drain(boundState(3)); len(ids) != 1 || ids[0] != 12884901889 {
 		t.Fatalf("registry content %v", ids)
 	}
-	if r := HandleCancel([]byte(`nope`), coop, reg); r.Status != 400 {
+	if r := HandleCancel([]byte(`nope`), coop, reg); r.Status != 400 || len(r.Body) != 0 {
 		t.Fatalf("got %+v", r)
 	}
 	if r := HandleCancel([]byte(`{"id":"5"}`), Config{CancelMode: CancelIgnore}, reg); r.Status != 202 {
@@ -133,5 +133,56 @@ func TestHandleCancel(t *testing.T) {
 	}
 	if ids := reg.Drain(boundState(0)); ids != nil {
 		t.Fatal("ignore mode must discard ids")
+	}
+}
+
+// Worked example table: client 3 finishes seq 0 (202), 1 (503), 2 (RST); a 400 publishes nothing.
+//
+// Design: abstraction/server/cancel_tracker/design.md#finishedwatermark
+func TestFinishedWatermark(t *testing.T) {
+	reg := NewCancelRegistry(16)
+	if _, ok := reg.Finished(3); ok {
+		t.Fatal("no slot yet: want none")
+	}
+	st := boundState(3)
+	for seq := uint32(0); seq < 3; seq++ {
+		id := uint64(3)<<32 | uint64(seq)
+		reg.PublishFinished(st, id)
+		if got, ok := reg.Finished(3); !ok || got != id {
+			t.Fatalf("after seq %d: %d %v", seq, got, ok)
+		}
+	}
+	if st.slot < 0 {
+		t.Fatal("publishing must cache the slot")
+	}
+	coop := Config{CancelMode: CancelCooperative}
+	if r := HandleCancel([]byte(`{"id":"12884901891"}`), coop, reg); string(r.Body) != `{"finished":"12884901890"}` {
+		t.Fatalf("reply %s", r.Body)
+	}
+	if r := HandleCancel([]byte(`{"id":"12884901891"}`), Config{CancelMode: CancelIgnore}, reg); r.Status != 202 ||
+		string(r.Body) != `{"finished":"12884901890"}` {
+		t.Fatalf("ignore mode reply %d %s", r.Status, r.Body)
+	}
+	// Id 0 must be distinguishable from none (stored as 1).
+	st0 := boundState(0)
+	reg.PublishFinished(st0, 0)
+	if got, ok := reg.Finished(0); !ok || got != 0 {
+		t.Fatalf("id 0: %d %v", got, ok)
+	}
+}
+
+// Design: abstraction/server/cancel_tracker/design.md#finishedwatermark
+func TestPublishFinishedRegistryFull(t *testing.T) {
+	reg := NewCancelRegistry(1)
+	if reg.Push(1, 7) != nil {
+		t.Fatal("first client must fit")
+	}
+	st := boundState(2)
+	reg.PublishFinished(st, uint64(2)<<32)
+	if _, ok := reg.Finished(2); ok || st.slot >= 0 {
+		t.Fatal("full registry: nothing published")
+	}
+	if r := HandleCancel([]byte(`{"id":"8589934593"}`), Config{CancelMode: CancelIgnore}, reg); string(r.Body) != `{"finished":null}` {
+		t.Fatalf("reply %s", r.Body)
 	}
 }
