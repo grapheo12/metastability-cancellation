@@ -19,7 +19,8 @@ user = "ubuntu"
 ssh_key = "~/.ssh/id_ed25519"
 
 [server]
-listen_port = 8080
+listen_port = 8080          # server instance k listens on listen_port + k
+instances = 2               # two servers behind the Ingress
 response_rate = [2000, 4000]
 response_bytes = 128
 cancel_mode = "cooperative"
@@ -31,9 +32,10 @@ request_bytes = 128
 slo_ms = 5
 duration_s = 10
 
-[canceller]
-enabled = true
-cancel_rate = 2000
+[ingress]                   # runs on the client machine; the load generator talks to it
+listen_port = 9090
+lb_policy = "least_outstanding"
+cancel_rate = 2000          # the in-Ingress LoadCanceller (0 or unset: no cancels)
 
 [run]
 sweep_order = ["load_gen.global_rate", "server.response_rate", "load_gen.num_clients"]
