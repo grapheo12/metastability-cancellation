@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.3.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.4.0)
 """PointTable (all_points.csv), SweepPlots and ThroughputLatencyPlot (plots/*.png)."""
 
 import csv
@@ -57,13 +57,18 @@ FIGURES = [
                                                          "srv_completed_before_cancel")], "linear", None),
     # Design: abstraction/benchmark_runner/result_plotter/design.md#throughputlatencyplot
     ("throughput_latency", "lg_goodput", E2E, "log", None),
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#throughputlatencynormalizedplot
+    ("throughput_latency_normalized", "lg_goodput_normalized", E2E, "log", None),
     # Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
     ("server_counters_normalized", "x_key", [(f"{m} / cx_sent", _frac(m, "cx_sent"))
                                              for m in ("srv_cancelled_before_processing",
                                                        "srv_cancelled_during_processing",
                                                        "srv_completed_before_cancel")], "linear", (0, 1)),
 ]
-THROUGHPUT_LABEL = "lg_goodput (requests/s)"
+X_LABELS = {"lg_goodput": "lg_goodput (requests/s)",
+            "lg_goodput_normalized": "lg_goodput / (1 - cx_offered_fraction) (requests/s)"}
+# Derived PointTable column, placed right after cx_accepted (api.md#pointrow).
+DERIVED_AFTER = {"cx_accepted": "cx_offered_fraction"}
 
 
 class NothingToPlot(Exception):
@@ -113,9 +118,13 @@ def build_table(output_dir):
             if source not in docs:
                 docs[source] = _read_json(os.path.join(pdir, source))
             row[column] = _dig(docs[source], keys)
+        row["cx_offered_fraction"] = cancel_offered_fraction(params)
         rows.append(row)
     swept_keys = swept_keys or []
-    header = ["point", "status"] + swept_keys + [c for c, _, _ in METRIC_COLUMNS]
+    metric_header = []
+    for c, _, _ in METRIC_COLUMNS:
+        metric_header += [c] + ([DERIVED_AFTER[c]] if c in DERIVED_AFTER else [])
+    header = ["point", "status"] + swept_keys + metric_header
     with open(os.path.join(output_dir, "all_points.csv"), "w", newline="") as f:
         w = csv.writer(f, lineterminator="\n")
         w.writerow(header)
@@ -129,11 +138,42 @@ def _is_number(v):
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#throughputlatencyplot
-def throughput_latency_line(members, x_key, position, value):
-    """(goodput, metric) points of one series, joined in swept order, not sorted by goodput."""
-    kept = [r for r in members if r.get("lg_goodput") is not None and value(r) is not None]
+def throughput_latency_line(members, x_key, position, value, xvalue=lambda r: r.get("lg_goodput")):
+    """(x, metric) points of one series, joined in swept order, not sorted by x. x is goodput by default."""
+    kept = [r for r in members if xvalue(r) is not None and value(r) is not None]
     kept.sort(key=lambda r: position[r[x_key]])
-    return [(r["lg_goodput"], value(r)) for r in kept]
+    return [(xvalue(r), value(r)) for r in kept]
+
+
+def _number(v):
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#cancelofferedfraction
+def cancel_offered_fraction(params):
+    """cancel_rate / global_rate from params.json; None when undefined."""
+    if params.get("canceller_args") is None:
+        return None
+    c = _number(dict(params["canceller_args"]).get("cancel_rate"))
+    g = _number(dict(params.get("loadgen_args") or []).get("global_rate"))
+    if c is None or g is None or g == 0:
+        return None
+    return float(c) / float(g)
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#throughputlatencynormalizedplot
+def normalized_goodput(row):
+    """lg_goodput / (1 - cx_offered_fraction); empty fraction counts as 0, fraction >= 1 is undefined."""
+    g = row.get("lg_goodput")
+    if g is None:
+        return None
+    f = row.get("cx_offered_fraction") or 0.0
+    if f >= 1:
+        return None
+    return g / (1 - f)
+
+
+X_VALUES = {"lg_goodput": lambda r: r.get("lg_goodput"), "lg_goodput_normalized": normalized_goodput}
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
@@ -170,12 +210,12 @@ def plot(output_dir):
             for combo, members in series.items():
                 if x == "x_key":
                     pts = sorted((position[r[x_key]], value(r)) for r in members if value(r) is not None)
-                else:  # ThroughputLatencyPlot
-                    pts = throughput_latency_line(members, x_key, position, value)
+                else:  # ThroughputLatencyPlot and ThroughputLatencyNormalizedPlot
+                    pts = throughput_latency_line(members, x_key, position, value, X_VALUES[x])
                 if pts:
                     ax.plot([p[0] for p in pts], [p[1] for p in pts], marker="o", label=label(combo))
             ax.set_title(title)
-            ax.set_xlabel(x_key if x == "x_key" else THROUGHPUT_LABEL)
+            ax.set_xlabel(x_key if x == "x_key" else X_LABELS[x])
             if yscale == "log" and any(line.get_ydata().min() > 0 for line in ax.get_lines()):
                 ax.set_yscale("log")
             if ylim:

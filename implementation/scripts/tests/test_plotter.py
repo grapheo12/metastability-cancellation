@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.3.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.4.0)
 import csv
 import json
 import os
@@ -44,6 +44,9 @@ class PointTableTest(unittest.TestCase):
             self.assertEqual(table[0]["srv_cancelled_before_processing"], "7")
             self.assertEqual(table[0]["cx_sent"], "")
             self.assertEqual(list(table[0])[:4], ["point", "status", "load_gen.global_rate", "server.cancel_mode"])
+            cols = list(table[0])
+            self.assertEqual(cols[cols.index("cx_accepted") + 1], "cx_offered_fraction")
+            self.assertEqual(table[0]["cx_offered_fraction"], "")  # canceller disabled in this fixture
 
     # Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
     def test_plots(self):
@@ -59,7 +62,7 @@ class PointTableTest(unittest.TestCase):
                     pid += 1
             plotter.plot(out)
             for name in ("latency_e2e", "goodput", "outcomes", "server_counters", "throughput_latency",
-                         "server_counters_normalized"):
+                         "server_counters_normalized", "throughput_latency_normalized"):
                 self.assertTrue(os.path.getsize(os.path.join(out, "plots", f"{name}.png")) > 0)
 
     # Design: abstraction/benchmark_runner/result_plotter/design.md#throughputlatencyplot
@@ -81,6 +84,26 @@ class PointTableTest(unittest.TestCase):
         for cx in (0, None):
             self.assertEqual([value(dict(row, cx_sent=cx)) for _, value in fig[2]], [None, None, None])
         self.assertEqual((fig[1], fig[3], fig[4]), ("x_key", "linear", (0, 1)))
+
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#cancelofferedfraction
+    def test_cancel_offered_fraction(self):
+        p = {"loadgen_args": [["global_rate", 1000]], "canceller_args": [["cancel_rate", 200.0]]}
+        self.assertEqual(plotter.cancel_offered_fraction(p), 0.2)
+        self.assertEqual(plotter.cancel_offered_fraction({"loadgen_args": [["global_rate", 500]],
+                                                          "canceller_args": [["cancel_rate", 5.0]]}), 0.01)
+        self.assertIsNone(plotter.cancel_offered_fraction({"loadgen_args": [["global_rate", 1000]],
+                                                           "canceller_args": None}))
+        self.assertIsNone(plotter.cancel_offered_fraction({"loadgen_args": [["global_rate", 0]],
+                                                           "canceller_args": [["cancel_rate", 1.0]]}))
+
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#throughputlatencynormalizedplot
+    def test_normalized_goodput(self):
+        n = plotter.normalized_goodput
+        self.assertEqual(n({"lg_goodput": 819.0, "cx_offered_fraction": 0.2}), 1023.75)
+        self.assertAlmostEqual(n({"lg_goodput": 491.0, "cx_offered_fraction": 0.01}), 495.959595959596)
+        self.assertEqual(n({"lg_goodput": 992.0, "cx_offered_fraction": None}), 992.0)
+        self.assertIsNone(n({"lg_goodput": 50.0, "cx_offered_fraction": 1.0}))
+        self.assertIsNone(n({"lg_goodput": None, "cx_offered_fraction": 0.1}))
 
     def test_nothing_to_plot(self):
         try:

@@ -162,6 +162,7 @@ Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t imple
 - Plots use `matplotlib` with the non-interactive `Agg` backend, imported lazily so the table can be built without it. Each figure is one row of subplots (`figsize` 6 in per subplot), saved at 120 dpi.
 - A categorical x-axis is drawn at positions `0..k-1` with tick labels in first-appearance order. A log y scale is applied only when every plotted value is positive.
 - Fractions use one helper, `_frac(name, denominator)`, for both `/ lg_scheduled` and `/ cx_sent`.
+- `cx_offered_fraction` is computed by `cancel_offered_fraction(params)` while building each row, and placed in the CSV right after `cx_accepted` (`DERIVED_AFTER`). The normalized x of the ThroughputLatencyNormalizedPlot is `normalized_goodput(row)`. Both throughput figures share `throughput_latency_line(..., xvalue)`, with the x function looked up in `X_VALUES`.
 - `FIGURES` entries carry their x source (`"x_key"` or `"lg_goodput"`). The ThroughputLatencyPlot line is built by the pure function `throughput_latency_line`, so its swept-order rule is unit-tested without `matplotlib`. Its x-axis is always numeric, so categorical tick labels are applied only to `x_key` figures.
 
 ### Traceability
@@ -172,7 +173,9 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [PointTable](#pointtable) | [plotter.py:100](../../../implementation/scripts/benchrunner/plotter.py#L100), [test_plotter.py:33](../../../implementation/scripts/tests/test_plotter.py#L33) |
-| [SweepPlots](#sweepplots) | [plotter.py:48](../../../implementation/scripts/benchrunner/plotter.py#L48), [plotter.py:61](../../../implementation/scripts/benchrunner/plotter.py#L61), [plotter.py:140](../../../implementation/scripts/benchrunner/plotter.py#L140), [test_plotter.py:49](../../../implementation/scripts/tests/test_plotter.py#L49), [test_plotter.py:76](../../../implementation/scripts/tests/test_plotter.py#L76) |
-| [ThroughputLatencyPlot](#throughputlatencyplot) | [plotter.py:59](../../../implementation/scripts/benchrunner/plotter.py#L59), [plotter.py:132](../../../implementation/scripts/benchrunner/plotter.py#L132), [test_plotter.py:66](../../../implementation/scripts/tests/test_plotter.py#L66) |
+| [PointTable](#pointtable) | [plotter.py:105](../../../implementation/scripts/benchrunner/plotter.py#L105), [test_plotter.py:33](../../../implementation/scripts/tests/test_plotter.py#L33) |
+| [SweepPlots](#sweepplots) | [plotter.py:48](../../../implementation/scripts/benchrunner/plotter.py#L48), [plotter.py:63](../../../implementation/scripts/benchrunner/plotter.py#L63), [plotter.py:180](../../../implementation/scripts/benchrunner/plotter.py#L180), [test_plotter.py:52](../../../implementation/scripts/tests/test_plotter.py#L52), [test_plotter.py:79](../../../implementation/scripts/tests/test_plotter.py#L79) |
+| [ThroughputLatencyPlot](#throughputlatencyplot) | [plotter.py:59](../../../implementation/scripts/benchrunner/plotter.py#L59), [plotter.py:141](../../../implementation/scripts/benchrunner/plotter.py#L141), [test_plotter.py:69](../../../implementation/scripts/tests/test_plotter.py#L69) |
+| [CancelOfferedFraction](#cancelofferedfraction) | [plotter.py:153](../../../implementation/scripts/benchrunner/plotter.py#L153), [test_plotter.py:89](../../../implementation/scripts/tests/test_plotter.py#L89) |
+| [ThroughputLatencyNormalizedPlot](#throughputlatencynormalizedplot) | [plotter.py:61](../../../implementation/scripts/benchrunner/plotter.py#L61), [plotter.py:165](../../../implementation/scripts/benchrunner/plotter.py#L165), [test_plotter.py:100](../../../implementation/scripts/tests/test_plotter.py#L100) |
 <!-- trace:end -->
