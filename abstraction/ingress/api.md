@@ -106,3 +106,4 @@ separate program, so result tools can read them unchanged (all zero when it is d
 | Load Balancer | [load_balancer/api.md](load_balancer/api.md) |
 | Upstream Pool | [upstream_pool/api.md](upstream_pool/api.md) |
 | Load Canceller | [load_canceller/api.md](load_canceller/api.md) |
+| Frontend | [frontend/api.md](frontend/api.md) |
