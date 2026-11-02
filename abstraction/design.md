@@ -9,30 +9,34 @@ flowchart LR
     C -->|RequestRecords| M[Metrics]
     RC -->|aggregate + write| M
   end
-  subgraph LC[Load Canceller]
-    CS[Single sender]
+  subgraph IG[Ingress]
+    FE[Frontend: ForwardTask per /ping] -->|pick| LB[Load Balancer]
+    FE -->|publish / clear| IM[(In-Flight Map)]
+    FE --> UP[Upstream Pool]
+    LC[Load Canceller] -->|snapshot| IM
   end
-  subgraph SV[Server]
-    L[Listener] -->|one per connection| CH[Connection Handler x N+1]
+  subgraph SV[Server x instances]
+    L[Listener] -->|one per connection| CH[Connection Handler]
     CH --> PH[Ping Handler]
     PH --> CB[CPU Burner]
     CH -->|DELETE /cancel| CT[Cancel Tracker]
     PH -->|CancelCheckPoints| CT
   end
-  C <-->|"h2c connection i (POST /ping, RST_STREAM)"| CH
-  CS -->|"h2c connection (DELETE /cancel)"| CH
+  C <-->|"h2c connection i (POST /ping, RST_STREAM)"| FE
+  UP <-->|"h2c connection per client x backend (POST /ping, RST_STREAM)"| CH
+  LC -->|"h2c connection per backend (DELETE /cancel)"| CH
   P[(Protocol)] -.used by.- C
   P -.used by.- PH
-  P -.used by.- CS
+  P -.used by.- FE
   S[(Sampling)] -.used by.- C
   S -.used by.- PH
-  S -.used by.- CS
+  S -.used by.- LC
   subgraph OP[Operator machine]
     BR[Benchmark Runner]
   end
   BR ==>|"SSH: setup, start/stop, fetch"| SV
   BR ==>|"SSH: setup, run, fetch"| LG
-  BR ==>|"SSH: run, fetch"| LC
+  BR ==>|"SSH: start/stop, fetch"| IG
 ```
 
 | Component | Role | Spec |
@@ -41,12 +45,15 @@ flowchart LR
 | Sampling | Seeded RNG, exponential and uniform-integer samplers, per-stream seed derivation | [sampling/description.md](sampling/description.md) |
 | Server | Accepts connections, serves `/ping` with a CPU-bound cost, applies RST and `/cancel` cancellation | [server/description.md](server/description.md) |
 | Load Generator | Simulates N clients, applies SLOCancellation, records latency | [load_generator/description.md](load_generator/description.md) |
-| Load Canceller | Sends `/cancel` requests on a Poisson clock to random clients | [ingress/load_canceller/description.md](ingress/load_canceller/description.md) |
+| Ingress | Load-balances `/ping` across server instances, relays answers, and cancels in-flight requests from inside (Load Canceller) | [ingress/description.md](ingress/description.md) |
 | Benchmark Runner | Sets up two machines, runs a parameter sweep of the three programs, downloads and plots results | [benchmark_runner/description.md](benchmark_runner/description.md) |
 
-Protocol and Sampling are shared leaves. Server, Load Generator and Load Canceller all depend on
-them and never on each other. The only coupling between the three programs is the wire contract in
-[api.md](api.md#wire-contract-ping) and [api.md](api.md#wire-contract-cancel).
+Protocol and Sampling are shared leaves. Server, Load Generator and Ingress all depend on them and never on
+each other's internals. The only coupling between the three programs is the wire contract in
+[api.md](api.md#wire-contract-ping) and [api.md](api.md#wire-contract-cancel). The Ingress speaks the `/ping`
+contract on both sides, so the load generator cannot tell it from a server, and it relies on one more server
+behavior: each connection is bound to one client and served serially
+([ingress/design.md#why-one-upstream-connection-per-client-and-backend](ingress/design.md#why-one-upstream-connection-per-client-and-backend)).
 
 The Benchmark Runner depends on no other component's internals. It uses only the programs' command-line
 parameters, their output files and the server's `listening on` and CancelCounters lines, all from
@@ -57,7 +64,10 @@ parameters, their output files and the server's `listening on` and CancelCounter
 
 1. Client `i` reaches scheduled arrival `seq` (a GatedArrival: it waits if request `seq-1` is unresolved).
 2. Client builds RequestId `(i << 32) | seq` and a PaddedJsonBody of `request_bytes`, then sends
-   `POST /ping` on its own connection and starts an SLO timer.
+   `POST /ping` on its own connection to the Ingress and starts an SLO timer.
+   The Ingress's ForwardTask picks a backend, records the request in the InFlightMap, and forwards it unchanged on
+   its connection for client `i` and that backend. Everything below happens on that backend, and the answer (or a
+   reset) travels back the same way.
 3. The server's Connection Handler for that connection queues the request. On the connection's
    first `/ping` it binds the connection to client id `id >> 32`. Its SerialStreamWorker takes
    requests one at a time, samples a ServiceTime, checks for cancellation, and runs the CPU Burner,
@@ -73,13 +83,14 @@ parameters, their output files and the server's `listening on` and CancelCounter
 
 ## End-to-end flow of one cancel
 
-1. The canceller reaches a Poisson arrival, picks client `c` uniformly, and advances its counter for
-   `c` by a random step to `s`.
-2. It sends `DELETE /cancel` with RequestId `(c << 32) | s` on its own connection and does not wait.
-3. The server's handler for the canceller's connection pushes the id onto client `c`'s CancelInbox in
-   the CancelRegistry and answers `202`.
-4. At its next CancelCheckPoint, the worker bound to client `c` drains the inbox into its local
+1. The Ingress's Load Canceller reaches a Poisson arrival and takes a snapshot of the InFlightMap. If it is empty,
+   the arrival is `skipped`. Otherwise it draws one entry `(c, request_id, server_id)` uniformly.
+2. It sends `DELETE /cancel` with that RequestId on its own connection to backend `server_id` and does not wait.
+3. That server's handler for the canceller's connection pushes the id onto client `c`'s CancelInbox in its
+   CancelRegistry and answers `202`.
+4. At its next CancelCheckPoint, the worker bound to client `c` on that server drains the inbox into its local
    pending set and applies CancelMatching ([server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelmatching)).
+   If the request already finished in between, it is counted `completed_before_cancel`.
 
 ## Why the server is serial per connection
 
@@ -96,6 +107,7 @@ monotonically, which CancelMatching depends on. See
 The active phase is `[0, duration_s)` from the run start. The DrainPhase that follows lasts at
 most `slo_ms`, because every in-flight request is resolved by its response or its SLO timer. See
 [load_generator/run_controller/design.md](load_generator/run_controller/design.md#drainphase).
-The canceller has its own `duration_s` and drain timeout
-([ingress/load_canceller/design.md](ingress/load_canceller/design.md#cancellerdrain)). The operator starts both
-programs together.
+The Ingress's Load Canceller starts at the Ingress's first `/ping` and has its own `duration_s` and drain timeout
+([ingress/load_canceller/design.md](ingress/load_canceller/design.md#cancellerdrain)). The operator starts the
+servers, then the Ingress, then the load generator, and stops them in reverse order
+([ingress/design.md#shutdown](ingress/design.md#shutdown)).

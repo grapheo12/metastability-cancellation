@@ -1,6 +1,6 @@
 # HTTP/2 Cancellation Testbed — API
 
-The system ships as three programs: **server**, **loadgen** and **canceller**. Each takes parameters
+The system ships as three programs: **server**, **loadgen** and **ingress**. Each takes parameters
 on the command line as `--<parameter_name> <value>`. Invalid or missing required parameters make the
 program exit with a non-zero status and a one-line error message, before any network activity.
 
@@ -25,7 +25,7 @@ CancelCounters ([Server outputs](#server-outputs)).
 
 | Parameter | Type / unit | Default | Meaning |
 |---|---|---|---|
-| `target` | `host:port` | `127.0.0.1:8080` | Server address |
+| `target` | `host:port` | `127.0.0.1:8080` | Server address, or an Ingress address (the wire contract is the same) |
 | `num_clients` (`N`) | integer, `1 ..= 2^32-1` | required | Number of simulated clients. Each gets its own connection |
 | `global_rate` | float, requests/s, `> 0` | required | Total offered rate. Each client's arrival rate is `global_rate / N` |
 | `request_bytes` | integer, bytes, `>= 42` | required | Exact byte length of every request body |
@@ -36,17 +36,20 @@ CancelCounters ([Server outputs](#server-outputs)).
 
 The minimum body size of 42 bytes comes from [protocol/design.md](protocol/design.md#minimum-body-size).
 
-## Canceller parameters
+## Ingress parameters
 
 | Parameter | Type / unit | Default | Meaning |
 |---|---|---|---|
-| `target` | `host:port` | `127.0.0.1:8080` | Server address |
-| `num_clients` (`N`) | integer, `1 ..= 2^32-1` | required | Client ids are drawn uniformly from `0 ..= N-1`. Should match the load generator's `N` |
-| `cancel_rate` | float, cancels/s, `> 0` | required | Rate of the canceller's Poisson arrival process |
-| `incr_rand_max` | integer, `1 ..= 2^32-1` | `4` | Largest step past the client's reported FinishedWatermark. Steps are uniform in `[1, incr_rand_max]` ([load_canceller/design.md#canceltargetchoice](ingress/load_canceller/design.md#inflightvictimchoice)) |
-| `duration_s` | float, s, `> 0` | required | Length of the sending phase |
-| `seed` | unsigned 64-bit integer | `0` | Base seed for the canceller's random choices |
-| `output_path` | path prefix | `cancels` | Outputs go to `<output_path>.cancels.csv` and `<output_path>.summary.json` |
+| `listen_addr` | `host:port` | `0.0.0.0:9090` | Address the Frontend accepts client connections on |
+| `backends` | comma-separated list of `host:port`, at least 1, at most `MAX_BACKENDS` | required | The server instances. A backend's `server_id` is its 0-based position in this list |
+| `num_clients` (`N`) | integer, `1 ..= MAX_CLIENTS` | required | Number of load-generator clients. Client ids must be `< N`. Sizes the InFlightMap |
+| `lb_policy` | `round_robin` \| `least_outstanding` \| `power_of_two` | `least_outstanding` | The LoadBalancer policy |
+| `cancel_rate` | float, cancels/s, `>= 0` | `0` | Rate of the LoadCanceller's Poisson process. `0` disables the LoadCanceller |
+| `duration_s` | float, s, `> 0` | required if `cancel_rate > 0`, else ignored | Length of the LoadCanceller's sending phase |
+| `seed` | unsigned 64-bit integer | `0` | Base seed for the LoadBalancer's and the LoadCanceller's random choices |
+| `output_path` | path prefix | `ingress` | Outputs go to `<output_path>.cancels.csv` and `<output_path>.summary.json` |
+
+The Ingress's constants, outputs and lifecycle are in [ingress/api.md](ingress/api.md).
 
 ## Wire contract: `/ping`
 
@@ -95,11 +98,12 @@ See [server/api.md](server/api.md#cancelcounters-output). Counter semantics are 
 - Both are produced by [load_generator/metrics/design.md#collection](load_generator/metrics/design.md#collection)
   and [load_generator/metrics/design.md#summary](load_generator/metrics/design.md#summary).
 
-### Canceller outputs
-- `<output_path>.cancels.csv` and `<output_path>.summary.json`. Formats are in
-  [ingress/load_canceller/api.md](ingress/load_canceller/api.md#outputs). Produced by
-  [ingress/load_canceller/design.md#cancelschedule](ingress/load_canceller/design.md#cancelschedule) and
-  [ingress/load_canceller/design.md#summary](ingress/load_canceller/design.md#summary).
+### Ingress outputs
+- `<output_path>.cancels.csv`: one CancelRecord per LoadCanceller arrival. Columns are in
+  [ingress/load_canceller/api.md](ingress/load_canceller/api.md#output_pathcancelscsv).
+- `<output_path>.summary.json`: LoadCanceller counts and rates, plus BackendStats per backend. Fields are in
+  [ingress/api.md](ingress/api.md#output_pathsummaryjson). Written at shutdown by
+  [ingress/design.md#shutdown](ingress/design.md#shutdown).
 
 ## Benchmark runner
 
@@ -117,9 +121,10 @@ directory layout is in [benchmark_runner/api.md](benchmark_runner/api.md#output-
 
 ## Exit status
 
-The load generator and the canceller exit with status `0` after writing their files. They exit
-non-zero if a connection cannot be established at startup. The server's lifecycle is in
-[server/api.md#lifecycle](server/api.md#lifecycle).
+The load generator exits with status `0` after writing its files, and non-zero if a connection cannot be
+established at startup. The server's lifecycle is in [server/api.md#lifecycle](server/api.md#lifecycle). The
+Ingress's lifecycle is in [ingress/api.md#lifecycle](ingress/api.md#lifecycle): like the server, it runs until it
+is interrupted, then writes its outputs and exits `0`.
 
 ## Components
 
@@ -129,5 +134,5 @@ non-zero if a connection cannot be established at startup. The server's lifecycl
 | Sampling | [sampling/api.md](sampling/api.md) |
 | Server | [server/api.md](server/api.md) |
 | Load Generator | [load_generator/api.md](load_generator/api.md) |
-| Load Canceller | [ingress/load_canceller/api.md](ingress/load_canceller/api.md) |
+| Ingress | [ingress/api.md](ingress/api.md) |
 | Benchmark Runner | [benchmark_runner/api.md](benchmark_runner/api.md) |
