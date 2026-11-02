@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/remote_transport/design.md (remote_transport v0.1.1)
+# Source: abstraction/benchmark_runner/remote_transport/design.md (remote_transport v0.2.0)
 import os
 import tempfile
 import time
@@ -27,6 +27,22 @@ class SshArgvTest(unittest.TestCase):
         self.assertEqual(t.copy_argv("/r/f", "/l/f"),
                          ["scp", "-q", "-i", "/k", "-P", "2222", *transport.SSH_OPTIONS, "ubuntu@10.0.0.5:/r/f", "/l/f"])
         self.assertIn("BatchMode=yes", transport.SSH_OPTIONS)
+
+    # Design: abstraction/benchmark_runner/remote_transport/design.md#sshconfighost
+    def test_options_left_to_ssh_config(self):
+        t = transport.SshTransport("metafail-exp-1", None, None, None)
+        self.assertEqual(t.run_argv("true"), ["ssh", *transport.SSH_OPTIONS, "metafail-exp-1", "sh -c true"])
+        self.assertEqual(t.copy_argv("/r", "/l"), ["scp", "-q", *transport.SSH_OPTIONS, "metafail-exp-1:/r", "/l"])
+        self.assertEqual(t.name, "metafail-exp-1")
+        u = transport.SshTransport("metafail-exp-1", "ubuntu", None, None)
+        self.assertEqual(u.run_argv("true")[-2], "ubuntu@metafail-exp-1")
+
+    # Design: abstraction/benchmark_runner/remote_transport/design.md#sshconfighost
+    def test_parse_ssh_g(self):
+        out = "user ubuntu\nhostname 18.144.18.190\nport 22\n"
+        self.assertEqual(transport.parse_ssh_g(out, "metafail-exp-1"), "18.144.18.190")
+        self.assertEqual(transport.parse_ssh_g("user ubuntu\n", "metafail-exp-1"), "metafail-exp-1")
+        self.assertEqual(transport.ssh_hostname("no-such-alias.invalid"), "no-such-alias.invalid")
 
 
 class LocalTransportTest(unittest.TestCase):

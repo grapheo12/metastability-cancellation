@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/remote_transport/design.md (remote_transport v0.1.1)
+# Source: abstraction/benchmark_runner/remote_transport/design.md (remote_transport v0.2.0)
 """Transport: run commands on, and copy files from, a machine over SSH or locally."""
 
 import os
@@ -135,30 +135,66 @@ class LocalTransport(Transport):
 
 
 class SshTransport(Transport):
-    """System ssh/scp, one child process per operation, never prompting."""
+    """System ssh/scp, one child process per operation, never prompting.
 
-    def __init__(self, host, user, key, port):
+    user, key and port may be None: ssh/scp then take them from ~/.ssh/config."""
+
+    def __init__(self, host, user=None, key=None, port=None):
         super().__init__()
         self.host, self.user, self.key, self.port = host, user, key, port
-        self.name = f"{user}@{host}"
+        self.name = self.destination()
 
+    # Design: abstraction/benchmark_runner/remote_transport/design.md#sshconfighost
+    def destination(self):
+        return f"{self.user}@{self.host}" if self.user else self.host
+
+    # Design: abstraction/benchmark_runner/remote_transport/design.md#sshconfighost
+    def target_words(self, port_flag):
+        words = []
+        if self.key:
+            words += ["-i", self.key]
+        if self.port is not None:
+            words += [port_flag, str(self.port)]
+        return words + SSH_OPTIONS
+
+    # Design: abstraction/benchmark_runner/remote_transport/design.md#run
     def run_argv(self, command):
-        return ["ssh", "-i", self.key, "-p", str(self.port), *SSH_OPTIONS,
-                f"{self.user}@{self.host}", "sh -c " + quote(command)]
+        return ["ssh", *self.target_words("-p"), self.destination(), "sh -c " + quote(command)]
 
+    # Design: abstraction/benchmark_runner/remote_transport/design.md#fetch
     def copy_argv(self, remote_path, local_path):
-        return ["scp", "-q", "-i", self.key, "-P", str(self.port), *SSH_OPTIONS,
-                f"{self.user}@{self.host}:{remote_path}", local_path]
+        return ["scp", "-q", *self.target_words("-P"), f"{self.destination()}:{remote_path}", local_path]
 
     def check_connection(self, result):
         if result.exit_status == 255 and any(m in result.stderr for m in SSH_FAILURE_MARKERS):
             first = result.stderr.strip().splitlines()[0] if result.stderr.strip() else "ssh failed"
-            raise TransportError(f"{self.host}: {first}")
+            raise TransportError(f"{self.destination()}: {first}")
 
     def copy(self, remote_path, local_path):
         p = subprocess.run(self.copy_argv(remote_path, local_path), stdin=subprocess.DEVNULL, capture_output=True)
         if p.returncode != 0:
-            raise TransportError(f"{self.host}: scp {remote_path}: {_decode(p.stderr).strip()}")
+            raise TransportError(f"{self.destination()}: scp {remote_path}: {_decode(p.stderr).strip()}")
+
+
+# Design: abstraction/benchmark_runner/remote_transport/design.md#sshconfighost
+def parse_ssh_g(stdout, host):
+    """The value of the `hostname` line of `ssh -G` output, else host."""
+    for line in stdout.splitlines():
+        if line.startswith("hostname "):
+            value = line[len("hostname "):].strip()
+            if value:
+                return value
+    return host
+
+
+# Design: abstraction/benchmark_runner/remote_transport/design.md#sshconfighost
+def ssh_hostname(host):
+    """HostName of host in the operator's SSH configuration (ssh -G); host on any failure."""
+    try:
+        p = subprocess.run(["ssh", "-G", host], stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return host
+    return parse_ssh_g(_decode(p.stdout), host) if p.returncode == 0 else host
 
 
 # Design: abstraction/benchmark_runner/remote_transport/design.md#transport

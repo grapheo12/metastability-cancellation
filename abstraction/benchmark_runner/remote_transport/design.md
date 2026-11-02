@@ -149,6 +149,7 @@ Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t imple
 - One `subprocess.run` per operation (`ssh` / `scp` / `sh -c`), with stdin set to `DEVNULL`, output captured, and the given timeout. On timeout, `subprocess.run` kills the child, and the call returns exit status `-1`.
 - `Transport` is a base class with `LocalTransport` and `SshTransport` subclasses. `run_argv` / `copy_argv` build the exact command lines, which the tests compare without a network.
 - SSH connection failures are recognized from exit status 255 together with known `ssh` error messages, and raised as `TransportError`.
+- `SshTransport(host, user=None, key=None, port=None)`. `ssh_target_words` is the method `target_words(port_flag)` and `destination(t)` is `destination()`. Unset values are `None` and are simply left out of argv. The parsing of `ssh -G` output is the pure function `parse_ssh_g`, so it can be tested without `ssh`. `ssh_hostname` returns `host` on a non-zero exit, `OSError` or a 10 s timeout.
 
 ### Traceability
 
@@ -158,9 +159,10 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [Transport](#transport) | [transport.py:12](../../../implementation/scripts/benchrunner/transport.py#L12), [transport.py:165](../../../implementation/scripts/benchrunner/transport.py#L165) |
-| [Run](#run) | [transport.py:65](../../../implementation/scripts/benchrunner/transport.py#L65), [transport.py:81](../../../implementation/scripts/benchrunner/transport.py#L81), [test_transport.py:23](../../../implementation/scripts/tests/test_transport.py#L23), [test_transport.py:41](../../../implementation/scripts/tests/test_transport.py#L41) |
-| [Background processes](#background-processes) | [transport.py:96](../../../implementation/scripts/benchrunner/transport.py#L96), [transport.py:105](../../../implementation/scripts/benchrunner/transport.py#L105), [transport.py:109](../../../implementation/scripts/benchrunner/transport.py#L109), [test_transport.py:49](../../../implementation/scripts/tests/test_transport.py#L49) |
-| [Fetch](#fetch) | [transport.py:113](../../../implementation/scripts/benchrunner/transport.py#L113), [test_transport.py:65](../../../implementation/scripts/tests/test_transport.py#L65) |
+| [Transport](#transport) | [transport.py:12](../../../implementation/scripts/benchrunner/transport.py#L12), [transport.py:201](../../../implementation/scripts/benchrunner/transport.py#L201) |
+| [SshConfigHost](#sshconfighost) | [transport.py:148](../../../implementation/scripts/benchrunner/transport.py#L148), [transport.py:152](../../../implementation/scripts/benchrunner/transport.py#L152), [transport.py:180](../../../implementation/scripts/benchrunner/transport.py#L180), [transport.py:191](../../../implementation/scripts/benchrunner/transport.py#L191), [test_transport.py:32](../../../implementation/scripts/tests/test_transport.py#L32), [test_transport.py:41](../../../implementation/scripts/tests/test_transport.py#L41) |
+| [Run](#run) | [transport.py:65](../../../implementation/scripts/benchrunner/transport.py#L65), [transport.py:81](../../../implementation/scripts/benchrunner/transport.py#L81), [transport.py:161](../../../implementation/scripts/benchrunner/transport.py#L161), [test_transport.py:23](../../../implementation/scripts/tests/test_transport.py#L23), [test_transport.py:57](../../../implementation/scripts/tests/test_transport.py#L57) |
+| [Background processes](#background-processes) | [transport.py:96](../../../implementation/scripts/benchrunner/transport.py#L96), [transport.py:105](../../../implementation/scripts/benchrunner/transport.py#L105), [transport.py:109](../../../implementation/scripts/benchrunner/transport.py#L109), [test_transport.py:65](../../../implementation/scripts/tests/test_transport.py#L65) |
+| [Fetch](#fetch) | [transport.py:113](../../../implementation/scripts/benchrunner/transport.py#L113), [transport.py:165](../../../implementation/scripts/benchrunner/transport.py#L165), [test_transport.py:81](../../../implementation/scripts/tests/test_transport.py#L81) |
 | [Command quoting](#command-quoting) | [transport.py:24](../../../implementation/scripts/benchrunner/transport.py#L24), [transport.py:39](../../../implementation/scripts/benchrunner/transport.py#L39), [test_transport.py:13](../../../implementation/scripts/tests/test_transport.py#L13) |
 <!-- trace:end -->
