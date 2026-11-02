@@ -68,11 +68,15 @@ details are in [protocol/api.md](protocol/api.md).
 - **Request:** `DELETE /cancel`, `content-type: application/json`, body is a CancelBody
   `{"id":"<decimal RequestId>"}`. The client-id half must name a real client for the cancel to have
   any effect. The sequence half can be anything.
-- **Response:** an empty body with one of these statuses:
-  - `202`: the id was recorded (or, with `cancel_mode=ignore`, accepted and thrown away).
-  - `400`: the body could not be parsed.
-  - `503`: the CancelRegistry is full.
-  - A method other than `DELETE` on `/cancel` returns `405`.
+- **Response:** one of these statuses:
+  - `202`: the id was recorded (or, with `cancel_mode=ignore`, accepted and thrown away). The body is a
+    CancelReplyBody `{"finished":"<decimal RequestId>"}` or `{"finished":null}`, with
+    `content-type: application/json`. It gives the target client's FinishedWatermark: the highest RequestId of that
+    client the server has finished, with any outcome. See
+    [protocol/design.md#cancelreplybody](protocol/design.md#cancelreplybody).
+  - `400`: the body could not be parsed. Empty body.
+  - `503`: the CancelRegistry is full. Empty body.
+  - A method other than `DELETE` on `/cancel` returns `405`. Empty body.
 
 ## Outputs
 

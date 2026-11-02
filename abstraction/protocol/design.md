@@ -100,6 +100,50 @@ function build_cancel_body(id):
 Its length is `9 + len(dec)` bytes (`{"id":"` is 7, `"}` is 2). For example, id `12884901889` gives
 20 bytes.
 
+## CancelReplyBody
+
+The `202` answer to `/cancel` carries the target client's **FinishedWatermark**: the highest RequestId of that
+client whose `/ping` the server has finished, with any outcome
+([../server/cancel_tracker/design.md](../server/cancel_tracker/design.md)). The body is not padded:
+
+```
+{"finished":"<DEC>"}       # a watermark exists
+{"finished":null}          # the client has no registry slot yet, or has finished nothing
+```
+
+```
+function build_cancel_reply(finished):
+    if finished is none: return "{\"finished\":null}"
+    return "{\"finished\":\"" + decimal_string(finished) + "\"}"
+
+function parse_cancel_reply(body):
+    value = json_parse(body)                           # lenient, as in Parsing
+    if value is not an object or "finished" not in value: return ParseError
+    f = value["finished"]
+    if f is null: return none
+    if f is not a string, is empty, contains a non-digit or has more than 20 chars: return ParseError
+    n = parse_unsigned_decimal(f)
+    if n > 2^64 - 1: return ParseError
+    return n                                           # other fields are ignored
+```
+
+Length: `{"finished":"` is 13 bytes and `"}` is 2, so a watermark body is `15 + len(dec)` bytes. The null body is
+exactly 17 bytes.
+
+| `finished` | Body | Bytes | Check |
+|---|---|---|---|
+| none | `{"finished":null}` | 17 | `{"finished":` 12 + `null` 4 + `}` 1 = 17 |
+| `0` | `{"finished":"0"}` | 16 | 15 + 1 |
+| `12884901893` (client 3, seq 5) | `{"finished":"12884901893"}` | 26 | 15 + 11 |
+| `2^64 − 1` | `{"finished":"18446744073709551615"}` | 35 | 15 + 20 |
+
+| Input to `parse_cancel_reply` | Result |
+|---|---|
+| `{"finished":"42"}` | `42` |
+| `{"finished":null}` | none |
+| `{"finished":42}` (a number, not a string) | ParseError |
+| `{}` or an empty body | ParseError |
+
 ## Parsing
 
 Parsing is lenient. It accepts any valid JSON, not only our exact serializations, so other clients
@@ -129,7 +173,7 @@ function parse_body(body):
 
 | Received for `/cancel` | Meaning for the canceller |
 |---|---|
-| `202` | `accepted` |
+| `202` | `accepted`. The body is a CancelReplyBody. If it fails to parse, the cancel is still `accepted` and the watermark is unknown |
 | `503` | `rejected` (registry full) |
 | `400` | `bad_request` |
 | any other status | `error` |
