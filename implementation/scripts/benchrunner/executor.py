@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.1.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.2.0)
 """run_point: ServerLifecycle, ClientRun and point outputs for one SweepPoint."""
 
 import json
@@ -52,6 +52,7 @@ def run_point(point, config, server, client, run_id):
     os.makedirs(pdir)
     with open(os.path.join(pdir, "params.json"), "w") as f:
         json.dump(point.to_json(), f, indent=2)
+    write_placement(point, server, client, pdir)
     rd_server, rd_client = remote_dir(server, run_id, point.id), remote_dir(client, run_id, point.id)
     reason, interrupted = None, False
     try:
@@ -94,7 +95,8 @@ def _pid_file(server):
 def start_server(point, config, server, rd):
     t = server.transport
     log = f"{rd}/server.out"
-    words = [server.binaries["server"], "--listen_addr", f"0.0.0.0:{config.listen_port}"] + arg_words(point.server_args)
+    words = placement_prefix("server", point, server) + \
+        [server.binaries["server"], "--listen_addr", f"0.0.0.0:{config.listen_port}"] + arg_words(point.server_args)
     pid = t.start_background("exec " + join(words), log)  # exec: the pid is the server itself
     t.run(f"echo {pid} > {quote(_pid_file(server))}", 30)
     deadline = time.monotonic() + config.run.server_ready_timeout_s
@@ -132,12 +134,14 @@ def stop_server(server, stop_timeout_s):
 # Design: abstraction/benchmark_runner/experiment_executor/design.md#clientrun
 def client_run(point, config, server, client, rd):
     target = f"{server.data_addr}:{config.listen_port}"
-    lg = [client.binaries["loadgen"], "--target", target] + arg_words(point.loadgen_args) + \
+    lg = placement_prefix("loadgen", point, client) + \
+        [client.binaries["loadgen"], "--target", target] + arg_words(point.loadgen_args) + \
         ["--output_path", f"{rd}/loadgen"]
     lines = [f"cd {quote(rd)} || exit 97", "CP=; C=0"]
     enabled = point.canceller_args is not None
     if enabled:
-        cx = [client.binaries["canceller"], "--target", target] + arg_words(point.canceller_args) + \
+        cx = placement_prefix("canceller", point, client) + \
+            [client.binaries["canceller"], "--target", target] + arg_words(point.canceller_args) + \
             ["--output_path", f"{rd}/canceller"]
         lines += [f"{join(cx)} > {quote(rd + '/canceller.log')} 2>&1 &",
                   f"CP=$!; echo $CP > {quote(rd + '/canceller.pid')}"]
@@ -155,6 +159,26 @@ def client_run(point, config, server, client, rd):
         pids = " ".join(quote(f"{rd}/{p}.pid") for p in ("loadgen", "canceller"))
         client.transport.run(f'for f in {pids}; do [ -f "$f" ] && kill -s KILL "$(cat "$f")"; done; true', 30)
     return r.exit_status == 0
+
+
+# Design: abstraction/benchmark_runner/experiment_executor/design.md#processplacement
+def placement_prefix(program, point, ready):
+    p = (point.placement or {}).get(program) or {}
+    words = []
+    if p.get("threads") is not None:
+        words += ["env", f"{ready.thread_env}={p['threads']}"]  # thread_env is set: the run flow checked it
+    if p.get("cpu_set") is not None and ready.cpu_pinning:
+        words += ["taskset", "-c", p["cpu_set"]]
+    return words
+
+
+# Design: abstraction/benchmark_runner/experiment_executor/design.md#processplacement
+def write_placement(point, server, client, pdir):
+    doc = {"server": placement_prefix("server", point, server), "loadgen": placement_prefix("loadgen", point, client)}
+    if point.canceller_args is not None:
+        doc["canceller"] = placement_prefix("canceller", point, client)
+    with open(os.path.join(pdir, "placement.json"), "w") as f:
+        json.dump(doc, f, indent=2)
 
 
 # Design: abstraction/benchmark_runner/experiment_executor/design.md#point-outputs

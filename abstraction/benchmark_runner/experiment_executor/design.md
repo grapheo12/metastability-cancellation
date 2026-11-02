@@ -162,7 +162,8 @@ Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t imple
 
 - `run_point` uses `try / except / finally`. `finally` always stops the server and collects outputs. `KeyboardInterrupt` is recorded as reason `interrupted` and re-raised after the `failed` marker is written.
 - Waiting uses `time.monotonic()` deadlines and `time.sleep(POLL_INTERVAL_S)`.
-- `params.json` and `server_counters.json` are written with `json.dump(..., indent=2)`.
+- `params.json`, `placement.json` and `server_counters.json` are written with `json.dump(..., indent=2)`. `placement.json` is written right after `params.json`, before any remote command, so even a point that fails early records its placement.
+- `placement_prefix` returns plain words. They go through the same `join` (POSIX quoting) as the rest of the command line, so `GOMAXPROCS=4` and `0-3` are passed unquoted and unchanged.
 
 ### Traceability
 
@@ -173,8 +174,8 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | Design subsection | Implementation (file:line) |
 |---|---|
 | [run_point](#run_point) | [executor.py:47](../../../implementation/scripts/benchrunner/executor.py#L47) |
-| [ServerLifecycle](#serverlifecycle) | [executor.py:94](../../../implementation/scripts/benchrunner/executor.py#L94), [executor.py:113](../../../implementation/scripts/benchrunner/executor.py#L113) |
-| [ClientRun](#clientrun) | [executor.py:133](../../../implementation/scripts/benchrunner/executor.py#L133) |
-| [ProcessPlacement](#processplacement) |  |
-| [Point outputs](#point-outputs) | [executor.py:161](../../../implementation/scripts/benchrunner/executor.py#L161), [executor.py:182](../../../implementation/scripts/benchrunner/executor.py#L182) |
+| [ServerLifecycle](#serverlifecycle) | [executor.py:95](../../../implementation/scripts/benchrunner/executor.py#L95), [executor.py:115](../../../implementation/scripts/benchrunner/executor.py#L115) |
+| [ClientRun](#clientrun) | [executor.py:135](../../../implementation/scripts/benchrunner/executor.py#L135), [test_executor.py:60](../../../implementation/scripts/tests/test_executor.py#L60) |
+| [ProcessPlacement](#processplacement) | [executor.py:165](../../../implementation/scripts/benchrunner/executor.py#L165), [executor.py:176](../../../implementation/scripts/benchrunner/executor.py#L176), [test_executor.py:27](../../../implementation/scripts/tests/test_executor.py#L27), [test_executor.py:37](../../../implementation/scripts/tests/test_executor.py#L37) |
+| [Point outputs](#point-outputs) | [executor.py:185](../../../implementation/scripts/benchrunner/executor.py#L185), [executor.py:206](../../../implementation/scripts/benchrunner/executor.py#L206) |
 <!-- trace:end -->
