@@ -1,4 +1,4 @@
-// Source: abstraction/server/ping_handler/design.md (ping_handler v0.2.1)
+// Source: abstraction/server/ping_handler/design.md (ping_handler v0.3.0)
 package server
 
 import (
@@ -38,6 +38,10 @@ func handlePing(task *StreamTask, cfg Config, rng *sampling.Rng, cc *cancelConte
 
 	// Design: abstraction/server/ping_handler/design.md#sampling-order
 	serviceUs := rng.ExponentialUs(cfg.ResponseRate)
+	// finish(): publish the FinishedWatermark on every way out from here (202, 503, Aborted),
+	// before the response is returned for writing. A 400 above returns before this point.
+	// Design: abstraction/server/ping_handler/design.md#finishedwatermark
+	defer cc.registry.PublishFinished(st, id)
 
 	if cfg.CancelMode == CancelCooperative {
 		idCheck := func() bool { return ShouldCancel(st, cc.registry, cc.counters, id) }

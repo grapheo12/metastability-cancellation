@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.2.1)
+// Source: abstraction/server/design.md (server v0.2.3)
 package server
 
 import (
@@ -140,4 +140,61 @@ func TestRSTStopsBurn(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("burn was not stopped by RST")
 	}
+}
+
+// /cancel replies report the FinishedWatermark after a 202, a 503 and an RST abort.
+//
+// Design: abstraction/server/ping_handler/design.md#finishedwatermark
+func TestFinishedWatermarkReplies(t *testing.T) {
+	s := startTestServer(t, CancelCooperative, 100000)
+	addr := s.Addr().String()
+	client, canceller := dialTest(t, addr), dialTest(t, addr)
+	finished := func(target uint64) (uint64, bool) {
+		st, b := canceller.do(t, "DELETE", "/cancel", protocol.BuildCancelBody(target))
+		f, ok, err := protocol.ParseCancelReply(b)
+		if st != 202 || err != nil {
+			t.Fatalf("cancel reply %d %q %v", st, b, err)
+		}
+		return f, ok
+	}
+	if _, ok := finished(protocol.MakeRequestID(9, 4)); ok {
+		t.Fatal("before any /ping: want null")
+	}
+	id0, id1 := protocol.MakeRequestID(0, 4), protocol.MakeRequestID(1, 4)
+	if st, _ := client.do(t, "POST", "/ping", protocol.BuildBody(id0, 64)); st != 202 {
+		t.Fatalf("ping 0: %d", st)
+	}
+	if f, ok := finished(id1); !ok || f != id0 { // also registers a cancel for id1
+		t.Fatalf("after 202: %d %v", f, ok)
+	}
+	if st, _ := client.do(t, "POST", "/ping", protocol.BuildBody(id1, 64)); st != 503 {
+		t.Fatalf("ping 1: %d", st)
+	}
+	if f, ok := finished(protocol.MakeRequestID(99, 4)); !ok || f != id1 {
+		t.Fatalf("after 503: %d %v", f, ok)
+	}
+	s.Shutdown()
+
+	// RST: a long burn stopped by the client's reset still publishes its id.
+	s = startTestServer(t, CancelCooperative, 0.0001)
+	addr = s.Addr().String()
+	client, canceller = dialTest(t, addr), dialTest(t, addr)
+	id := protocol.MakeRequestID(0, 7)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "POST", "http://"+addr+"/ping", bytes.NewReader(protocol.BuildBody(id, 64)))
+	if _, err := client.cc.RoundTrip(req); err == nil {
+		t.Fatal("expected cancellation error")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if f, ok := finished(protocol.MakeRequestID(5, 7)); ok && f == id {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("RST-stopped request never published")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	s.Shutdown()
 }
