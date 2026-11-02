@@ -14,6 +14,7 @@
 | `STATUS_BAD_REQUEST` | `400` | Body could not be parsed, or a `/ping` client id differs from the connection's. Empty body | [design.md#parsing](design.md#parsing), [design.md#status-classification-load-canceller](design.md#status-classification-load-canceller) |
 | `STATUS_NOT_FOUND` | `404` | Path other than `/ping` and `/cancel`. Empty body | [../api.md#wire-contract-ping](../api.md#wire-contract-ping) |
 | `STATUS_METHOD_NOT_ALLOWED` | `405` | Wrong method for the path. Empty body | [../api.md#wire-contract-ping](../api.md#wire-contract-ping), [../api.md#wire-contract-cancel](../api.md#wire-contract-cancel) |
+| `STATUS_BAD_GATEWAY` | `502` | Sent only by an Ingress: the backend could not be reached or its stream failed. Empty body | [design.md#status-classification-load-generator-client](design.md#status-classification-load-generator-client) |
 | `RST_CODE_CANCEL` | `0x8` | HTTP/2 error code the client uses in `RST_STREAM` to cancel | [../load_generator/client/design.md#slocancellation](../load_generator/client/design.md#slocancellation) |
 | `MIN_BODY_BYTES` | `42` | Smallest allowed `request_bytes` / `response_bytes` | [design.md#minimum-body-size](design.md#minimum-body-size) |
 

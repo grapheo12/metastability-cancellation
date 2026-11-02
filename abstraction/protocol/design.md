@@ -167,7 +167,7 @@ function parse_body(body):
 |---|---|
 | `202` with body whose parsed id equals the sent id | success (`ok`) |
 | `503` with body whose parsed id equals the sent id | cancelled by the server through `/cancel` (`rejected`) |
-| any other status, unparseable body, or id mismatch | `error` |
+| any other status (including `502` from an Ingress), unparseable body, or id mismatch | `error` |
 
 ## Status classification (load canceller)
 
