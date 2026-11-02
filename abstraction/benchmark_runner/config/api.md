@@ -30,7 +30,8 @@ A key set here overrides the SSH configuration ([../remote_transport/design.md#s
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `listen_port` | integer `1..=65535` | `8080` | Runner-owned. The server gets `--listen_addr 0.0.0.0:<listen_port>`. Cannot be swept |
+| `listen_port` | integer `1..=65535` | `8080` | Runner-owned. Server instance `k` gets `--listen_addr 0.0.0.0:<listen_port + k>`. Cannot be swept |
+| `instances` | integer `1..=64`, and `listen_port + instances - 1 <= 65535` | `1` | Runner-owned. Number of server processes on the server machine, all with the same program parameters. They are the Ingress's backends. Cannot be swept |
 | `threads`, `cpu_set` | see [ProcessPlacement keys](#processplacement-keys) | unset | Runner-owned. The server's ProcessPlacement. Cannot be swept |
 | any server parameter except `listen_addr` | scalar or non-empty array | the program's default | See [../../api.md#server-parameters](../../api.md#server-parameters) |
 
@@ -41,14 +42,17 @@ A key set here overrides the SSH configuration ([../remote_transport/design.md#s
 | `threads`, `cpu_set` | see [ProcessPlacement keys](#processplacement-keys) | unset | Runner-owned. The load generator's ProcessPlacement. Cannot be swept |
 | any load generator parameter except `target`, `output_path` | scalar or non-empty array | the program's default | See [../../api.md#load-generator-parameters](../../api.md#load-generator-parameters) |
 
-### `[canceller]`
+### `[ingress]`
+
+The Ingress always runs, on the client machine. The load generator talks to it, and it forwards to the server
+instances ([../../ingress/description.md](../../ingress/description.md)).
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `enabled` | boolean | `true` | Runner-owned. Whether the canceller runs at all. Cannot be swept |
-| `threads`, `cpu_set` | see [ProcessPlacement keys](#processplacement-keys) | unset | Runner-owned. The canceller's ProcessPlacement. Cannot be swept |
-| `cancel_rate_fraction` | float `> 0`, scalar or non-empty array | unset | Runner-owned **CancelRateFraction**: the canceller's `cancel_rate` becomes `fraction × global_rate` of the same SweepPoint. It **can** be swept. Setting it together with `cancel_rate` is an error. See [design.md#cancelratefraction](design.md#cancelratefraction) |
-| any canceller parameter except `target`, `num_clients`, `output_path` | scalar or non-empty array | `duration_s`: the point's load generator `duration_s`. Others: the program's default | See [../../api.md#ingress-parameters](../../api.md#ingress-parameters) |
+| `listen_port` | integer `1..=65535` | `9090` | Runner-owned. The Ingress gets `--listen_addr 0.0.0.0:<listen_port>` and the load generator `--target 127.0.0.1:<listen_port>`. Cannot be swept |
+| `threads`, `cpu_set` | see [ProcessPlacement keys](#processplacement-keys) | unset | Runner-owned. The Ingress's ProcessPlacement. Cannot be swept |
+| `cancel_rate_fraction` | float `> 0`, scalar or non-empty array | unset | Runner-owned **CancelRateFraction**: the Ingress's `cancel_rate` becomes `fraction × global_rate` of the same SweepPoint. It **can** be swept. Setting it together with `cancel_rate` is an error. See [design.md#cancelratefraction](design.md#cancelratefraction) |
+| any Ingress parameter except `listen_addr`, `backends`, `num_clients`, `output_path` | scalar or non-empty array | `duration_s`: the point's load generator `duration_s`. Others: the program's default (so `cancel_rate` 0, no cancels, unless set) | See [../../api.md#ingress-parameters](../../api.md#ingress-parameters) |
 
 ### ProcessPlacement keys
 
@@ -82,7 +86,7 @@ A **scalar** is a TOML string, integer, float or boolean. Arrays may not be nest
 ### `BenchConfig`
 
 The validated file with every default filled in: `repo_url`, `machines.server`, `machines.client`, `server`,
-`load_gen`, `canceller`, `run`. Program sections keep their keys in file order. See
+`load_gen`, `ingress`, `run`, plus the server's `instances`. Program sections keep their keys in file order. See
 [design.md#benchconfig](design.md#benchconfig).
 
 ### `SweepPoint`
@@ -93,8 +97,9 @@ The validated file with every default filled in: `repo_url`, `machines.server`, 
 | `swept` | ordered map `"<section>.<param>"` → scalar | This point's value for every swept key, in sweep order. Empty if nothing is swept |
 | `server_args` | ordered list of (name, scalar) | Every `[server]` program parameter for this point, excluding runner-owned keys |
 | `loadgen_args` | ordered list of (name, scalar) | Every `[load_gen]` program parameter for this point |
-| `canceller_args` | ordered list of (name, scalar), or none | Every `[canceller]` program parameter, plus `num_clients`, the defaulted `duration_s`, and the derived `cancel_rate` when CancelRateFraction is set. None if the canceller is disabled |
-| `placement` | map program (`server`, `loadgen`, `canceller`) → {`threads`: integer or none, `cpu_set`: string or none} | Each program's ProcessPlacement. All three programs are always present; unset keys are none |
+| `ingress_args` | ordered list of (name, scalar) | Every `[ingress]` program parameter, plus the runner's `backends` and `num_clients`, the defaulted `duration_s`, and the derived `cancel_rate` when CancelRateFraction is set |
+| `server_instances` | integer `>= 1` | `[server] instances`; instance `k` listens on `listen_port + k` |
+| `placement` | map program (`server`, `loadgen`, `ingress`) → {`threads`: integer or none, `cpu_set`: string or none} | Each program's ProcessPlacement (the server's applies to every instance). All three programs are always present; unset keys are none |
 
 It is serialized as `params.json` with these field names. See [design.md#sweepexpansion](design.md#sweepexpansion).
 

@@ -13,3 +13,4 @@
 | 0.1.8 | 2026-11-02T00:00:00Z | Child bump: config 0.2.2 |
 | 0.1.9 | 2026-11-02T00:00:00Z | Child bump: result_plotter 0.3.0. Output directory lists `server_counters_normalized.png` |
 | 0.1.10 | 2026-11-02T00:00:00Z | Child bump: result_plotter 0.4.0. Output directory lists `throughput_latency_normalized.png` |
+| 0.2.0 | 2026-11-02T00:00:00Z | Child bump: config 0.3.0 (Ingress replaces the canceller in configs) |

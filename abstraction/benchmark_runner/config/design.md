@@ -6,23 +6,24 @@
 PROGRAM_PARAMS = {
   "server":    ["response_rate", "response_bytes", "cancel_mode", "cancel_check_interval_us", "seed"],
   "load_gen":  ["num_clients", "global_rate", "request_bytes", "slo_ms", "duration_s", "seed"],
-  "canceller": ["cancel_rate", "incr_rand_max", "duration_s", "seed"],
+  "ingress":   ["lb_policy", "cancel_rate", "duration_s", "seed"],
 }
 PLACEMENT_KEYS = ["threads", "cpu_set"]                                  # ProcessPlacement
-RUNNER_KEYS = { "server":    ["listen_port"] + PLACEMENT_KEYS,
+RUNNER_KEYS = { "server":    ["listen_port", "instances"] + PLACEMENT_KEYS,
                 "load_gen":  PLACEMENT_KEYS,
-                "canceller": ["enabled", "cancel_rate_fraction"] + PLACEMENT_KEYS }
-SWEEPABLE_RUNNER_KEYS = ["canceller.cancel_rate_fraction"]               # CancelRateFraction
+                "ingress":   ["listen_port", "cancel_rate_fraction"] + PLACEMENT_KEYS }
+SWEEPABLE_RUNNER_KEYS = ["ingress.cancel_rate_fraction"]                 # CancelRateFraction
 FORBIDDEN   = { "server": ["listen_addr"], "load_gen": ["target", "output_path"],
-                "canceller": ["target", "num_clients", "output_path"] }
+                "ingress": ["listen_addr", "backends", "num_clients", "output_path"] }
+SECTIONS    = [server, load_gen, ingress]
 
 function load_config(path):
     doc = parse_toml(path)                                  # ConfigError on syntax error
-    allowed tables: repo, machines (with exactly server, client), server, load_gen, canceller, run
+    allowed tables: repo, machines (with exactly server, client), server, load_gen, ingress, run
     repo_url = doc.repo.url if present else git_origin_url_of_operator_repo()
     if repo_url is none: ConfigError("[repo] url is required (no origin remote)")
     for m in [server, client]: validate_machine(m)
-    for section in [server, load_gen, canceller]:
+    for section in SECTIONS:
         for key, value in doc[section] in file order:
             if key in FORBIDDEN[section]: ConfigError("<section>.<key> is set by the runner")
             if key in RUNNER_KEYS[section]:
@@ -36,6 +37,8 @@ function load_config(path):
     for key in ["num_clients", "duration_s", "slo_ms"]:          # the runner itself needs these
         if key not in doc.load_gen: ConfigError("load_gen.<key> is required")
     check_cancel_rate_fraction(doc)                              # CancelRateFraction
+    require server.listen_port + server.instances - 1 <= 65535
+                         else ConfigError("server.listen_port + server.instances - 1 must be <= 65535")
     validate run table; fill defaults
     if sweep_order given: require it to be a permutation of the swept keys
     # swept keys: every array-valued program parameter and every array-valued SWEEPABLE_RUNNER_KEY
@@ -48,8 +51,10 @@ Error messages for the runner keys added with ProcessPlacement and CancelRateFra
 |---|---|
 | `threads` not an integer, or `< 1` | `<section>.threads must be an integer >= 1` |
 | `cpu_set` not a string matching the CPU list pattern | `<section>.cpu_set must be a CPU list like "0-3" or "0,2,4-5"` |
-| `cancel_rate_fraction` (or an element) not a number, or `<= 0` | `canceller.cancel_rate_fraction must be a number > 0` |
-| `cancel_rate_fraction` is an empty array | `canceller.cancel_rate_fraction must be a scalar or a non-empty array of scalars` |
+| `cancel_rate_fraction` (or an element) not a number, or `<= 0` | `ingress.cancel_rate_fraction must be a number > 0` |
+| `cancel_rate_fraction` is an empty array | `ingress.cancel_rate_fraction must be a scalar or a non-empty array of scalars` |
+| `instances` not an integer in `1..=64` | `server.instances must be an integer in 1..=64` |
+| a `[canceller]` table (from before the Ingress) | `unknown table [canceller]` |
 
 ```
 function validate_machine(role, table):
@@ -85,7 +90,7 @@ names and shapes. Values are validated by the programs themselves, which fail fa
 ```
 function expand_sweep(config):
     swept_keys = config.run.sweep_order if given
-                 else [ "<section>.<key>" for section in [server, load_gen, canceller]
+                 else [ "<section>.<key>" for section in SECTIONS
                         for key in config[section] in file order if value is an array ]
     value_lists = [ config.lookup(k) for k in swept_keys ]
     points = []
@@ -93,22 +98,20 @@ function expand_sweep(config):
         choose = { k: combo[i] for i, k in enumerate(swept_keys) }
         server_args  = [ (k, choose.get("server."+k, v)) for k, v in config.server program params ]
         loadgen_args = [ (k, choose.get("load_gen."+k, v)) for k, v in config.load_gen program params ]
-        if config.canceller.enabled:
-            canceller_args = [ (k, choose.get("canceller."+k, v)) for k, v in config.canceller program params ]
-            canceller_args.append(("num_clients", value of num_clients in loadgen_args))
-            if "duration_s" not in canceller_args:
-                canceller_args.append(("duration_s", value of duration_s in loadgen_args))
-            if config.canceller has cancel_rate_fraction:                       # CancelRateFraction
-                f = choose.get("canceller.cancel_rate_fraction", config.canceller.cancel_rate_fraction)
-                canceller_args.append(("cancel_rate", derived_cancel_rate(value of global_rate in loadgen_args, f)))
-        else:
-            canceller_args = none
+        ingress_args = [ (k, choose.get("ingress."+k, v)) for k, v in config.ingress program params ]
+        ingress_args.append(("backends", backend_list(config)))                 # Backends
+        ingress_args.append(("num_clients", value of num_clients in loadgen_args))
+        if "duration_s" not in ingress_args:
+            ingress_args.append(("duration_s", value of duration_s in loadgen_args))
+        if config.ingress has cancel_rate_fraction:                             # CancelRateFraction
+            f = choose.get("ingress.cancel_rate_fraction", config.ingress.cancel_rate_fraction)
+            ingress_args.append(("cancel_rate", derived_cancel_rate(value of global_rate in loadgen_args, f)))
         placement = { program: { "threads": config[section].threads or none,     # ProcessPlacement
                                  "cpu_set": config[section].cpu_set or none }
                       for (program, section) in [("server", "server"), ("loadgen", "load_gen"),
-                                                 ("canceller", "canceller")] }
-        points.append(SweepPoint(id, ordered(choose by swept_keys), server_args, loadgen_args, canceller_args,
-                                 placement))
+                                                 ("ingress", "ingress")] }
+        points.append(SweepPoint(id, ordered(choose by swept_keys), server_args, loadgen_args, ingress_args,
+                                 config.server.instances, placement))
     return points          # with no swept keys: exactly one point, id 0
 ```
 
@@ -126,8 +129,24 @@ With `sweep_order = ["load_gen.global_rate", "server.cancel_mode"]`, the rows ar
 (1000, cooperative), (2000, ignore), (2000, cooperative). The first key in sweep order is also the x-axis of the
 plots ([../result_plotter/design.md#sweepplots](../result_plotter/design.md#sweepplots)).
 
-`num_clients` is required by the load generator, and the canceller always receives the same value, so the
-canceller's client ids match the load generator's clients at every point.
+`num_clients` is required by the load generator, and the Ingress always receives the same value, so its
+InFlightMap has exactly one slot per load-generator client at every point.
+
+## Backends
+
+```
+function backend_list(config):
+    return ",".join(config.machines.server.data_addr + ":" + decimal(config.server.listen_port + k)
+                    for k in 0 ..= config.server.instances - 1)
+```
+
+The Ingress runs on the client machine, so it reaches the servers at the server machine's `data_addr`, like the
+load generator did before. `server_id` `k` is instance `k`.
+
+| `data_addr` | `listen_port` | `instances` | `backends` |
+|---|---|---|---|
+| `172.31.23.63` | 8080 | 2 | `172.31.23.63:8080,172.31.23.63:8081` |
+| `127.0.0.1` | 8080 | 1 | `127.0.0.1:8080` |
 
 ## ProcessPlacement
 
@@ -143,40 +162,38 @@ and the point then fails.
 
 | Config | `placement` of the point |
 |---|---|
-| `[server] threads = 4, cpu_set = "0-3"`, nothing in the others | `{"server": {"threads": 4, "cpu_set": "0-3"}, "loadgen": {"threads": none, "cpu_set": none}, "canceller": {"threads": none, "cpu_set": none}}` |
+| `[server] threads = 4, cpu_set = "0-3"`, nothing in the others | `{"server": {"threads": 4, "cpu_set": "0-3"}, "loadgen": {"threads": none, "cpu_set": none}, "ingress": {"threads": none, "cpu_set": none}}` |
 | nothing set anywhere | all six values none |
 
 ## CancelRateFraction
 
-**CancelRateFraction** sets the canceller's rate relative to the load generator's offered rate of the same point,
+**CancelRateFraction** sets the Ingress's cancel rate relative to the load generator's offered rate of the same point,
 so a sweep over `global_rate` keeps the cancel load proportional.
 
 ```
 function check_cancel_rate_fraction(doc):
-    if "cancel_rate_fraction" not in doc.canceller: return
-    if "cancel_rate" in doc.canceller:
-        ConfigError("set canceller.cancel_rate or canceller.cancel_rate_fraction, not both")
-    if doc.canceller.enabled is false:
-        ConfigError("canceller.cancel_rate_fraction needs the canceller enabled")
+    if "cancel_rate_fraction" not in doc.ingress: return
+    if "cancel_rate" in doc.ingress:
+        ConfigError("set ingress.cancel_rate or ingress.cancel_rate_fraction, not both")
     if "global_rate" not in doc.load_gen:
-        ConfigError("load_gen.global_rate is required with canceller.cancel_rate_fraction")
+        ConfigError("load_gen.global_rate is required with ingress.cancel_rate_fraction")
     if any value of doc.load_gen.global_rate (the scalar, or each array element) is not a number:
-        ConfigError("load_gen.global_rate must be numeric with canceller.cancel_rate_fraction")
+        ConfigError("load_gen.global_rate must be numeric with ingress.cancel_rate_fraction")
 
 function derived_cancel_rate(global_rate, fraction):
     return float(global_rate) * float(fraction)     # IEEE 754 double multiply, round to nearest even
 ```
 
 The result is always a float, so `format_arg` writes it as the shortest decimal that parses back to the same double
-([Argument formatting](#argument-formatting)). It is appended to `canceller_args` as `cancel_rate`, after
-`num_clients` and the defaulted `duration_s`. The fraction itself is never passed to any program. When it is an
-array it is a swept key named `canceller.cancel_rate_fraction`, at its position in the `[canceller]` table (file
+([Argument formatting](#argument-formatting)). It is appended to `ingress_args` as `cancel_rate`, after
+`backends`, `num_clients` and the defaulted `duration_s`. The fraction itself is never passed to any program. When it is an
+array it is a swept key named `ingress.cancel_rate_fraction`, at its position in the `[ingress]` table (file
 order) or in `sweep_order`.
 
-Worked example: `[load_gen] global_rate = [10, 700]`, `[canceller] cancel_rate_fraction = [0.01, 0.75]`, no
+Worked example: `[load_gen] global_rate = [10, 700]`, `[ingress] cancel_rate_fraction = [0.01, 0.75]`, no
 `sweep_order`:
 
-| id | `load_gen.global_rate` | `canceller.cancel_rate_fraction` | `cancel_rate` passed | Check |
+| id | `load_gen.global_rate` | `ingress.cancel_rate_fraction` | `cancel_rate` passed | Check |
 |---|---|---|---|---|
 | 0 | 10 | 0.01 | `0.1` | 10 × 0.01 = 0.1 |
 | 1 | 10 | 0.75 | `7.5` | 10 × 0.75 = 7.5 |
