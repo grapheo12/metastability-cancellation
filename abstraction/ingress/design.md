@@ -18,6 +18,7 @@ flowchart LR
 | Subcomponent | Responsibility | Spec |
 |---|---|---|
 | In-Flight Map | Lock-free `client_id → InFlightEntry` of the forwards in progress | [inflight_map/description.md](inflight_map/description.md) |
+| Load Balancer | LbPolicy (`pick`), BackendStats (`finish`) | [load_balancer/description.md](load_balancer/description.md) |
 
 ## Shared state
 
