@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.3.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.4.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -76,6 +76,21 @@ class ConfigTest(unittest.TestCase):
         self.assertConfigError(BASE.replace("response_rate = 2000", "listen_port = 65535\ninstances = 2"), "<= 65535")
         self.assertConfigError(BASE.replace("[ingress]", "[canceller]"), "unknown table [canceller]")
         self.assertConfigError(BASE.replace("cancel_rate = 100", "backends = \"x:1\""), "set by the runner")
+
+    # Design: abstraction/benchmark_runner/config/design.md#ingressplacement
+    def test_ingress_placement(self):
+        srv = BASE.replace("response_rate = 2000", "response_rate = 2000\ninstances = 2") \
+            .replace('[machines.server]\nhost = "local"', '[machines.server]\nhost = "local"\ndata_addr = "172.31.23.63"')
+        p = cfg.expand_sweep(self.load(srv))[0]
+        self.assertEqual((p.ingress_machine, p.loadgen_target), ("client", "127.0.0.1:9090"))
+        p = cfg.expand_sweep(self.load(srv.replace("[ingress]", '[ingress]\nmachine = "server"')))[0]
+        self.assertEqual((p.ingress_machine, p.loadgen_target), ("server", "172.31.23.63:9090"))
+        self.assertEqual(dict(p.ingress_args)["backends"], "127.0.0.1:8080,127.0.0.1:8081")
+        self.assertEqual(p.to_json()["ingress_machine"], "server")
+        self.assertConfigError(srv.replace("[ingress]", '[ingress]\nmachine = "both"'), 'must be "client" or "server"')
+        self.assertConfigError(srv.replace("[ingress]", '[ingress]\nmachine = "server"\nlisten_port = 8081'),
+                               "collides with a server instance port")
+        self.load(srv.replace("[ingress]", '[ingress]\nlisten_port = 8081'))  # no collision across machines
 
     def test_no_sweep_is_one_point(self):
         text = BASE.replace('["ignore", "cooperative"]', '"ignore"').replace("[1000, 2000]", "1000")

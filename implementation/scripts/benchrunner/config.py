@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.3.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.4.0)
 """BenchConfig loading and validation, SweepExpansion, argument formatting."""
 
 import datetime
@@ -23,7 +23,7 @@ PLACEMENT_KEYS = ["threads", "cpu_set"]
 RUNNER_KEYS = {
     "server": ["listen_port", "instances"] + PLACEMENT_KEYS,
     "load_gen": PLACEMENT_KEYS,
-    "ingress": ["listen_port", "cancel_rate_fraction"] + PLACEMENT_KEYS,
+    "ingress": ["machine", "listen_port", "cancel_rate_fraction"] + PLACEMENT_KEYS,
 }
 # Design: abstraction/benchmark_runner/config/design.md#cancelratefraction
 SWEEPABLE_RUNNER_KEYS = ["ingress.cancel_rate_fraction"]
@@ -79,6 +79,7 @@ class BenchConfig:
     listen_port: int  # server instance k listens on listen_port + k
     instances: int
     ingress_port: int
+    ingress_machine: str  # IngressPlacement: "client" | "server"
     run: RunOptions
     placement: dict  # section -> {"threads": int | None, "cpu_set": str | None}
     cancel_rate_fraction: object = None  # number, list of numbers, or None (CancelRateFraction)
@@ -186,6 +187,7 @@ def load_config(path, runner_dir, now=None):
     params, fraction, file_swept = {}, None, []
     ports = {"server": 8080, "ingress": 9090}
     instances = 1
+    ingress_machine = "client"
     placement = {section: {"threads": None, "cpu_set": None} for section in SECTIONS}
     for section in SECTIONS:
         table = doc.get(section, {})
@@ -203,6 +205,11 @@ def load_config(path, runner_dir, now=None):
                     if not _is_int(value) or not 1 <= value <= 65535:
                         raise ConfigError(f"{name} must be an integer in 1..=65535")
                     ports[section] = value
+                # Design: abstraction/benchmark_runner/config/design.md#ingressplacement
+                elif key == "machine":
+                    if value not in ("client", "server"):
+                        raise ConfigError(f'{name} must be "client" or "server"')
+                    ingress_machine = value
                 elif key == "instances":
                     if not _is_int(value) or not 1 <= value <= MAX_INSTANCES:
                         raise ConfigError(f"{name} must be an integer in 1..=64")
@@ -241,6 +248,7 @@ def load_config(path, runner_dir, now=None):
     check_cancel_rate_fraction(params, fraction)
     if ports["server"] + instances - 1 > 65535:
         raise ConfigError("server.listen_port + server.instances - 1 must be <= 65535")
+    check_ingress_placement(ingress_machine, ports, instances)
 
     run = doc.get("run", {})
     _check_keys(run, {"output_dir", "sweep_order", "cooldown_s", "on_failure", "server_ready_timeout_s",
@@ -265,8 +273,8 @@ def load_config(path, runner_dir, now=None):
         client_timeout_margin_s=_positive(run, "client_timeout_margin_s", 60.0),
         setup_timeout_s=_positive(run, "setup_timeout_s", 900.0),
     )
-    config = BenchConfig(repo_url, machines, params, ports["server"], instances, ports["ingress"], options, placement,
-                         fraction, file_swept)
+    config = BenchConfig(repo_url, machines, params, ports["server"], instances, ports["ingress"], ingress_machine,
+                         options, placement, fraction, file_swept)
     if sweep_order is not None:
         if sorted(sweep_order) != sorted(file_swept) or len(set(sweep_order)) != len(sweep_order):
             raise ConfigError("run.sweep_order must list every swept key exactly once")
@@ -288,9 +296,22 @@ def check_cancel_rate_fraction(params, fraction):
 
 # Design: abstraction/benchmark_runner/config/design.md#backends
 def backend_list(config):
-    """data_addr:port of every server instance, in server_id order."""
-    addr = config.machines["server"].data_addr
-    return ",".join(f"{addr}:{config.listen_port + k}" for k in range(config.instances))
+    """host:port of every server instance as the Ingress sees it, in server_id order."""
+    host = "127.0.0.1" if config.ingress_machine == "server" else config.machines["server"].data_addr
+    return ",".join(f"{host}:{config.listen_port + k}" for k in range(config.instances))
+
+
+# Design: abstraction/benchmark_runner/config/design.md#ingressplacement
+def loadgen_target(config):
+    """The Ingress as seen from the client machine."""
+    host = "127.0.0.1" if config.ingress_machine == "client" else config.machines["server"].data_addr
+    return f"{host}:{config.ingress_port}"
+
+
+# Design: abstraction/benchmark_runner/config/design.md#ingressplacement
+def check_ingress_placement(ingress_machine, ports, instances):
+    if ingress_machine == "server" and ports["server"] <= ports["ingress"] <= ports["server"] + instances - 1:
+        raise ConfigError("ingress.listen_port collides with a server instance port")
 
 
 # Design: abstraction/benchmark_runner/config/design.md#cancelratefraction
@@ -306,6 +327,8 @@ class SweepPoint:
     loadgen_args: list
     ingress_args: list
     server_instances: int = 1
+    ingress_machine: str = "client"
+    loadgen_target: str = ""
     placement: dict = None  # program -> {"threads", "cpu_set"} (ProcessPlacement)
 
     def to_json(self):
@@ -316,6 +339,8 @@ class SweepPoint:
             "loadgen_args": [[k, v] for k, v in self.loadgen_args],
             "ingress_args": [[k, v] for k, v in self.ingress_args],
             "server_instances": self.server_instances,
+            "ingress_machine": self.ingress_machine,
+            "loadgen_target": self.loadgen_target,
             "placement": self.placement,
         }
 
@@ -347,7 +372,8 @@ def expand_sweep(config):
             ingress_args.append(("cancel_rate", derived_cancel_rate(dict(loadgen_args)["global_rate"], f)))
         # Design: abstraction/benchmark_runner/config/design.md#processplacement
         placement = {PROGRAM_OF[section]: dict(config.placement[section]) for section in SECTIONS}
-        points.append(SweepPoint(pid, choose, server_args, loadgen_args, ingress_args, config.instances, placement))
+        points.append(SweepPoint(pid, choose, server_args, loadgen_args, ingress_args, config.instances,
+                                 config.ingress_machine, loadgen_target(config), placement))
     return points
 
 
