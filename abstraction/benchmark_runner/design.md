@@ -56,7 +56,9 @@ function check_placement_support(config, pin):
         PinError("threads is set, but implementation/<lang>/benchmark_manifest.toml has no thread_env")
 
 function warn_unpinned(config, ready_server, ready_client):
-    for (role, ready, sections) in [("server", ready_server, [server]), ("client", ready_client, [load_gen, ingress])]:
+    ingress_role = config.ingress.machine                                 # IngressPlacement
+    for (role, ready, sections) in [("server", ready_server, [server] + ([ingress] if ingress_role == "server" else [])),
+                                    ("client", ready_client, [load_gen] + ([ingress] if ingress_role == "client" else []))]:
         if any of sections sets cpu_set and not ready.cpu_pinning:
             print to stderr, once per role: "warning: cpu_set ignored on <role>: taskset not found"
 ```

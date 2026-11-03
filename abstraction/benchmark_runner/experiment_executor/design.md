@@ -2,7 +2,9 @@
 
 Remote paths per point: `RD = <workdir>/runs/<run_id>/point_<id, 4 digits>` on each machine. `run_id` is the last
 path component of the output directory. Pid files live in each machine's workdir: `server_<k>.pid` for server
-instance `k` on the server machine, `ingress.pid` on the client machine. `I = point.server_instances`.
+instance `k` on the server machine, `ingress.pid` on the Ingress's machine. `I = point.server_instances`.
+`ingress_host = server if point.ingress_machine == "server" else client` is the machine that runs the Ingress
+([../config/design.md#ingressplacement](../config/design.md#ingressplacement)).
 
 ## run_point
 
@@ -15,19 +17,19 @@ function run_point(point, config, server, client, run_id):
     reason = none
     try:
         for m in [server, client]: run(m.transport, "mkdir -p " + quote(RD_m))
-        stop_ingress(client, config.run.stop_timeout_s)                  # leftovers from a crash
+        for m in [server, client]: stop_ingress(m, config.run.stop_timeout_s)   # leftovers, either placement
         stop_servers(server, MAX_INSTANCES, config.run.stop_timeout_s)
         start_servers(point, config, server)                             # ServerLifecycle
-        start_ingress(point, config, client)                             # IngressLifecycle
+        start_ingress(point, config, ingress_host)                       # IngressLifecycle
         ok = client_run(point, config, client)                           # ClientRun
         if not ok: reason = "client run failed or timed out"
     except failure f: reason = f
     finally:                                                             # reverse start order
-        if stop_ingress(client, config.run.stop_timeout_s) is FAILED and reason is none:
+        if stop_ingress(ingress_host, config.run.stop_timeout_s) is FAILED and reason is none:
             reason = "ingress did not stop on SIGINT"
         if stop_servers(server, I, config.run.stop_timeout_s) is FAILED and reason is none:
             reason = "server did not stop on SIGINT"
-        collect_outputs(point, config, server, client, pdir)             # always, best effort
+        collect_outputs(point, config, server, client, ingress_host, pdir)   # always, best effort
     if reason is none: reason = validate_outputs(point, pdir)             # see Point outputs
     if reason is none: write pdir/done (empty); return DONE
     write pdir/failed containing reason; return FAILED(reason)
@@ -95,29 +97,30 @@ way that matters for the measurements.
 ## IngressLifecycle
 
 ```
-function start_ingress(point, config, client):
+function start_ingress(point, config, m):                        # m = ingress_host
     args  = ["--listen_addr", "0.0.0.0:" + config.ingress.listen_port] + args(point.ingress_args)
-            + ["--output_path", RD_client + "/ingress"]
-    words = placement_prefix("ingress", point, client) + [client.binaries.ingress] + args
-    start_program(client, words, RD_client + "/ingress.log", <client workdir>/ingress.pid,
-                  config.run.server_ready_timeout_s)
+            + ["--output_path", RD_m + "/ingress"]
+    words = placement_prefix("ingress", point, m) + [m.binaries.ingress] + args
+    start_program(m, words, RD_m + "/ingress.log", <m workdir>/ingress.pid, config.run.server_ready_timeout_s)
 
-function stop_ingress(client, stop_timeout_s):
-    return stop_program(client, <client workdir>/ingress.pid, stop_timeout_s)
+function stop_ingress(m, stop_timeout_s):
+    return stop_program(m, <m workdir>/ingress.pid, stop_timeout_s)
 ```
 
 The Ingress dials no backend until the first `/ping` arrives, so it can be started before the servers are known to
-be reachable from the client machine; a backend it cannot reach shows up as `502`s and `bad_gateway` counts, and the
-load generator's `error` outcomes.
+be reachable from its machine; a backend it cannot reach shows up as `502`s and `bad_gateway` counts, and the load
+generator's `error` outcomes. Likewise, if the client machine cannot reach an Ingress placed on the server machine,
+the load generator fails to connect and the point fails.
 
 ## ClientRun
 
-Only the load generator runs as a foreground client program now. It runs in the background of one shell on the
-client machine with its pid written to a file, so a timed-out run can be cleaned up:
+Only the load generator runs as a foreground client program. It runs in the background of one shell on the client
+machine with its pid written to a file, so a timed-out run can be cleaned up. It sends to `point.loadgen_target`,
+the Ingress as seen from the client machine:
 
 ```
 function client_run(point, config, client):
-    target = "127.0.0.1:" + config.ingress.listen_port
+    target = point.loadgen_target                              # 127.0.0.1:<port> or <data_addr>:<port>
     lg = placement_prefix("loadgen", point, client) +
          [client.binaries.loadgen, "--target", target] + args(point.loadgen_args) + ["--output_path", RD + "/loadgen"]
     script lines:
@@ -154,10 +157,10 @@ function placement_prefix(program, point, ready):          # program: "server" |
         words += ["taskset", "-c", p.cpu_set]
     return words                                            # empty when nothing is set
 
-function write_placement(point, server, client, pdir):
+function write_placement(point, server, client, ingress_host, pdir):
     doc = { "server":  placement_prefix("server", point, server),       # the same for every instance
             "loadgen": placement_prefix("loadgen", point, client),
-            "ingress": placement_prefix("ingress", point, client) }
+            "ingress": placement_prefix("ingress", point, ingress_host) }
     write pdir/placement.json = doc                         # the prefixes actually used, as word lists
 ```
 
@@ -176,10 +179,11 @@ rest of the line. So the pid of a backgrounded or `exec`ed line is the pid of th
 ## Point outputs
 
 ```
-function collect_outputs(point, config, server, client, pdir):
-    for name in [loadgen.requests.csv, loadgen.summary.json, loadgen.log,
-                 ingress.cancels.csv, ingress.summary.json, ingress.log]:
-        fetch(client.transport, RD/name, pdir/name)
+function collect_outputs(point, config, server, client, ingress_host, pdir):
+    for name in [loadgen.requests.csv, loadgen.summary.json, loadgen.log]:
+        fetch(client.transport, RD_client/name, pdir/name)
+    for name in [ingress.cancels.csv, ingress.summary.json, ingress.log]:
+        fetch(ingress_host.transport, RD_ingress_host/name, pdir/name)
     counters = []
     for k in 0 ..= I-1:
         fetch(server.transport, RD/server_<k>.out, pdir/server_<k>.out)
