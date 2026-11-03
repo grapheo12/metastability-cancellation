@@ -63,8 +63,9 @@ and every other branch) and `sync_impl <branch>` (bring an implementation up to 
 ## Running an experiment (from `impl/go`)
 
 The BenchmarkRunner runs on your machine (e.g. a laptop) and drives two experiment machines over SSH. The
-**server machine** runs one or more server instances. The **client machine** runs the ingress (load balancer
-and load canceller) and the load generator, which talks to the ingress.
+**server machine** runs one or more server instances. The **client machine** runs the load generator, which talks
+to the ingress (load balancer and load canceller). The ingress runs on the client machine by default, or on the
+server machine with `[ingress] machine = "server"`.
 
 ### 1. Prerequisites
 
@@ -79,7 +80,9 @@ On both experiment machines:
 - `git` and Go (`go` on `PATH`). The runner checks for them but never installs anything.
 - Read access to the repository: a GitHub SSH key for `git@github.com:...` URLs, or use the `https://` URL
   if the repository is public.
-- The client machine must reach the server machine on the configured `listen_port` (default `8080`).
+- The client machine must reach the server machine: on every server instance's port (`listen_port`,
+  `listen_port + 1`, ...) when the ingress is on the client machine, or only on the ingress port (default `9090`)
+  when it is on the server machine.
 
 ### 2. Write a config
 
@@ -116,8 +119,7 @@ python3 implementation/scripts/bench.py plot <output_dir>     # redraw table and
 the ingress, runs the load generator against the ingress, stops the ingress and then the servers with SIGINT so
 they write their outputs and cancellation counters, and downloads everything.
 
-The client machine must reach every server instance's port (`listen_port`, `listen_port + 1`, ...) at
-`data_addr`; open them in any firewall or security group.
+Open the ports the client machine needs (see Prerequisites) in any firewall or security group.
 
 Exit status: `0` if every point succeeded, `1` if some point failed (the rest are still plotted), and `2` for a
 config, pin or setup error.
