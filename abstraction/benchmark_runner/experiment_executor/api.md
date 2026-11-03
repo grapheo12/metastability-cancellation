@@ -31,12 +31,12 @@ The words that go before the program's executable on its command line: thread co
 Stops server instances `0 ..= count-1` recorded in the server machine's pid files, if running. Also used on operator
 interrupt. See [design.md#serverlifecycle](design.md#serverlifecycle).
 
-### `stop_ingress(client: MachineReady, stop_timeout_s) -> ok | FAILED`
-Stops the Ingress recorded in the client machine's pid file, if running; it writes its outputs as it exits. Also
-used on operator interrupt. See [design.md#ingresslifecycle](design.md#ingresslifecycle).
+### `stop_ingress(m: MachineReady, stop_timeout_s) -> ok | FAILED`
+Stops the Ingress recorded in machine `m`'s pid file, if running; it writes its outputs as it exits. Also used on
+operator interrupt, on the Ingress's machine. See [design.md#ingresslifecycle](design.md#ingresslifecycle).
 
 ## Uses
 
-- [../config/api.md](../config/api.md): `SweepPoint` (including `ingress_args`, `server_instances`, `placement`), `format_arg`
+- [../config/api.md](../config/api.md): `SweepPoint` (including `ingress_args`, `server_instances`, `ingress_machine`, `loadgen_target`, `placement`), `format_arg`
 - [../remote_transport/api.md](../remote_transport/api.md): `run`, `start_background`, `signal`, `alive`, `fetch`, `quote`
 - [../remote_setup/api.md](../remote_setup/api.md): `MachineReady` (including `thread_env`, `cpu_pinning`)
