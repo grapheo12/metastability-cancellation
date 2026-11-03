@@ -11,7 +11,7 @@ PROGRAM_PARAMS = {
 PLACEMENT_KEYS = ["threads", "cpu_set"]                                  # ProcessPlacement
 RUNNER_KEYS = { "server":    ["listen_port", "instances"] + PLACEMENT_KEYS,
                 "load_gen":  PLACEMENT_KEYS,
-                "ingress":   ["listen_port", "cancel_rate_fraction"] + PLACEMENT_KEYS }
+                "ingress":   ["machine", "listen_port", "cancel_rate_fraction"] + PLACEMENT_KEYS }
 SWEEPABLE_RUNNER_KEYS = ["ingress.cancel_rate_fraction"]                 # CancelRateFraction
 FORBIDDEN   = { "server": ["listen_addr"], "load_gen": ["target", "output_path"],
                 "ingress": ["listen_addr", "backends", "num_clients", "output_path"] }
@@ -39,6 +39,7 @@ function load_config(path):
     check_cancel_rate_fraction(doc)                              # CancelRateFraction
     require server.listen_port + server.instances - 1 <= 65535
                          else ConfigError("server.listen_port + server.instances - 1 must be <= 65535")
+    check_ingress_placement(config)                           # IngressPlacement: port collision
     validate run table; fill defaults
     if sweep_order given: require it to be a permutation of the swept keys
     # swept keys: every array-valued program parameter and every array-valued SWEEPABLE_RUNNER_KEY
@@ -54,6 +55,7 @@ Error messages for the runner keys added with ProcessPlacement and CancelRateFra
 | `cancel_rate_fraction` (or an element) not a number, or `<= 0` | `ingress.cancel_rate_fraction must be a number > 0` |
 | `cancel_rate_fraction` is an empty array | `ingress.cancel_rate_fraction must be a scalar or a non-empty array of scalars` |
 | `instances` not an integer in `1..=64` | `server.instances must be an integer in 1..=64` |
+| `machine` not `"client"` or `"server"` | `ingress.machine must be "client" or "server"` |
 | a `[canceller]` table (from before the Ingress) | `unknown table [canceller]` |
 
 ```
@@ -111,7 +113,8 @@ function expand_sweep(config):
                       for (program, section) in [("server", "server"), ("loadgen", "load_gen"),
                                                  ("ingress", "ingress")] }
         points.append(SweepPoint(id, ordered(choose by swept_keys), server_args, loadgen_args, ingress_args,
-                                 config.server.instances, placement))
+                                 config.server.instances, config.ingress.machine, loadgen_target(config),
+                                 placement))
     return points          # with no swept keys: exactly one point, id 0
 ```
 
@@ -136,17 +139,49 @@ InFlightMap has exactly one slot per load-generator client at every point.
 
 ```
 function backend_list(config):
-    return ",".join(config.machines.server.data_addr + ":" + decimal(config.server.listen_port + k)
+    host = "127.0.0.1" if config.ingress.machine == "server" else config.machines.server.data_addr
+    return ",".join(host + ":" + decimal(config.server.listen_port + k)
                     for k in 0 ..= config.server.instances - 1)
 ```
 
-The Ingress runs on the client machine, so it reaches the servers at the server machine's `data_addr`, like the
-load generator did before. `server_id` `k` is instance `k`.
+`server_id` `k` is instance `k`. An Ingress on the client machine reaches the servers at the server machine's
+`data_addr`; an Ingress on the server machine reaches them locally ([IngressPlacement](#ingressplacement)).
 
-| `data_addr` | `listen_port` | `instances` | `backends` |
-|---|---|---|---|
-| `172.31.23.63` | 8080 | 2 | `172.31.23.63:8080,172.31.23.63:8081` |
-| `127.0.0.1` | 8080 | 1 | `127.0.0.1:8080` |
+| `ingress.machine` | `data_addr` | `listen_port` | `instances` | `backends` |
+|---|---|---|---|---|
+| `client` | `172.31.23.63` | 8080 | 2 | `172.31.23.63:8080,172.31.23.63:8081` |
+| `server` | `172.31.23.63` | 8080 | 2 | `127.0.0.1:8080,127.0.0.1:8081` |
+| `client` | `127.0.0.1` | 8080 | 1 | `127.0.0.1:8080` |
+
+## IngressPlacement
+
+The **IngressPlacement** (`[ingress] machine`) chooses which experiment machine runs the Ingress. It is fixed for
+the whole run. It decides two addresses of every SweepPoint, and which machine the Experiment Executor starts the
+Ingress on and collects its outputs from.
+
+```
+function loadgen_target(config):
+    host = "127.0.0.1" if config.ingress.machine == "client" else config.machines.server.data_addr
+    return host + ":" + decimal(config.ingress.listen_port)
+
+function check_ingress_placement(config):
+    if config.ingress.machine == "server" and
+       config.server.listen_port <= config.ingress.listen_port <= config.server.listen_port + config.server.instances - 1:
+        ConfigError("ingress.listen_port collides with a server instance port")
+```
+
+| `ingress.machine` | Ingress runs on | Load generator `--target` | Ingress `backends` | Ports the client machine must reach |
+|---|---|---|---|---|
+| `client` (default) | client machine | `127.0.0.1:<ingress listen_port>` | `data_addr:<listen_port + k>` | every server instance's port |
+| `server` | server machine, next to the servers | `<data_addr>:<ingress listen_port>` | `127.0.0.1:<listen_port + k>` | the Ingress's port only |
+
+With `server`, the Ingress shares the server machine's CPUs with the server instances; ProcessPlacement
+(`threads`, `cpu_set`) can keep them apart. The ingress port must not collide with a server instance's port
+(`listen_port ..= listen_port + instances - 1`) when both are on the server machine:
+
+| Situation | ConfigError message |
+|---|---|
+| `machine = "server"` and `ingress.listen_port` in the server ports | `ingress.listen_port collides with a server instance port` |
 
 ## ProcessPlacement
 

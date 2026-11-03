@@ -44,12 +44,13 @@ A key set here overrides the SSH configuration ([../remote_transport/design.md#s
 
 ### `[ingress]`
 
-The Ingress always runs, on the client machine. The load generator talks to it, and it forwards to the server
-instances ([../../ingress/description.md](../../ingress/description.md)).
+The Ingress always runs, on the machine named by `machine` (its **IngressPlacement**). The load generator talks to
+it, and it forwards to the server instances ([../../ingress/description.md](../../ingress/description.md)).
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `listen_port` | integer `1..=65535` | `9090` | Runner-owned. The Ingress gets `--listen_addr 0.0.0.0:<listen_port>` and the load generator `--target 127.0.0.1:<listen_port>`. Cannot be swept |
+| `machine` | `"client"` \| `"server"` | `"client"` | Runner-owned **IngressPlacement**: which experiment machine runs the Ingress. Cannot be swept. See [design.md#ingressplacement](design.md#ingressplacement) |
+| `listen_port` | integer `1..=65535` | `9090` | Runner-owned. The Ingress gets `--listen_addr 0.0.0.0:<listen_port>`; the load generator's `--target` is this port on the Ingress's machine ([design.md#ingressplacement](design.md#ingressplacement)). Cannot be swept |
 | `threads`, `cpu_set` | see [ProcessPlacement keys](#processplacement-keys) | unset | Runner-owned. The Ingress's ProcessPlacement. Cannot be swept |
 | `cancel_rate_fraction` | float `> 0`, scalar or non-empty array | unset | Runner-owned **CancelRateFraction**: the Ingress's `cancel_rate` becomes `fraction × global_rate` of the same SweepPoint. It **can** be swept. Setting it together with `cancel_rate` is an error. See [design.md#cancelratefraction](design.md#cancelratefraction) |
 | any Ingress parameter except `listen_addr`, `backends`, `num_clients`, `output_path` | scalar or non-empty array | `duration_s`: the point's load generator `duration_s`. Others: the program's default (so `cancel_rate` 0, no cancels, unless set) | See [../../api.md#ingress-parameters](../../api.md#ingress-parameters) |
@@ -99,6 +100,8 @@ The validated file with every default filled in: `repo_url`, `machines.server`, 
 | `loadgen_args` | ordered list of (name, scalar) | Every `[load_gen]` program parameter for this point |
 | `ingress_args` | ordered list of (name, scalar) | Every `[ingress]` program parameter, plus the runner's `backends` and `num_clients`, the defaulted `duration_s`, and the derived `cancel_rate` when CancelRateFraction is set |
 | `server_instances` | integer `>= 1` | `[server] instances`; instance `k` listens on `listen_port + k` |
+| `ingress_machine` | `"client"` \| `"server"` | The IngressPlacement: the machine the Ingress runs on |
+| `loadgen_target` | `host:port` | Where the load generator sends its requests: the Ingress, as seen from the client machine |
 | `placement` | map program (`server`, `loadgen`, `ingress`) → {`threads`: integer or none, `cpu_set`: string or none} | Each program's ProcessPlacement (the server's applies to every instance). All three programs are always present; unset keys are none |
 
 It is serialized as `params.json` with these field names. See [design.md#sweepexpansion](design.md#sweepexpansion).

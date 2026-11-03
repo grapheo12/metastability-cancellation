@@ -17,3 +17,4 @@
 | 0.2.1 | 2026-11-02T00:00:00Z | Child bump: remote_setup 0.3.0 |
 | 0.2.2 | 2026-11-02T00:00:00Z | Child bump: experiment_executor 0.3.0. Output directory, description, run-flow placement checks and Uses describe the Ingress and server instances |
 | 0.2.3 | 2026-11-02T00:00:00Z | Child bump: result_plotter 0.5.0 |
+| 0.2.4 | 2026-11-03T00:00:00Z | Child bump: config 0.4.0 (IngressPlacement) |
