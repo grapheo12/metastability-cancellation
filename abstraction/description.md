@@ -35,7 +35,8 @@ per-backend counts. Each server prints its CancelCounters when it shuts down.
 A **BenchmarkRunner** drives whole experiments from an operator's machine. It reads one **BenchConfig**,
 prepares a server machine and a client machine over SSH (clone, pin the exact commit, check tools,
 build), then runs every point of the **SweepExpansion** of the swept parameters. Each point runs one or more
-server instances on the server machine, and the Ingress plus the load generator on the client machine. The runner
+server instances on the server machine and the load generator on the client machine; the Ingress runs on the
+client machine or, by its **IngressPlacement**, next to the servers. The runner
 downloads each point's results and plots all points together.
 
 ## Goals
@@ -106,5 +107,6 @@ downloads each point's results and plots all points together.
 | **CancelOfferedFraction** | A point's canceller `cancel_rate` divided by its `global_rate` (PointTable column `cx_offered_fraction`) | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#cancelofferedfraction) |
 | **ThroughputLatencyNormalizedPlot** | ThroughputLatencyPlot with goodput scaled by `1 / (1 - CancelOfferedFraction)` | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#throughputlatencynormalizedplot) |
 | **LbImbalance** | Largest over smallest per-backend `forwarded` count of a point (PointTable column `lb_imbalance`) | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#lbimbalance) |
+| **IngressPlacement** | Which experiment machine runs the Ingress: `client` (default) or `server` | [benchmark_runner/config/design.md](benchmark_runner/config/design.md#ingressplacement) |
 
 See [api.md](api.md) for the external interface and [design.md](design.md) for the component breakdown.
