@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.3.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.4.0)
 import json
 import os
 import tempfile
@@ -19,7 +19,7 @@ def ready(pinning, thread_env="GOMAXPROCS"):
 def point(server=(None, None), loadgen=(None, None), ingress=(None, None), instances=1):
     placement = {name: {"threads": t, "cpu_set": c}
                  for name, (t, c) in (("server", server), ("loadgen", loadgen), ("ingress", ingress))}
-    return SweepPoint(0, {}, [], [], [], instances, placement)
+    return SweepPoint(0, {}, [], [], [], server_instances=instances, placement=placement)
 
 
 class PlacementPrefixTest(unittest.TestCase):
@@ -36,7 +36,7 @@ class PlacementPrefixTest(unittest.TestCase):
     # Design: abstraction/benchmark_runner/experiment_executor/design.md#processplacement
     def test_placement_json(self):
         with tempfile.TemporaryDirectory() as d:
-            executor.write_placement(point(server=(4, "0-3"), ingress=(1, "8")), ready(True), ready(False), d)
+            executor.write_placement(point(server=(4, "0-3"), ingress=(1, "8")), ready(True), ready(False), ready(False), d)
             with open(os.path.join(d, "placement.json")) as f:
                 doc = json.load(f)
             self.assertEqual(doc, {"server": ["env", "GOMAXPROCS=4", "taskset", "-c", "0-3"], "loadgen": [],
@@ -65,6 +65,9 @@ class ClientRunTest(unittest.TestCase):
         script = t.commands[0]
         self.assertIn("env GOMAXPROCS=4 taskset -c 4-7 /b/loadgen --target 127.0.0.1:9090", script)
         self.assertNotIn("canceller", script)
+        p.loadgen_target = "172.31.23.63:9090"  # Ingress on the server machine
+        executor.client_run(p, config, client, "/rd")
+        self.assertIn("/b/loadgen --target 172.31.23.63:9090", t.commands[-1])
 
 
 class LocalMachine:
@@ -76,6 +79,18 @@ class LocalMachine:
 
 
 class PointOutputsTest(unittest.TestCase):
+    # Design: abstraction/benchmark_runner/experiment_executor/design.md#point-outputs
+    def test_ingress_outputs_from_ingress_host(self):
+        with tempfile.TemporaryDirectory() as rc, tempfile.TemporaryDirectory() as rs, \
+                tempfile.TemporaryDirectory() as pdir:
+            client, server = LocalMachine(rc), LocalMachine(rs)
+            for d, name in ((rc, "loadgen.summary.json"), (rs, "ingress.summary.json")):
+                with open(os.path.join(d, name), "w") as f:
+                    f.write("{}")
+            executor.collect_outputs(point(instances=0), server, client, rs, rc, pdir, server, rs)
+            self.assertTrue(os.path.exists(os.path.join(pdir, "loadgen.summary.json")))
+            self.assertTrue(os.path.exists(os.path.join(pdir, "ingress.summary.json")))
+
     # Design: abstraction/benchmark_runner/experiment_executor/design.md#point-outputs
     def test_counters_summed_over_instances(self):
         with tempfile.TemporaryDirectory() as remote, tempfile.TemporaryDirectory() as pdir:

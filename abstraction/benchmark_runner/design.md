@@ -107,8 +107,8 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [Structure](#structure) | [bench.py:81](../../implementation/scripts/bench.py#L81) |
-| [Run flow](#run-flow) | [bench.py:40](../../implementation/scripts/bench.py#L40), [bench.py:58](../../implementation/scripts/bench.py#L58), [bench.py:65](../../implementation/scripts/bench.py#L65), [bench.py:81](../../implementation/scripts/bench.py#L81), [bench.py:128](../../implementation/scripts/bench.py#L128) |
-| [Why setup happens once](#why-setup-happens-once) | [bench.py:95](../../implementation/scripts/bench.py#L95) |
-| [Interrupts](#interrupts) | [bench.py:119](../../implementation/scripts/bench.py#L119) |
+| [Structure](#structure) | [bench.py:83](../../implementation/scripts/bench.py#L83) |
+| [Run flow](#run-flow) | [bench.py:40](../../implementation/scripts/bench.py#L40), [bench.py:58](../../implementation/scripts/bench.py#L58), [bench.py:65](../../implementation/scripts/bench.py#L65), [bench.py:83](../../implementation/scripts/bench.py#L83), [bench.py:130](../../implementation/scripts/bench.py#L130) |
+| [Why setup happens once](#why-setup-happens-once) | [bench.py:97](../../implementation/scripts/bench.py#L97) |
+| [Interrupts](#interrupts) | [bench.py:121](../../implementation/scripts/bench.py#L121) |
 <!-- trace:end -->
