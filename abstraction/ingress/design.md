@@ -30,7 +30,7 @@ One of each per process, created at startup and never replaced:
 | State | Owner | Shared with |
 |---|---|---|
 | `config: IngressConfig` | Startup | everyone, read only |
-| `inflight: InFlightMap` of size `num_clients` | In-Flight Map | Frontend (publish, clear), Load Canceller (snapshot) |
+| `inflight: InFlightMap`, with client ids bounded by `num_clients` | In-Flight Map | Frontend (publish, clear), Load Canceller (snapshot) |
 | `stats: array[B] of BackendStats` | Load Balancer | Frontend (outcomes), Shutdown (summary) |
 | `run_start` | set once, by the first `/ping` | Load Canceller (time base) |
 

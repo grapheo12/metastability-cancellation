@@ -3,66 +3,85 @@
 ## InFlightMap
 
 ```
-slots : array[num_clients] of atomic pointer to InFlightEntry, all null
+entries : lock-free concurrent map from u32 to immutable reference to InFlightEntry
+num_clients : integer
 
 function inflight_new(num_clients):
-    return InFlightMap(slots = array of num_clients null pointers)
+    require 1 <= num_clients <= MAX_CLIENTS
+    return InFlightMap(entries = empty lock-free concurrent map,
+                       num_clients = num_clients)
 ```
 
-A fixed array indexed by client id is a complete lock-free map for keys `0 ..= num_clients - 1`: there is no
-hashing, no probing and no resizing, and every operation touches one slot. Memory is one pointer per client
-(`MAX_CLIENTS = 2^20` gives 8 MiB with 64-bit pointers).
+The language-specific design chooses the backing map in this order:
+
+1. A standard-library lock-free concurrent map, if one provides the required operations.
+2. A maintained third-party lock-free concurrent map.
+3. A component-specific data structure only when neither library category can satisfy the contract on the target;
+   the language-specific choices must state which required operation is unavailable.
+
+A library qualifies only when the operations used below are documented as lock-free: a caller may retry because
+another caller made progress, but it never waits for a mutex or read-write lock held by another caller. A thin
+adapter may provide identity handles, immutable value copies, or ordering, but it must not introduce a blocking
+lock. The language-specific choices name and pin the selected library and explain any adapter or fallback.
 
 ## Publish and clear
 
 ```
 function publish(map, client_id, entry):
-    slots[client_id].store(pointer to entry, release)
+    require client_id < map.num_clients
+    map.entries.insert_or_replace(client_id, immutable_reference(entry))
 
 function clear(map, client_id, entry):
-    return slots[client_id].compare_and_swap(pointer to entry, null, acq_rel)
+    require client_id < map.num_clients
+    handle = map.entries.get_handle(client_id)
+    if handle is none: return false
+    if not same_identity(handle.value, entry): return false
+    return handle.remove_exact_entry()
 ```
 
-- **Identity, not equality.** `clear` compares the pointer. If a client resets a request and sends its next one
-  before the first forward has finished, the second `publish` replaces the slot. The late `clear` of the first
-  forward then fails and leaves the newer entry in place.
-- **Release/acquire.** The `release` store makes the entry's fields visible to any reader that loads the pointer
-  with `acquire`.
-- Entries are never modified after publishing, so readers need no further synchronization. An entry is freed only
-  when no slot and no snapshot refers to it (garbage collection or reference counting; a reader may still hold a
-  snapshot copy).
+- `insert_or_replace` is one linearizable operation: after it takes effect, a lookup for `client_id` observes the
+  new entry or a still newer publication, never a partially initialized entry.
+- **Identity, not equality.** `same_identity` distinguishes publications even if their fields are equal. If a
+  client resets request A and publishes B before A's forward finishes, A's late `clear` must not remove B.
+- `remove_exact_entry` removes the entry named by `handle`, not whichever entry currently has the same key. A
+  library may instead provide one atomic conditional-remove operation with the same behavior.
+- Entries are immutable after publication. The backing library or its adapter keeps an entry alive while any map
+  handle or snapshot copy refers to it and reclaims it afterward.
 
-| Slot before | Call | Result | Slot after |
+| Mapping before | Call | Result | Mapping after |
 |---|---|---|---|
-| null | `publish(3, A)` | — | A |
-| A | `clear(3, A)` | true | null |
-| A | `publish(3, B)` (client reset A, sent B) | — | B |
-| B | `clear(3, A)` (A's forward ends late) | false | B |
-| B | `clear(3, B)` | true | null |
+| no key 3 | `publish(3, A)` | — | `3 → A` |
+| `3 → A` | `clear(3, A)` | true | no key 3 |
+| `3 → A` | `publish(3, B)` (client reset A, sent B) | — | `3 → B` |
+| `3 → B` | `clear(3, A)` (A's forward ends late) | false | `3 → B` |
+| `3 → B` | `clear(3, B)` | true | no key 3 |
 
 ## Snapshot
 
 ```
 function snapshot(map):
-    out = []
-    for c in 0 ..= num_clients - 1:
-        p = slots[c].load(acquire)
-        if p is not null: out.append((c, *p))
+    observed = empty local map from u32 to InFlightEntry
+    for handle in map.entries.iterate_weakly_consistent():
+        c = handle.key
+        if c < map.num_clients:
+            observed[c] = copy(handle.value)
+    out = list of all pairs in observed
+    sort out by client_id ascending
     return out
 ```
 
-- The cost is `O(num_clients)` loads. With the default experiment sizes (a handful of clients) it is negligible
-  next to a network round trip.
-- Each slot is read once, so the result may mix slots read at slightly different instants. An entry in the
-  snapshot may have been cleared by the time it is used. That race is inherent and harmless: a `/cancel` for a
-  request that has just finished is counted by the server as `completed_before_cancel`
+- Iteration is lock-free and weakly consistent. The result may mix entries observed at different instants, omit an
+  entry published during traversal, or retain a copy of an entry cleared during traversal. It contains at most one
+  entry per client because `observed` replaces any duplicate observation of the same key.
+- An entry in the snapshot may have been cleared by the time it is used. That race is inherent and harmless: a
+  `/cancel` for a request that has just finished is counted by the server as `completed_before_cancel`
   ([../../server/cancel_tracker/design.md#cancelmatching](../../server/cancel_tracker/design.md#cancelmatching)).
-- The order is increasing client id, so a uniform draw over the snapshot's index is reproducible given the same set
-  of in-flight requests.
+- Sorting makes the order increasing by client id even when the backing map's iterator is unordered, so a uniform
+  draw over the snapshot's index is reproducible given the same observed set of in-flight requests.
 
 Worked example, `num_clients = 4`:
 
-| Slots 0..3 | `snapshot` |
-|---|---|
-| A, null, null, B | `[(0, A), (3, B)]` |
-| null, null, null, null | `[]` |
+| Entries observed during traversal | Local `observed` | `snapshot` after sorting |
+|---|---|---|
+| `(3, B), (0, A)` | `{3: B, 0: A}` | `[(0, A), (3, B)]` |
+| none | `{}` | `[]` |

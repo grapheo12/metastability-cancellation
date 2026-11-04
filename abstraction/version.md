@@ -49,3 +49,4 @@
 | 0.5.6 | 2026-11-03T00:00:00Z | Child bump: benchmark_runner 0.2.4 (config 0.4.0) |
 | 0.5.7 | 2026-11-03T00:00:00Z | Child bump: benchmark_runner 0.2.5 (experiment_executor 0.4.0) |
 | 0.5.8 | 2026-11-03T00:00:00Z | System summary and glossary: IngressPlacement |
+| 0.5.9 | 2026-11-04T00:00:00Z | Ingress `num_clients` bounds the InFlightMap key space; child bump: ingress 0.1.6 (inflight_map 0.2.0) |
