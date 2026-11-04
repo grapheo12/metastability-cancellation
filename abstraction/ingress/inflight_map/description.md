@@ -7,7 +7,7 @@ forward the Ingress is currently waiting on for that client:
   **clears** it when the forward ends, whatever the outcome.
 - The Load Canceller takes a **snapshot** of all entries to choose a request to cancel.
 
-A load-generator client keeps at most one request outstanding, so one slot per client is enough. The map is
-therefore a fixed array indexed by client id, sized `num_clients`.
+A load-generator client keeps at most one request outstanding, so the map holds at most one entry per client.
+Valid client ids are bounded by `num_clients`; the map's storage representation is not part of its behavior.
 
 Parent: [../design.md](../design.md). API: [api.md](api.md). Design: [design.md](design.md).

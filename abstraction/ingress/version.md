@@ -8,3 +8,4 @@
 | 0.1.3 | 2026-11-02T00:00:00Z | Child added: load_canceller 0.3.0 (moved from the root) |
 | 0.1.4 | 2026-11-02T00:00:00Z | Child added: frontend 0.1.0 |
 | 0.1.5 | 2026-11-02T00:00:00Z | Parameters restated from the root `api.md` (Ingress parameters) |
+| 0.1.6 | 2026-11-04T00:00:00Z | InFlightMap key-space wording; child bump: inflight_map 0.2.0 (library-backed lock-free map contract) |

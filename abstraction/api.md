@@ -42,7 +42,7 @@ The minimum body size of 42 bytes comes from [protocol/design.md](protocol/desig
 |---|---|---|---|
 | `listen_addr` | `host:port` | `0.0.0.0:9090` | Address the Frontend accepts client connections on |
 | `backends` | comma-separated list of `host:port`, at least 1, at most `MAX_BACKENDS` | required | The server instances. A backend's `server_id` is its 0-based position in this list |
-| `num_clients` (`N`) | integer, `1 ..= MAX_CLIENTS` | required | Number of load-generator clients. Client ids must be `< N`. Sizes the InFlightMap |
+| `num_clients` (`N`) | integer, `1 ..= MAX_CLIENTS` | required | Number of load-generator clients. Client ids must be `< N`. Bounds the InFlightMap key space |
 | `lb_policy` | `round_robin` \| `least_outstanding` \| `power_of_two` | `least_outstanding` | The LoadBalancer policy |
 | `cancel_rate` | float, cancels/s, `>= 0` | `0` | Rate of the LoadCanceller's Poisson process. `0` disables the LoadCanceller |
 | `duration_s` | float, s, `> 0` | required if `cancel_rate > 0`, else ignored | Length of the LoadCanceller's sending phase |
