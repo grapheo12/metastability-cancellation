@@ -107,7 +107,7 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 
 - One Go package `internal/ingress` for the whole subtree, one file per subcomponent: `config.go` (this node's parameters and validation), `inflight.go`, `balancer.go`, `upstream.go`, `canceller.go`, `frontend.go`, and `ingress.go` (lifecycle and outputs). One package avoids import cycles: the Load Canceller reads the In-Flight Map and the Frontend starts the Load Canceller. The program entry point is `cmd/ingress/main.go`.
 - `backends` is split on `,` and each element trimmed with `strings.TrimSpace`; host:port is checked with `net.SplitHostPort`.
-- `num_clients` is parsed with `strconv.ParseUint(..., 10, 32)` and then bounded by `MaxClients`.
+- `num_clients` is parsed with `strconv.ParseUint(..., 10, 32)`, bounded by `MaxClients`, and passed to `NewInFlightMap` as the exclusive client-id bound rather than a required storage size.
 - `shutdown` is `(*Ingress).Shutdown`: `http.Server.Shutdown` with a 100 ms bound sends GOAWAY on every client connection (as in the server), then it waits on the BackendStats `outstanding` sum, stops the canceller, closes upstream and client connections, and writes both outputs. `cmd/ingress/main.go` calls it on SIGINT/SIGTERM and exits `0`, or `1` if writing fails.
 - The summary JSON is the `Summary` struct, marshalled with `json.MarshalIndent`, in API field order.
 
