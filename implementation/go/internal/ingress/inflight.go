@@ -1,7 +1,10 @@
-// Source: abstraction/ingress/inflight_map/design.md (inflight_map v0.1.0)
+// Source: abstraction/ingress/inflight_map/design.md (inflight_map v0.2.0)
 package ingress
 
-import "sync/atomic"
+import (
+	"sort"
+	"sync/atomic"
+)
 
 // InFlightEntry is immutable once published.
 //
@@ -11,13 +14,17 @@ type InFlightEntry struct {
 	ServerID  uint32
 }
 
-// InFlightMap is a lock-free map client_id -> *InFlightEntry: one atomic
-// pointer per client. Go atomics are sequentially consistent, which subsumes
-// the release/acquire the design asks for.
+type inFlightState struct {
+	entries map[uint32]*InFlightEntry
+}
+
+// InFlightMap is a lock-free map client_id -> *InFlightEntry. Every published
+// state is immutable; updates copy the entries and swap the state pointer.
 //
 // Design: abstraction/ingress/inflight_map/design.md#inflightmap
 type InFlightMap struct {
-	slots []atomic.Pointer[InFlightEntry]
+	numClients uint32
+	state      atomic.Pointer[inFlightState]
 }
 
 // Victim is one snapshot element.
@@ -26,36 +33,77 @@ type Victim struct {
 	Entry    *InFlightEntry
 }
 
-// NewInFlightMap returns numClients empty slots.
+// NewInFlightMap returns an empty map whose keys are less than numClients.
 //
 // Design: abstraction/ingress/inflight_map/design.md#inflightmap
 func NewInFlightMap(numClients uint32) *InFlightMap {
-	return &InFlightMap{slots: make([]atomic.Pointer[InFlightEntry], numClients)}
+	if numClients == 0 || numClients > MaxClients {
+		panic("numClients out of range")
+	}
+	m := &InFlightMap{numClients: numClients}
+	m.state.Store(&inFlightState{entries: make(map[uint32]*InFlightEntry)})
+	return m
 }
 
 // Publish stores e as clientID's in-flight request.
 //
 // Design: abstraction/ingress/inflight_map/design.md#publish-and-clear
 func (m *InFlightMap) Publish(clientID uint32, e *InFlightEntry) {
-	m.slots[clientID].Store(e)
+	m.requireClient(clientID)
+	for {
+		old := m.state.Load()
+		next := &inFlightState{entries: cloneInFlightEntries(old.entries)}
+		next.entries[clientID] = e
+		if m.state.CompareAndSwap(old, next) {
+			return
+		}
+	}
 }
 
 // Clear empties the slot only if it still holds exactly e (pointer identity).
 //
 // Design: abstraction/ingress/inflight_map/design.md#publish-and-clear
 func (m *InFlightMap) Clear(clientID uint32, e *InFlightEntry) bool {
-	return m.slots[clientID].CompareAndSwap(e, nil)
+	m.requireClient(clientID)
+	for {
+		old := m.state.Load()
+		current, ok := old.entries[clientID]
+		if !ok || current != e {
+			return false
+		}
+		next := &inFlightState{entries: cloneInFlightEntries(old.entries)}
+		delete(next.entries, clientID)
+		if m.state.CompareAndSwap(old, next) {
+			return true
+		}
+	}
 }
 
-// Snapshot returns every non-empty slot in increasing client-id order.
+// Snapshot returns every observed entry in increasing client-id order.
 //
 // Design: abstraction/ingress/inflight_map/design.md#snapshot
 func (m *InFlightMap) Snapshot() []Victim {
-	var out []Victim
-	for c := range m.slots {
-		if p := m.slots[c].Load(); p != nil {
-			out = append(out, Victim{ClientID: uint32(c), Entry: p})
+	state := m.state.Load()
+	out := make([]Victim, 0, len(state.entries))
+	for clientID, entry := range state.entries {
+		if clientID < m.numClients {
+			out = append(out, Victim{ClientID: clientID, Entry: entry})
 		}
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ClientID < out[j].ClientID })
 	return out
+}
+
+func (m *InFlightMap) requireClient(clientID uint32) {
+	if clientID >= m.numClients {
+		panic("clientID out of range")
+	}
+}
+
+func cloneInFlightEntries(entries map[uint32]*InFlightEntry) map[uint32]*InFlightEntry {
+	copy := make(map[uint32]*InFlightEntry, len(entries)+1)
+	for clientID, entry := range entries {
+		copy[clientID] = entry
+	}
+	return copy
 }

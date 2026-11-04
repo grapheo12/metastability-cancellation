@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/inflight_map/design.md (inflight_map v0.1.0)
+// Source: abstraction/ingress/inflight_map/design.md (inflight_map v0.2.0)
 package ingress
 
 import (
@@ -26,6 +26,31 @@ func TestPublishClearTable(t *testing.T) {
 	}
 	if !m.Clear(3, b) {
 		t.Fatal("clear B")
+	}
+}
+
+// Design: abstraction/ingress/inflight_map/design.md#publish-and-clear
+func TestConcurrentPublishBeatsStaleClear(t *testing.T) {
+	m := NewInFlightMap(1)
+	for i := 0; i < 1000; i++ {
+		a := &InFlightEntry{RequestID: uint64(i)}
+		b := &InFlightEntry{RequestID: uint64(i + 1)}
+		m.Publish(0, a)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			m.Clear(0, a)
+		}()
+		go func() {
+			defer wg.Done()
+			m.Publish(0, b)
+		}()
+		wg.Wait()
+		s := m.Snapshot()
+		if len(s) != 1 || s[0].Entry != b {
+			t.Fatalf("iteration %d: newest publication lost: %+v", i, s)
+		}
 	}
 }
 
@@ -63,5 +88,18 @@ func TestSnapshotOrderAndChurn(t *testing.T) {
 	wg.Wait()
 	if len(big.Snapshot()) != 0 {
 		t.Fatal("all cleared")
+	}
+}
+
+// Design: abstraction/ingress/inflight_map/design.md#inflightmap
+func TestMaximumKeySpaceStartsEmpty(t *testing.T) {
+	m := NewInFlightMap(MaxClients)
+	if len(m.state.Load().entries) != 0 || len(m.Snapshot()) != 0 {
+		t.Fatal("constructor must not allocate one entry per client")
+	}
+	e := &InFlightEntry{RequestID: 1}
+	m.Publish(MaxClients-1, e)
+	if s := m.Snapshot(); len(s) != 1 || s[0].ClientID != MaxClients-1 || s[0].Entry != e {
+		t.Fatalf("maximum valid key: %+v", s)
 	}
 }
