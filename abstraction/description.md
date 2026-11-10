@@ -11,15 +11,17 @@ HTTP/2 service. The testbed covers two cancellation paths:
   SLO and resets the stream. The server can keep burning CPU on the abandoned request, or notice the
   reset and stop.
 - **Server-directed cancellation.** A **LoadCanceller** inside the Ingress sends `DELETE /cancel` naming a
-  RequestId that is in flight. The server records it in a global **CancelRegistry**. The worker serving that client
-  checks for cancellations at fixed **CancelCheckPoints** and stops the request if it matches,
+  RequestId that is in flight. The server records it in a global **CancelRegistry**. The worker running that client's
+  request checks for cancellations at fixed **CancelCheckPoints** and stops the request if it matches,
   answering `503`. **CancelCounters** record whether each cancellation landed before processing,
   during processing, or after the request had already completed.
 
 ## The system in one paragraph
 
 A **Server** accepts HTTP/2 connections and starts one handler (coroutine or thread) per connection.
-It exposes `POST /ping` and `DELETE /cancel`. For each `/ping` it busy-loops on the CPU for a random
+It exposes `POST /ping` and `DELETE /cancel`. A handler answers `/cancel` itself and puts every `/ping` on one
+process-wide, unbounded **WorkQueue**. A **WorkerPool** of `n_worker_threads` workers takes `/ping`s off it in
+arrival order. For each `/ping` a worker busy-loops on the CPU for a random
 time drawn from an exponential distribution, then answers `202` (completed) or `503` (cancelled by
 `/cancel`) with a JSON body of a fixed size. A **Load Generator** simulates `N` clients, each on its
 own connection. Every client has its own Poisson arrival clock (rate `global_rate / N`) but keeps at
@@ -67,11 +69,13 @@ downloads each point's results and plots all points together.
 | **CancelBody** | JSON body `{"id":..}` of a `/cancel` request | [protocol/design.md](protocol/design.md#cancelbody) |
 | **ServiceTime** | CPU time per request, `Exp(response_rate)` seconds, in whole microseconds | [sampling/design.md](sampling/design.md#exponentialsampler) |
 | **CooperativeCpuBurn** | Busy loop that checks the RST flag on a time interval and `/cancel` every `CHECK_ITER` spin units | [server/cpu_burner/design.md](server/cpu_burner/design.md#cooperativecpuburn) |
-| **SerialStreamWorker** | Per-connection worker that runs requests one at a time in arrival order | [server/connection_handler/design.md](server/connection_handler/design.md#serialstreamworker) |
+| **WorkQueue** | The server's one unbounded FIFO of admitted `/ping`s, shared by all connections | [server/worker_pool/design.md](server/worker_pool/design.md#workqueue) |
+| **WorkerPool** | `n_worker_threads` server workers that run WorkQueue jobs in arrival order | [server/worker_pool/design.md](server/worker_pool/design.md#workerpool) |
+| **PingJob** | One admitted `/ping` with its RequestId and pre-drawn ServiceTime, waiting for or held by a worker | [server/worker_pool/design.md](server/worker_pool/design.md#pingjob) |
 | **CancelMode** | Server switch: `ignore` or `cooperative`. Applies to both cancellation paths | [api.md](api.md#server-parameters) |
 | **CancelRegistry** | Global lock-free map from client id to a CancelInbox | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelregistry) |
-| **CancelInbox** | Lock-free multi-producer stack of cancelled RequestIds for one client, drained by its worker | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelinbox) |
-| **CancelMatching** | Per-connection algorithm that matches pending cancel ids against the current request | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelmatching) |
+| **CancelInbox** | Lock-free multi-producer stack of cancelled RequestIds for one client, drained by the worker running that client's request | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelinbox) |
+| **CancelMatching** | Per-client algorithm that matches pending cancel ids against the request a worker is running | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelmatching) |
 | **CancelCheckPoint** | A point where the worker consults CancelMatching: before a request starts, and every `CHECK_ITER` spin units during its burn | [server/ping_handler/design.md](server/ping_handler/design.md#cancelcheckpoints) |
 | **CancelCounters** | Server-wide atomic counters: cancelled before processing, cancelled during processing, completed before cancel | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelcounters) |
 | **ClosedLoopPoissonClient** | Client with a Poisson arrival clock and at most one outstanding request | [load_generator/client/design.md](load_generator/client/design.md#closedlooppoissonclient) |

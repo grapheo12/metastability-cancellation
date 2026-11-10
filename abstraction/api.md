@@ -17,6 +17,7 @@ three on remote machines. Its interface is in [Benchmark runner](#benchmark-runn
 | `cancel_mode` | `ignore` \| `cooperative` | `cooperative` | `ignore`: never cancel work (RST and `/cancel` both ignored). `cooperative`: stop work on RST or on a matching `/cancel` |
 | `cancel_check_interval_us` | integer, µs, `>= 1` | `50` | How often CooperativeCpuBurn checks the RST flag |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for ServiceTime sampling |
+| `n_worker_threads` | integer, `1 ..= 2^32-1` | `1` | Number of workers in the server's WorkerPool: how many `/ping` requests run at once ([server/worker_pool/design.md](server/worker_pool/design.md#workerpool)) |
 
 The server runs until it receives an interrupt or termination signal. On shutdown it prints its
 CancelCounters ([Server outputs](#server-outputs)).

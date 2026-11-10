@@ -12,6 +12,7 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 | `cancel_mode` | `ignore` \| `cooperative` | `cooperative` |
 | `cancel_check_interval_us` | integer, µs, `>= 1` | `50` |
 | `seed` | u64 | `0` |
+| `n_worker_threads` | integer, `1 ..= 2^32-1` | `1` |
 
 ## Constants
 
@@ -24,15 +25,18 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 
 ### `ServerConfig`
 
-An immutable record holding the six parameters above after validation
+An immutable record holding the seven parameters above after validation
 ([design.md#configuration-validation](design.md#configuration-validation)). One read-only copy is
-shared by all Connection Handlers.
+shared by all Connection Handlers and workers.
 
 ## Behavior visible on the wire
 
 - Speaks HTTP/2 over cleartext TCP with prior knowledge. Does not support HTTP/1.1.
 - Serves `/ping` and `/cancel` as described in [../protocol/api.md](../protocol/api.md).
-- Processes requests on one connection serially, in the order their request is fully received (END_STREAM).
+- Starts `/ping` requests from all connections in one global order, the order in which they were fully received
+  (END_STREAM) and admitted, and runs up to `n_worker_threads` of them at once
+  ([worker_pool/design.md#ordering](worker_pool/design.md#ordering)).
+- Answers `/cancel` without queuing it behind any `/ping`.
 - Binds each connection to the client id of its first valid `/ping`.
 - Cancels work as `cancel_mode` says ([design.md#cancellation-semantics](design.md#cancellation-semantics)).
 
@@ -49,11 +53,11 @@ The keys are in this order, there is no whitespace, and the values are decimal. 
 
 ## Lifecycle
 
-- **Start:** validate the config, create the CancelRegistry and the CancelCounters, bind
-  `listen_addr`, print one line `listening on <addr>` to standard output.
+- **Start:** validate the config, create the CancelRegistry, the CancelCounters, the WorkQueue and the
+  WorkerPool, bind `listen_addr`, print one line `listening on <addr>` to standard output.
 - **Run:** accept connections until stopped.
-- **Stop:** on interrupt or termination signal, stop accepting, close all connections, print the
-  CancelCounters line, exit `0`.
+- **Stop:** on interrupt or termination signal, stop accepting, close the WorkQueue and all connections, wait for
+  the workers, print the CancelCounters line, exit `0`.
 - **Error:** an invalid config or a failed bind exits non-zero before accepting.
 
 ## Subcomponents
@@ -61,6 +65,7 @@ The keys are in this order, there is no whitespace, and the values are decimal. 
 | Subcomponent | Spec |
 |---|---|
 | Connection Handler | [connection_handler/api.md](connection_handler/api.md) |
+| Worker Pool | [worker_pool/api.md](worker_pool/api.md) |
 | Ping Handler | [ping_handler/api.md](ping_handler/api.md) |
 | CPU Burner | [cpu_burner/api.md](cpu_burner/api.md) |
 | Cancel Tracker | [cancel_tracker/api.md](cancel_tracker/api.md) |
