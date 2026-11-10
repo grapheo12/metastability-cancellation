@@ -177,10 +177,12 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 ### Go choices
 
 - File `internal/loadgen/client.go`.
-- Each client owns an `*h2client.Conn` that wraps one `http2.ClientConn` (one TCP connection, never pooled).
-- `wait_first_of` is a `select` between a 1-buffered result channel and a `time.Timer` set to `t_send + SLO`. The goroutine runs `RoundTrip` and reads the body to EOF (END_STREAM).
-- The `reset(RST_CODE_CANCEL)` call is a cancelled request context. x/net/http2 then sends `RST_STREAM(CANCEL)` for the open stream, and the abandoned goroutine ends by itself.
+- Each client owns an `*h2client.Conn` that wraps one `http2.ClientConn` (one TCP connection, never pooled). Up to `n_waiting_requests` concurrent `RoundTrip`s share it. If the peer advertised fewer concurrent streams, x/net/http2 waits for a free stream (`awaitOpenSlotForStreamLocked`) rather than failing. Every peer here advertises at least 1000.
+- The sender is the goroutine that calls `RunClient`; the receiver is a goroutine started by it. `outstanding` is the fill level of `slots`, a buffered channel of size `n_waiting_requests` used as a counting semaphore. Sending into it is the GatedArrival wait, and the receiver takes from it once per resolved request. The sender only increments and the receiver only decrements, as in the design.
+- `C.events` is a buffered channel of size `n_waiting_requests + 1`. It cannot be unbounded in Go, but the receiver always drains it, so a send waits at most until the receiver's next iteration. Records are appended by the receiver only and sorted by `seq` with `sort.Slice` at the end.
+- `start_request` builds the request, starts a `time.AfterFunc` for the SLO, and runs `RoundTrip` plus reading the body to EOF (END_STREAM) in its own goroutine. `settle` is a closure with an `atomic.Bool` `CompareAndSwap`, which is the first-event-wins rule. A winning SLO timer cancels the request context, and x/net/http2 then sends `RST_STREAM(CANCEL)` for the stream. A winning response stops the timer.
 - Schedule times saturate at `math.MaxInt64` (`addGap`) instead of overflowing.
+- Tests: `client_test.go` runs a client against a one-worker server with a 200 ms StallGate. With a cap of 10, at least 2 and at most 10 requests are outstanding at once and records come back in `seq` order. With a cap of 1, each send waits for the previous request (closed loop).
 
 ### Traceability
 
@@ -190,10 +192,10 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [ClosedLoopPoissonClient](#closedlooppoissonclient) | [client.go:35](../../../implementation/go/internal/loadgen/client.go#L35) |
-| [GatedArrival](#gatedarrival) | [client.go:45](../../../implementation/go/internal/loadgen/client.go#L45) |
-| [send_one](#send_one) | [client.go:69](../../../implementation/go/internal/loadgen/client.go#L69) |
-| [SLOCancellation](#slocancellation) | [client.go:95](../../../implementation/go/internal/loadgen/client.go#L95) |
-| [Outcome classification](#outcome-classification) | [client.go:118](../../../implementation/go/internal/loadgen/client.go#L118), [metrics_test.go:40](../../../implementation/go/internal/loadgen/metrics_test.go#L40) |
-| [State machine](#state-machine) | [client.go:35](../../../implementation/go/internal/loadgen/client.go#L35) |
+| [SemiOpenLoopClient](#semiopenloopclient) | [client.go:49](../../../implementation/go/internal/loadgen/client.go#L49), [client_test.go:39](../../../implementation/go/internal/loadgen/client_test.go#L39) |
+| [GatedArrival](#gatedarrival) | [client.go:79](../../../implementation/go/internal/loadgen/client.go#L79), [client_test.go:71](../../../implementation/go/internal/loadgen/client_test.go#L71) |
+| [start_request](#start_request) | [client.go:104](../../../implementation/go/internal/loadgen/client.go#L104) |
+| [SLOCancellation](#slocancellation) | [client.go:128](../../../implementation/go/internal/loadgen/client.go#L128) |
+| [Outcome classification](#outcome-classification) | [client.go:156](../../../implementation/go/internal/loadgen/client.go#L156), [metrics_test.go:40](../../../implementation/go/internal/loadgen/metrics_test.go#L40) |
+| [State machine](#state-machine) | [client.go:49](../../../implementation/go/internal/loadgen/client.go#L49) |
 <!-- trace:end -->

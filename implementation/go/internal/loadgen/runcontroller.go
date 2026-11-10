@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/run_controller/design.md (run_controller v0.1.1)
+// Source: abstraction/load_generator/run_controller/design.md (run_controller v0.2.0)
 package loadgen
 
 import (
@@ -50,6 +50,11 @@ func Validate(p Params) (Config, error) {
 		return c, errors.New("target must be host:port")
 	}
 	c.Target = p.Target
+	nw, err := strconv.ParseUint(p.NWaitingRequests, 10, 32)
+	if err != nil || nw < 1 || nw > MaxWaitingRequests {
+		return c, errors.New("n_waiting_requests must be an integer in 1..=1000")
+	}
+	c.NWaitingRequests = uint32(nw)
 	c.OutputPath = p.OutputPath
 	c.PerClientRate = c.GlobalRate / float64(c.NumClients)
 	c.SloNs = int64(math.Round(c.SloMs * 1e6))

@@ -1,7 +1,7 @@
 // Package loadgen implements the load generator: one file per component of
 // abstraction/load_generator.
 //
-// Source: abstraction/load_generator/design.md (load_generator v0.1.1)
+// Source: abstraction/load_generator/design.md (load_generator v0.2.1)
 package loadgen
 
 import (
@@ -13,34 +13,36 @@ import (
 //
 // API: abstraction/load_generator/api.md#loadgenconfig
 type Config struct {
-	Target        string
-	NumClients    uint32
-	GlobalRate    float64
-	RequestBytes  int
-	SloMs         float64
-	DurationS     float64
-	Seed          uint64
-	OutputPath    string
-	PerClientRate float64 // global_rate / N
-	SloNs         int64   // round(slo_ms * 1e6)
-	DurationNs    int64   // round(duration_s * 1e9)
+	Target           string
+	NumClients       uint32
+	GlobalRate       float64
+	RequestBytes     int
+	SloMs            float64
+	DurationS        float64
+	Seed             uint64
+	OutputPath       string
+	NWaitingRequests uint32  // most requests one client keeps outstanding
+	PerClientRate    float64 // global_rate / N
+	SloNs            int64   // round(slo_ms * 1e6)
+	DurationNs       int64   // round(duration_s * 1e9)
 }
 
 // Params holds the raw command-line values, named after the API parameters.
 type Params struct {
-	Target       string
-	NumClients   string
-	GlobalRate   string
-	RequestBytes string
-	SloMs        string
-	DurationS    string
-	Seed         string
-	OutputPath   string
+	Target           string
+	NumClients       string
+	GlobalRate       string
+	RequestBytes     string
+	SloMs            string
+	DurationS        string
+	Seed             string
+	OutputPath       string
+	NWaitingRequests string
 }
 
 // DefaultParams returns the defaults from abstraction/load_generator/api.md#program-parameters.
 func DefaultParams() Params {
-	return Params{Target: "127.0.0.1:8080", Seed: "0", OutputPath: "results"}
+	return Params{Target: "127.0.0.1:8080", Seed: "0", OutputPath: "results", NWaitingRequests: "100"}
 }
 
 // nowNs is monotonic nanoseconds since runStart (time.Time keeps a monotonic reading).
@@ -58,6 +60,12 @@ func sleepUntil(runStart time.Time, t int64) {
 		time.Sleep(time.Duration(d))
 	}
 }
+
+// MaxWaitingRequests is MAX_WAITING_REQUESTS: every peer accepts this many
+// concurrent streams per connection.
+//
+// API: abstraction/api.md#wire-contract-ping
+const MaxWaitingRequests = 1000
 
 // addGap adds an exponential gap to a schedule time, saturating instead of
 // overflowing int64 for extreme gaps.

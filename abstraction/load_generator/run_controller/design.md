@@ -73,7 +73,7 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 
 ### Go choices
 
-- File `internal/loadgen/runcontroller.go`: `Validate` and `Run` (the `main` of the design, minus flag parsing).
+- File `internal/loadgen/runcontroller.go`: `Validate` and `Run` (the `main` of the design, minus flag parsing). `MAX_WAITING_REQUESTS` is `MaxWaitingRequests` in `config.go`. `TestValidateNWaitingRequests` covers the range and the default.
 - `open_h2c_connection` is `h2client.Dial`. It does TCP dial, `Transport{AllowHTTP: true}.NewClientConn`, then a `Ping` round trip, so the server has accepted the connection and SETTINGS are exchanged before the next client dials. This keeps the server's accept order equal to client-id order.
 - `join` is a `sync.WaitGroup`. `GOAWAY + close` is `ClientConn.Shutdown` with a 10 ms bound, then `Close`.
 
@@ -85,8 +85,8 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [Configuration validation](#configuration-validation) | [runcontroller.go:20](../../../implementation/go/internal/loadgen/runcontroller.go#L20) |
-| [Startup](#startup) | [h2client.go:31](../../../implementation/go/internal/h2client/h2client.go#L31), [runcontroller.go:78](../../../implementation/go/internal/loadgen/runcontroller.go#L78) |
-| [DrainPhase](#drainphase) | [runcontroller.go:104](../../../implementation/go/internal/loadgen/runcontroller.go#L104) |
-| [Shutdown ordering](#shutdown-ordering) | [h2client.go:55](../../../implementation/go/internal/h2client/h2client.go#L55), [runcontroller.go:108](../../../implementation/go/internal/loadgen/runcontroller.go#L108) |
+| [Configuration validation](#configuration-validation) | [client_test.go:91](../../../implementation/go/internal/loadgen/client_test.go#L91), [runcontroller.go:20](../../../implementation/go/internal/loadgen/runcontroller.go#L20) |
+| [Startup](#startup) | [h2client.go:31](../../../implementation/go/internal/h2client/h2client.go#L31), [runcontroller.go:83](../../../implementation/go/internal/loadgen/runcontroller.go#L83) |
+| [DrainPhase](#drainphase) | [runcontroller.go:109](../../../implementation/go/internal/loadgen/runcontroller.go#L109) |
+| [Shutdown ordering](#shutdown-ordering) | [h2client.go:55](../../../implementation/go/internal/h2client/h2client.go#L55), [runcontroller.go:113](../../../implementation/go/internal/loadgen/runcontroller.go#L113) |
 <!-- trace:end -->

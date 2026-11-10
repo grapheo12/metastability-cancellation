@@ -52,9 +52,10 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 
 ### Go choices
 
-- One Go package `internal/loadgen`: `config.go` (`LoadGenConfig`, time base), `client.go`, `metrics.go`, `runcontroller.go`. Flags are parsed in `cmd/loadgen/main.go`.
-- Shared h2c dialing is in `internal/h2client` (also used by the canceller).
-- Each client is a goroutine. Timestamps are `int64` nanoseconds from `time.Since(runStart)`, which is monotonic.
+- One Go package `internal/loadgen`: `config.go` (`LoadGenConfig`, time base), `client.go`, `metrics.go`, `runcontroller.go`. Flags are parsed in `cmd/loadgen/main.go`. The package is synced in one commit because its files share types.
+- Shared h2c dialing is in `internal/h2client` (also used by the Ingress).
+- Each client is a sender goroutine plus a receiver goroutine, plus one short-lived goroutine per outstanding request. Timestamps are `int64` nanoseconds from `time.Since(runStart)`, which is monotonic.
+- The summary's `config` echoes `n_waiting_requests` after `seed`.
 
 ### Traceability
 
@@ -64,8 +65,8 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [Structure](#structure) | [runcontroller.go:78](../../implementation/go/internal/loadgen/runcontroller.go#L78) |
-| [Time base](#time-base) | [config.go:49](../../implementation/go/internal/loadgen/config.go#L49), [config.go:56](../../implementation/go/internal/loadgen/config.go#L56) |
-| [Concurrency](#concurrency) | [runcontroller.go:92](../../implementation/go/internal/loadgen/runcontroller.go#L92) |
-| [Phases](#phases) | [runcontroller.go:78](../../implementation/go/internal/loadgen/runcontroller.go#L78) |
+| [Structure](#structure) | [runcontroller.go:83](../../implementation/go/internal/loadgen/runcontroller.go#L83) |
+| [Time base](#time-base) | [config.go:51](../../implementation/go/internal/loadgen/config.go#L51), [config.go:58](../../implementation/go/internal/loadgen/config.go#L58) |
+| [Concurrency](#concurrency) | [runcontroller.go:97](../../implementation/go/internal/loadgen/runcontroller.go#L97) |
+| [Phases](#phases) | [runcontroller.go:83](../../implementation/go/internal/loadgen/runcontroller.go#L83) |
 <!-- trace:end -->

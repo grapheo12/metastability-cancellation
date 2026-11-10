@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/client/design.md (client v0.1.1)
+// Source: abstraction/load_generator/client/design.md (client v0.3.0)
 package loadgen
 
 import (
@@ -7,7 +7,9 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"testbed/internal/h2client"
@@ -28,87 +30,123 @@ const (
 	OutcomeNotSent   Outcome = "not_sent"
 )
 
-// RunClient runs one ClosedLoopPoissonClient and returns its records in seq order.
+// clientEvent is what the receiver consumes: a not_sent arrival, a resolved
+// request (both carry a record), or the sender's end.
+type clientEvent struct {
+	rec        RequestRecord
+	resolved   bool // a sent request resolved: release its slot
+	senderDone bool
+}
+
+// RunClient runs one SemiOpenLoopClient and returns its records in seq order.
+// The sender runs on the calling goroutine; the receiver on its own.
+// outstanding is the fill level of the slots channel (a counting semaphore of
+// size n_waiting_requests): the sender fills a slot to send, the receiver
+// empties one per resolved request.
 //
-// Design: abstraction/load_generator/client/design.md#closedlooppoissonclient
+// Design: abstraction/load_generator/client/design.md#semiopenloopclient
 // Design: abstraction/load_generator/client/design.md#state-machine
 func RunClient(clientID uint32, conn *h2client.Conn, cfg Config, rng *sampling.Rng, runStart time.Time) []RequestRecord {
+	slots := make(chan struct{}, cfg.NWaitingRequests)
+	// Buffered so that settle and the sender rarely wait; the receiver always drains it.
+	events := make(chan clientEvent, int(cfg.NWaitingRequests)+1)
 	var records []RequestRecord
-	var seq uint64
+	recvDone := make(chan struct{})
+	go func() { // receiver
+		defer close(recvDone)
+		senderDone := false
+		for ev := range events {
+			switch {
+			case ev.senderDone:
+				senderDone = true
+			case ev.resolved:
+				records = append(records, ev.rec)
+				<-slots
+			default:
+				records = append(records, ev.rec) // not_sent
+			}
+			if senderDone && len(slots) == 0 {
+				return
+			}
+		}
+	}()
+
 	d := cfg.DurationNs
 	tSched := addGap(0, rng.ExponentialNs(cfg.PerClientRate))
-	for tSched < d {
-		if seq > math.MaxUint32 {
-			break // seq would leave u32: stop scheduling
-		}
-		// Design: abstraction/load_generator/client/design.md#gatedarrival
+	for seq := uint64(0); tSched < d; seq++ {
 		sleepUntil(runStart, tSched)
+		// Design: abstraction/load_generator/client/design.md#gatedarrival
+		slots <- struct{}{} // blocks while n_waiting_requests are outstanding
 		if nowNs(runStart) >= d {
-			records = append(records, RequestRecord{
+			<-slots
+			events <- clientEvent{rec: RequestRecord{
 				RequestID: protocol.MakeRequestID(uint32(seq), clientID), ClientID: clientID, Seq: uint32(seq),
 				Outcome: OutcomeNotSent, ScheduledNs: tSched,
-			})
+			}}
 		} else {
-			records = append(records, sendOne(clientID, uint32(seq), tSched, conn, cfg, runStart))
+			startRequest(clientID, uint32(seq), tSched, conn, cfg, runStart, events)
 		}
-		seq++
+		if seq == math.MaxUint32 {
+			break // seq would leave u32: stop scheduling
+		}
 		tSched = addGap(tSched, rng.ExponentialNs(cfg.PerClientRate))
 	}
+	events <- clientEvent{senderDone: true}
+	<-recvDone
+	sort.Slice(records, func(i, j int) bool { return records[i].Seq < records[j].Seq })
 	return records
 }
 
-type pingResult struct {
-	status int
-	body   []byte
-	err    error
-}
-
-// sendOne sends one POST /ping and blocks until it resolves (response, SLO, or error).
+// startRequest opens one POST /ping stream and returns at once. The response
+// goroutine and the SLO timer race through settle; the first wins.
 //
-// Design: abstraction/load_generator/client/design.md#send_one
-func sendOne(clientID, seq uint32, tSched int64, conn *h2client.Conn, cfg Config, runStart time.Time) RequestRecord {
+// Design: abstraction/load_generator/client/design.md#start_request
+func startRequest(clientID, seq uint32, tSched int64, conn *h2client.Conn, cfg Config, runStart time.Time, events chan<- clientEvent) {
 	id := protocol.MakeRequestID(seq, clientID)
 	body := protocol.BuildBody(id, cfg.RequestBytes)
 	rec := RequestRecord{RequestID: id, ClientID: clientID, Seq: seq, ScheduledNs: tSched, Sent: true}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, protocol.PingMethod, "http://"+conn.Authority+protocol.PingPath, bytes.NewReader(body))
 	req.Header.Set("content-type", protocol.ContentTypeJSON)
 	req.Header.Set("content-length", strconv.Itoa(len(body)))
 	req.ContentLength = int64(len(body))
 
-	done := make(chan pingResult, 1)
+	var settled atomic.Bool
+	settle := func(outcome Outcome, status int) bool {
+		if !settled.CompareAndSwap(false, true) {
+			return false
+		}
+		r := rec
+		r.EndNs, r.Outcome, r.HTTPStatus = nowNs(runStart), outcome, status
+		events <- clientEvent{rec: r, resolved: true}
+		return true
+	}
+
 	rec.SendNs = nowNs(runStart)
+	// Design: abstraction/load_generator/client/design.md#slocancellation
+	timer := time.AfterFunc(time.Duration(rec.SendNs+cfg.SloNs-nowNs(runStart)), func() {
+		if settle(OutcomeCancelled, 0) {
+			cancel() // x/net/http2 sends RST_STREAM(CANCEL) for the open stream
+		}
+	})
 	go func() {
+		defer cancel()
 		resp, err := conn.CC.RoundTrip(req)
 		if err != nil {
-			done <- pingResult{err: err}
+			settle(OutcomeError, 0)
 			return
 		}
 		b, err := io.ReadAll(resp.Body) // full response: up to END_STREAM
 		resp.Body.Close()
-		done <- pingResult{status: resp.StatusCode, body: b, err: err}
-	}()
-
-	// Design: abstraction/load_generator/client/design.md#slocancellation
-	timer := time.NewTimer(time.Duration(rec.SendNs + cfg.SloNs - nowNs(runStart)))
-	defer timer.Stop()
-	select {
-	case r := <-done:
-		rec.EndNs = nowNs(runStart)
-		if r.err != nil {
-			rec.Outcome = OutcomeError
-		} else {
-			rec.HTTPStatus = r.status
-			rec.Outcome = classify(r.status, r.body, id)
+		if err != nil {
+			settle(OutcomeError, 0)
+			return
 		}
-	case <-timer.C:
-		cancel() // x/net/http2 sends RST_STREAM(CANCEL) for the open stream
-		rec.EndNs = nowNs(runStart)
-		rec.Outcome = OutcomeCancelled
-	}
-	return rec
+		if settle(classify(resp.StatusCode, b, id), resp.StatusCode) {
+			timer.Stop()
+		}
+	}()
 }
 
 // classify maps a full /ping response to an Outcome.

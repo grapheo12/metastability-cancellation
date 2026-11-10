@@ -37,14 +37,15 @@ type LatencyStats struct {
 }
 
 type summaryConfig struct {
-	Target       string  `json:"target"`
-	NumClients   uint32  `json:"num_clients"`
-	GlobalRate   float64 `json:"global_rate"`
-	RequestBytes int     `json:"request_bytes"`
-	SloMs        float64 `json:"slo_ms"`
-	DurationS    float64 `json:"duration_s"`
-	Seed         uint64  `json:"seed"`
-	OutputPath   string  `json:"output_path"`
+	Target           string  `json:"target"`
+	NumClients       uint32  `json:"num_clients"`
+	GlobalRate       float64 `json:"global_rate"`
+	RequestBytes     int     `json:"request_bytes"`
+	SloMs            float64 `json:"slo_ms"`
+	DurationS        float64 `json:"duration_s"`
+	Seed             uint64  `json:"seed"`
+	NWaitingRequests uint32  `json:"n_waiting_requests"`
+	OutputPath       string  `json:"output_path"`
 }
 
 type summaryCounts struct {
@@ -81,7 +82,7 @@ type SummaryReport struct {
 // Design: abstraction/load_generator/metrics/design.md#summary
 func Aggregate(records []RequestRecord, cfg Config, runEndNs int64) SummaryReport {
 	var r SummaryReport
-	r.Config = summaryConfig{cfg.Target, cfg.NumClients, cfg.GlobalRate, cfg.RequestBytes, cfg.SloMs, cfg.DurationS, cfg.Seed, cfg.OutputPath}
+	r.Config = summaryConfig{cfg.Target, cfg.NumClients, cfg.GlobalRate, cfg.RequestBytes, cfg.SloMs, cfg.DurationS, cfg.Seed, cfg.NWaitingRequests, cfg.OutputPath}
 	r.RunEndS = float64(runEndNs) / 1e9
 	var e2e, service []float64
 	for _, rec := range records {

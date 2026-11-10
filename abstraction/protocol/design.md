@@ -206,6 +206,6 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [CancelBody](#cancelbody) | [protocol.go:85](../../implementation/go/internal/protocol/protocol.go#L85), [protocol_test.go:50](../../implementation/go/internal/protocol/protocol_test.go#L50) |
 | [CancelReplyBody](#cancelreplybody) | [protocol.go:93](../../implementation/go/internal/protocol/protocol.go#L93), [protocol.go:104](../../implementation/go/internal/protocol/protocol.go#L104), [protocol_test.go:81](../../implementation/go/internal/protocol/protocol_test.go#L81), [protocol_test.go:106](../../implementation/go/internal/protocol/protocol_test.go#L106) |
 | [Parsing](#parsing) | [protocol.go:126](../../implementation/go/internal/protocol/protocol.go#L126), [protocol.go:150](../../implementation/go/internal/protocol/protocol.go#L150), [protocol_test.go:65](../../implementation/go/internal/protocol/protocol_test.go#L65) |
-| [Status classification (load-generator client)](#status-classification-load-generator-client) | [client.go:118](../../implementation/go/internal/loadgen/client.go#L118) |
+| [Status classification (load-generator client)](#status-classification-load-generator-client) | [client.go:156](../../implementation/go/internal/loadgen/client.go#L156) |
 | [Status classification (load canceller)](#status-classification-load-canceller) | [canceller.go:209](../../implementation/go/internal/ingress/canceller.go#L209) |
 <!-- trace:end -->
