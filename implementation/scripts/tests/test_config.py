@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.4.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.5.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -192,6 +192,16 @@ class ConfigTest(unittest.TestCase):
         self.assertConfigError(BASE.replace("num_clients = 4", 'num_clients = 4\ncpu_set = "0-"'), "CPU list")
         self.assertEqual(self.load(BASE.replace("num_clients = 4", 'num_clients = 4\ncpu_set = "0,2,4-5"'))
                          .placement["load_gen"]["cpu_set"], "0,2,4-5")
+
+    # Design: abstraction/benchmark_runner/config/design.md#processplacement
+    def test_n_worker_threads_is_a_program_param(self):
+        text = BASE.replace("response_rate = 2000", "response_rate = 2000\nn_worker_threads = [1, 4]\nthreads = 8")
+        points = cfg.expand_sweep(self.load(text))
+        self.assertEqual(len(points), 8)  # 2 cancel_mode x 2 n_worker_threads x 2 global_rate
+        self.assertEqual(sorted({dict(p.server_args)["n_worker_threads"] for p in points}), [1, 4])
+        self.assertTrue(all(p.placement["server"] == {"threads": 8, "cpu_set": None} for p in points))
+        only_threads = cfg.expand_sweep(self.load(BASE.replace("response_rate = 2000", "response_rate = 2000\nthreads = 2")))[0]
+        self.assertNotIn("n_worker_threads", dict(only_threads.server_args))
 
 
 if __name__ == "__main__":
