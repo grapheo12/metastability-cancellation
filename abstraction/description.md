@@ -75,6 +75,7 @@ downloads each point's results and plots all points together.
 | **CancelMode** | Server switch: `ignore` or `cooperative`. Applies to both cancellation paths | [api.md](api.md#server-parameters) |
 | **CancelRegistry** | Global lock-free map from client id to a CancelInbox | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelregistry) |
 | **CancelInbox** | Lock-free multi-producer stack of cancelled RequestIds for one client, drained by the worker running that client's request | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelinbox) |
+| **ClientCancelState** | Per-client pending `/cancel` ids and last completed RequestId, in the client's registry slot under a per-client lock | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#clientcancelstate) |
 | **CancelMatching** | Per-client algorithm that matches pending cancel ids against the request a worker is running | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelmatching) |
 | **CancelCheckPoint** | A point where the worker consults CancelMatching: before a request starts, and every `CHECK_ITER` spin units during its burn | [server/ping_handler/design.md](server/ping_handler/design.md#cancelcheckpoints) |
 | **CancelCounters** | Server-wide atomic counters: cancelled before processing, cancelled during processing, completed before cancel | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelcounters) |
