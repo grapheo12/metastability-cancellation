@@ -21,3 +21,4 @@
 | 0.2.5 | 2026-11-03T00:00:00Z | Child bump: experiment_executor 0.4.0 |
 | 0.2.6 | 2026-11-10T00:00:00Z | Child bump: config 0.5.0 (`n_worker_threads`) |
 | 0.2.7 | 2026-11-10T00:00:00Z | Child bump: config 0.6.0 (QueueLengthLog parameters) |
+| 0.2.8 | 2026-11-10T00:00:00Z | Output tree: `server_<k>.queue.csv`. Child bump: experiment_executor 0.5.0 |

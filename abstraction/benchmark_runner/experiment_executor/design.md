@@ -78,7 +78,9 @@ placement prefix keeps this true, because `env` and `taskset` both replace thems
 ```
 function start_servers(point, config, server):
     for k in 0 ..= I-1:                                                   # in order; each waits for readiness
-        args  = ["--listen_addr", "0.0.0.0:" + (config.server.listen_port + k)] + args(point.server_args)
+        args  = ["--listen_addr", "0.0.0.0:" + (config.server.listen_port + k),
+                 "--queue_log_path", RD_server + "/server_" + k + ".queue.csv"]        # QueueLengthLog
+                + args(point.server_args)
         words = placement_prefix("server", point, server) + [server.binaries.server] + args
         start_program(server, words, RD_server + "/server_" + k + ".out",
                       <server workdir>/server_<k>.pid, config.run.server_ready_timeout_s)
@@ -89,6 +91,10 @@ function stop_servers(server, count, stop_timeout_s):
         if stop_program(server, <server workdir>/server_<k>.pid, stop_timeout_s) is FAILED: outcome = FAILED
     return outcome
 ```
+
+Every instance always writes its QueueLengthLog
+([../../server/api.md#queuelengthlog-output](../../server/api.md#queuelengthlog-output)) to its own file in the
+point's remote directory; `queue_log_path` is runner-owned, so the config cannot change it.
 
 All instances get the same program parameters, including `seed`. Each one's per-connection ServiceTime streams
 therefore start from the same seeds; the requests each receives differ, so their samples are not correlated in any
@@ -187,6 +193,9 @@ function collect_outputs(point, config, server, client, ingress_host, pdir):
     counters = []
     for k in 0 ..= I-1:
         fetch(server.transport, RD/server_<k>.out, pdir/server_<k>.out)
+        fetch(server.transport, RD/server_<k>.queue.csv, pdir/server_<k>.queue.csv)     # QueueLengthLog
+        if pdir/server_<k>.queue.csv does not exist:
+            print("point <id>: server_<k>.queue.csv missing (left out of queue_length.png)")
         line = last line of pdir/server_<k>.out that starts with COUNTERS_PREFIX
         if line exists:
             c = line parsed as JSON (the three CancelCounters keys)
@@ -202,7 +211,8 @@ function validate_outputs(point, pdir):
 ```
 
 `server_counters.json` keeps its meaning (the system's CancelCounters) by summing the instances; per-instance files
-remain for inspection. Every fetch is best effort (`missing` is fine), so a failed point still keeps whatever
+remain for inspection. The QueueLengthLog files are not required: a missing one prints one warning line and
+never fails the point; the Result Plotter leaves that point out of `queue_length.png`. Every fetch is best effort (`missing` is fine), so a failed point still keeps whatever
 evidence exists.
 
 | Instances | Counters (before, during, completed) | `server_counters.json` |
