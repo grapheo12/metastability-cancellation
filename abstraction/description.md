@@ -90,7 +90,7 @@ downloads each point's results and plots all points together.
 | **LoadCanceller** | Single-sender, open-loop Poisson source of `/cancel` requests inside the Ingress | [ingress/load_canceller/design.md](ingress/load_canceller/design.md#cancelschedule) |
 | **FinishedWatermark** | Per client, the highest RequestId the server has finished with any outcome; reported in every `/cancel` `202` | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#finishedwatermark) |
 | **CancelReplyBody** | JSON body `{"finished":..}` of a `202` answer to `/cancel` | [protocol/design.md](protocol/design.md#cancelreplybody) |
-| **InFlightVictimChoice** | The LoadCanceller's choice: one entry drawn uniformly from an InFlightMap snapshot | [ingress/load_canceller/design.md](ingress/load_canceller/design.md#inflightvictimchoice) |
+| **InFlightVictimChoice** | The LoadCanceller's choice: one in-flight request drawn uniformly from an InFlightMap snapshot | [ingress/load_canceller/design.md](ingress/load_canceller/design.md#inflightvictimchoice) |
 | **Ingress** | Program in front of several servers: LoadBalancer, UpstreamPool, InFlightMap and LoadCanceller | [ingress/design.md](ingress/design.md#structure) |
 | **LbPolicy** | `round_robin`, `least_outstanding` or `power_of_two` | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#lbpolicy) |
 | **LoadBalancer** | Picks a backend per `/ping` by LbPolicy and keeps BackendStats | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#loadbalancer) |
