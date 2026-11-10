@@ -38,7 +38,8 @@ merged only after every client has returned. Timers and sleeps must use the same
 
 1. **Setup:** validate, open N connections. Any failure aborts with a non-zero exit.
 2. **Active phase** `[0, duration_ns)`: clients send requests.
-3. **DrainPhase:** clients send nothing new. In-flight requests resolve within `slo_ns`.
+3. **DrainPhase:** clients send nothing new. Their outstanding requests (up to `n_waiting_requests` each) resolve
+   within `slo_ns`.
 4. **Teardown:** close connections, aggregate, write files.
 
 Details: [run_controller/design.md](run_controller/design.md).

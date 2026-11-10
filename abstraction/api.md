@@ -62,6 +62,12 @@ The Ingress's constants, outputs and lifecycle are in [ingress/api.md](ingress/a
 Transport is HTTP/2 over cleartext TCP with prior knowledge (h2c, no HTTP/1.1 upgrade). Full
 details are in [protocol/api.md](protocol/api.md).
 
+- **Concurrent streams.** A client keeps up to `n_waiting_requests` streams open on its connection. Every program
+  that accepts `/ping` connections (the server and the Ingress) must advertise
+  `SETTINGS_MAX_CONCURRENT_STREAMS >= MAX_WAITING_REQUESTS` (`1000`), and the Ingress's upstream connections carry
+  the same streams on to the servers. Otherwise the HTTP/2 layer would hold back streams, delaying sends without
+  the client knowing.
+
 - **Request:** `POST /ping`, `content-type: application/json`, body is a PaddedJsonBody of exactly
   `request_bytes` bytes carrying the RequestId.
 - **Response:** status `202` (completed) or `503` (cancelled by `/cancel`), `content-type:
