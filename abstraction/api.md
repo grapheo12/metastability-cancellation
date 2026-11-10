@@ -18,6 +18,8 @@ three on remote machines. Its interface is in [Benchmark runner](#benchmark-runn
 | `cancel_check_interval_us` | integer, µs, `>= 1` | `50` | How often CooperativeCpuBurn checks the RST flag |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for ServiceTime sampling |
 | `n_worker_threads` | integer, `1 ..= 2^32-1` | `1` | Number of workers in the server's WorkerPool: how many `/ping` requests run at once ([server/worker_pool/design.md](server/worker_pool/design.md#workerpool)) |
+| `queue_log_path` | path, or empty | empty | Where to write the QueueLengthLog CSV. Empty: no log ([server/api.md#queuelengthlog-output](server/api.md#queuelengthlog-output)) |
+| `queue_sample_interval_ms` | integer, ms, `>= 1` | `10` | Time between two QueueLengthLog samples. Ignored when `queue_log_path` is empty |
 
 The server runs until it receives an interrupt or termination signal. On shutdown it prints its
 CancelCounters ([Server outputs](#server-outputs)).
@@ -90,6 +92,10 @@ On shutdown, the server prints one line to standard output:
 `{"cancelled_before_processing":<u64>,"cancelled_during_processing":<u64>,"completed_before_cancel":<u64>}`.
 See [server/api.md](server/api.md#cancelcounters-output). Counter semantics are in
 [server/cancel_tracker/design.md#cancelcounters](server/cancel_tracker/design.md#cancelcounters).
+
+If `queue_log_path` is set, the server also writes the QueueLengthLog there: a CSV of the WorkQueue length over
+time, one row every `queue_sample_interval_ms`. See [server/api.md](server/api.md#queuelengthlog-output) and
+[server/worker_pool/design.md#queuelengthlog](server/worker_pool/design.md#queuelengthlog).
 
 ### Load generator outputs
 - `<output_path>.requests.csv`: one RequestRecord per scheduled arrival. Columns are in

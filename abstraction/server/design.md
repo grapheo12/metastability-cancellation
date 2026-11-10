@@ -24,7 +24,7 @@ flowchart TD
 | Subcomponent | Responsibility | Spec |
 |---|---|---|
 | Connection Handler | HTTP/2 framing for one connection, per-stream RST flags, client binding, routing, admitting `/ping` onto the WorkQueue, answering `/cancel` inline, response writing | [connection_handler/description.md](connection_handler/description.md) |
-| Worker Pool | The process-wide WorkQueue and the `n_worker_threads` workers that run PingJobs | [worker_pool/description.md](worker_pool/description.md) |
+| Worker Pool | The process-wide WorkQueue, the `n_worker_threads` workers that run PingJobs, and the QueueLengthLog sampler | [worker_pool/description.md](worker_pool/description.md) |
 | Ping Handler | Admit a `/ping` (parse body, bind client id, sample ServiceTime) and run it (CancelCheckPoints, burn, build response) | [ping_handler/description.md](ping_handler/description.md) |
 | CPU Burner | Busy-loop for an exact time, with optional RST and `/cancel` checks | [cpu_burner/description.md](cpu_burner/description.md) |
 | Cancel Tracker | CancelRegistry, CancelInbox, per-client cancel state, CancelMatching, CancelCounters, `handle_cancel` | [cancel_tracker/description.md](cancel_tracker/description.md) |
@@ -39,6 +39,8 @@ function validate(params):
     cancel_check_interval_us >= 1             else error
     seed parses as u64                        else error
     n_worker_threads is an integer in 1 ..= 2^32-1   else error
+    queue_sample_interval_ms is an integer >= 1      else error   # checked even if queue_log_path is empty
+    queue_log_path is any string; empty means no QueueLengthLog
     return ServerConfig(params)
 ```
 
@@ -50,8 +52,11 @@ function serve(config):
     counters = cancel_tracker.counters_new()                            # one per process
     queue = worker_pool.queue_new()                                     # one per process
     pool = worker_pool.pool_start(config.n_worker_threads, queue, config, registry, counters)
+    log = open_for_write(config.queue_log_path) if config.queue_log_path != "" else none   # error: exit non-zero
     socket = bind_and_listen(config.listen_addr)
     print("listening on " + config.listen_addr)
+    if log is not none:
+        sampler = spawn worker_pool.queue_sampler(queue, log, config.queue_sample_interval_ms)   # QueueLengthLog
     conn_index = 0
     loop until shutdown requested:
         conn = accept(socket)
@@ -75,6 +80,7 @@ shift. Reproducing the server's random sequence therefore needs the same connect
 | Listener | 1 | accept loop | creates everything below |
 | Connection Handler | 1 per connection | HTTP/2 framing, admit `/ping`, `handle_cancel` inline, response writing | its own `Rng` and binding (exclusively), its own stream table, WorkQueue (push), CancelRegistry (push, read watermark) |
 | Worker | `n_worker_threads` | `queue_pop`, then run the PingJob | WorkQueue (pop), CancelRegistry (per-client state under the client's lock), CancelCounters |
+| QueueLengthLog sampler | 0 or 1 | wake every `queue_sample_interval_ms`, append one row | WorkQueue (`queue_len`, under the queue lock), its log file (exclusively) |
 
 Rules every subcomponent shares:
 
@@ -123,7 +129,8 @@ not on which worker runs what ([ping_handler/design.md](ping_handler/design.md#s
 
 ## Shutdown
 
-When a signal arrives, the Listener stops accepting and closes the WorkQueue
+When a signal arrives, the Listener stops accepting, stops the QueueLengthLog sampler (it writes no extra row and
+closes the file, [worker_pool/design.md#queuelengthlog](worker_pool/design.md#queuelengthlog)) and closes the WorkQueue
 ([worker_pool/design.md#workqueue](worker_pool/design.md#workqueue)): jobs still queued are answered `Aborted`
 and never run. Then each Connection Handler is told to close: it sends `GOAWAY`, stops reading and sets the RST
 flag of each of its streams. A burn that is running is not interrupted (in `ignore` mode the process exits when the
