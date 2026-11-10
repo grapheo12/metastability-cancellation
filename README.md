@@ -2,7 +2,8 @@
 
 An HTTP/2 testbed for measuring how **request cancellation** affects tail latency and wasted work in a
 CPU-bound service. A server burns CPU for each `POST /ping`. A load generator drives it with Poisson,
-closed-loop clients that cancel requests once they miss their SLO. An ingress load-balances the clients'
+semi-open-loop clients (each keeps up to `n_waiting_requests` requests outstanding) that cancel requests once
+they miss their SLO. An ingress load-balances the clients'
 requests across several servers, and its built-in load canceller sends server-directed `DELETE /cancel`
 requests for requests that are in flight. A benchmark runner sweeps parameters across two machines and plots
 the results.
