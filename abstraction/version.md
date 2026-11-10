@@ -55,3 +55,4 @@
 | 0.6.2 | 2026-11-10T00:00:00Z | Child bump: server 0.3.2 (ping_handler 0.4.0) |
 | 0.6.3 | 2026-11-10T00:00:00Z | Child bump: server 0.3.3 (connection_handler 0.3.0) |
 | 0.6.4 | 2026-11-10T00:00:00Z | Child bump: benchmark_runner 0.2.6 (config 0.5.0) |
+| 0.6.5 | 2026-11-10T00:00:00Z | Child bump: ingress 0.1.7 (upstream_pool 0.1.1) |

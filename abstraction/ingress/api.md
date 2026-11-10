@@ -97,7 +97,7 @@ separate program, so result tools can read them unchanged (all zero when it is d
 
 - [../protocol/api.md](../protocol/api.md): `parse_body`, `split_request_id`, status constants, `PING_PATH`, `CANCEL_PATH`
 - [../sampling/api.md](../sampling/api.md): `derive_seed`, `rng_new`, `exponential_ns`, `uniform_int`, `STREAM_CANCELLER`, `STREAM_INGRESS_LB`
-- [../server/api.md](../server/api.md): the backends' wire behavior (one client per connection, served serially)
+- [../server/api.md](../server/api.md): the backends' wire behavior (one client per connection)
 
 ## Subcomponents
 
