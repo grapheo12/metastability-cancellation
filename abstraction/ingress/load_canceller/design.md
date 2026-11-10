@@ -1,7 +1,7 @@
 # Load Canceller — Design
 
 `now()` means `monotonic_now_ns() - run_start`, where `run_start` is the Ingress's time base (the first `/ping`,
-[../design.md#time-base](../design.md#time-base)). `D = config.duration_ns`. Integer arithmetic is on unsigned
+[../design.md#time-base](../design.md#time-base)). `D = config.duration_ns`. `S = config.initial_stall_ns`. Integer arithmetic is on unsigned
 64-bit unless stated otherwise. `B` is the number of backends.
 
 ## Startup
@@ -33,7 +33,7 @@ A single sender activity runs an open-loop Poisson process with rate `cancel_rat
 ```
 function run_schedule(canceller, config, inflight, rng):
     arrival = 0
-    t = sampling.exponential_ns(rng, config.cancel_rate)
+    t = S + sampling.exponential_ns(rng, config.cancel_rate)    # initial stall: nothing before S
     while t < D and not canceller.stop.load():
         sleep_until(t)                                        # woken early if stop is set
         if canceller.stop.load(): break
@@ -65,6 +65,17 @@ function run_schedule(canceller, config, inflight, rng):
   for the response. The sender is late only when `sleep_until` wakes late or the HTTP/2 layer blocks opening a
   stream. Lateness shows as `send_ns - scheduled_ns`.
 - No arrival is scheduled at or after `D`, and none after `stop` is set.
+- **Initial stall.** The schedule is the stall-free one shifted by `S`: same gaps, same draws, every arrival `S`
+  later. Arrivals that would land at or after `D` are cut, so the stall shortens the sending phase to `[S, D)`
+  rather than extending it. If `S >= D`, there are no arrivals and no CancelRecords. Arrival times depend only on
+  `seed`, `cancel_rate` and `initial_stall_ms`. The connections are still dialed at start, before the stall.
+
+| `S` (ms) | First gap (ms) | `D` (s) | First arrival (ms) | Check |
+|---|---|---|---|---|
+| 0 | 3 | 30 | 3 | 0 + 3 |
+| 1000 | 3 | 30 | 1003 | 1000 + 3 |
+| 1000 | 1 | 1 | none | 1000 + 1 >= 1000 = `D` |
+| 30000 | 3 | 30 | none | `S >= D` |
 
 ## InFlightVictimChoice
 

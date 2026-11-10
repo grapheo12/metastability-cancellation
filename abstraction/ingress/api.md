@@ -14,6 +14,7 @@ or missing required parameters make the program exit non-zero with a one-line er
 | `lb_policy` | `round_robin` \| `least_outstanding` \| `power_of_two` | `least_outstanding` | The LoadBalancer policy |
 | `cancel_rate` | float, cancels/s, `>= 0` | `0` | Rate of the LoadCanceller's Poisson process. `0` disables the LoadCanceller |
 | `duration_s` | float, s, `> 0` | required if `cancel_rate > 0`, else ignored | Length of the LoadCanceller's sending phase |
+| `initial_stall_ms` | integer, ms, `>= 0` | `1000` | The LoadCanceller schedules no cancel earlier than this after the Ingress's first `/ping`; sending still ends at `duration_s`. `0`: no stall ([load_canceller/design.md](load_canceller/design.md#cancelschedule)) |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for the LoadBalancer's and the LoadCanceller's random choices |
 | `output_path` | path prefix | `ingress` | Outputs go to `<output_path>.cancels.csv` and `<output_path>.summary.json` |
 
