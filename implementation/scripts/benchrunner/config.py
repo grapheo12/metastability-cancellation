@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.6.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.7.0)
 """BenchConfig loading and validation, SweepExpansion, argument formatting."""
 
 import datetime
@@ -15,9 +15,9 @@ from . import transport
 # Design: abstraction/benchmark_runner/config/design.md#benchconfig
 PROGRAM_PARAMS = {
     "server": ["response_rate", "response_bytes", "cancel_mode", "cancel_check_interval_us", "seed",
-               "n_worker_threads", "queue_sample_interval_ms"],
+               "n_worker_threads", "queue_sample_interval_ms", "initial_stall_ms"],
     "load_gen": ["num_clients", "global_rate", "request_bytes", "slo_ms", "duration_s", "seed"],
-    "ingress": ["lb_policy", "cancel_rate", "duration_s", "seed"],
+    "ingress": ["lb_policy", "cancel_rate", "duration_s", "seed", "initial_stall_ms"],
 }
 # Design: abstraction/benchmark_runner/config/design.md#processplacement
 PLACEMENT_KEYS = ["threads", "cpu_set"]

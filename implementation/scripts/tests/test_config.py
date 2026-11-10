@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.6.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.7.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -207,6 +207,16 @@ class ConfigTest(unittest.TestCase):
         self.assertTrue(all(p.placement["server"] == {"threads": 8, "cpu_set": None} for p in points))
         only_threads = cfg.expand_sweep(self.load(BASE.replace("response_rate = 2000", "response_rate = 2000\nthreads = 2")))[0]
         self.assertNotIn("n_worker_threads", dict(only_threads.server_args))
+
+    # Design: abstraction/benchmark_runner/config/design.md#benchconfig
+    def test_initial_stall_ms_per_program(self):
+        text = BASE.replace("response_rate = 2000", "response_rate = 2000\ninitial_stall_ms = [0, 2000]").replace(
+            "cancel_rate = 100", "cancel_rate = 100\ninitial_stall_ms = 500")
+        points = cfg.expand_sweep(self.load(text))
+        self.assertEqual(sorted({dict(p.server_args)["initial_stall_ms"] for p in points}), [0, 2000])
+        self.assertTrue(all(dict(p.ingress_args)["initial_stall_ms"] == 500 for p in points))
+        unset = cfg.expand_sweep(self.load(BASE))[0]
+        self.assertNotIn("initial_stall_ms", dict(unset.server_args))  # program default (1000) applies
 
 
 if __name__ == "__main__":
