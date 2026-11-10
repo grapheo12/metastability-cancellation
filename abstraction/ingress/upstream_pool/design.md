@@ -47,7 +47,9 @@ function discard(pool, c, s, conn):
 - **What counts as a connection error.** The HTTP/2 layer reports that the whole connection is unusable (it
   received GOAWAY, the TCP connection closed, or a protocol error). A stream reset or a stream error alone does not
   discard the connection.
-- A client keeps at most one request outstanding, so in practice a pair's connection carries one stream at a time.
+- A client keeps up to `n_waiting_requests` requests outstanding, so a pair's connection may carry that many
+  concurrent streams. The server accepts at least `MAX_WAITING_REQUESTS` per connection
+  ([../../api.md#wire-contract-ping](../../api.md#wire-contract-ping)).
 
 | Event for pair (2, 1) | `slot.conn` before | Result | `slot.conn` after |
 |---|---|---|---|
