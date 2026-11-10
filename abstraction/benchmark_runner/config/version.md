@@ -8,3 +8,4 @@
 | 0.2.2 | 2026-11-02T00:00:00Z | Machine tables: `user`, `ssh_key`, `ssh_port` optional (from `~/.ssh/config`); `data_addr` default via `ssh_hostname`. `validate_machine` pseudocode and table |
 | 0.3.0 | 2026-11-02T00:00:00Z | `[ingress]` replaces `[canceller]` (program params lb_policy, cancel_rate, duration_s, seed; runner keys listen_port, cancel_rate_fraction, placement). `[server] instances` (instance k on listen_port + k). SweepPoint: `ingress_args` (with runner-filled `backends`, `num_clients`), `server_instances`; `incr_rand_max` removed |
 | 0.4.0 | 2026-11-03T00:00:00Z | IngressPlacement: runner key `[ingress] machine` (client or server); SweepPoint `ingress_machine` and `loadgen_target`; backends local when the Ingress is on the server machine; port-collision check |
+| 0.5.0 | 2026-11-10T00:00:00Z | Server program parameter `n_worker_threads` (settable and sweepable); ProcessPlacement says how it differs from `threads`, with examples |
