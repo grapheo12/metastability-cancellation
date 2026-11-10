@@ -5,6 +5,7 @@
 | Parameter | Type / unit / constraint | Default | Meaning |
 |---|---|---|---|
 | `n_worker_threads` | integer, `1 ..= 2^32-1` | `1` | Number of workers. Same as [../../api.md#server-parameters](../../api.md#server-parameters) |
+| `queue_sample_interval_ms` | integer, ms, `>= 1` | `10` | Time between QueueLengthLog samples. Same as [../../api.md#server-parameters](../../api.md#server-parameters) |
 
 ## Types
 
@@ -50,6 +51,19 @@ closed. Called by workers only. See [design.md#workqueue](design.md#workqueue).
 Closes the queue, fills `reply` of every job still queued with `Aborted`, and wakes every waiting worker.
 Idempotent. Called by the Listener at shutdown. See [design.md#workqueue](design.md#workqueue).
 
+### `queue_len(queue) -> u64`
+Number of jobs waiting in the queue (pushed, not yet popped). `0` once closed. Takes the queue lock briefly; never
+waits for a job. See [design.md#queuelengthlog](design.md#queuelengthlog).
+
+### `queue_sampler(queue, log: writable file, interval_ms: u64) -> nothing`
+Runs on its own activity until `sampler_stop` is called. Writes the QueueLengthLog CSV header and then one row per
+sample, in the format of [../api.md#queuelengthlog-output](../api.md#queuelengthlog-output), and closes `log` when it
+returns. Started by the Listener only when `queue_log_path` is set. See [design.md#queuelengthlog](design.md#queuelengthlog).
+
+### `sampler_stop(sampler) -> nothing`
+Asks the sampler to stop and waits until it has returned and closed its file. Writes no extra row. Called by the
+Listener at shutdown. See [design.md#queuelengthlog](design.md#queuelengthlog).
+
 ### `pool_start(n_worker_threads: u32, queue, config: ServerConfig, registry: CancelRegistry, counters: CancelCounters) -> WorkerPool`
 Starts the workers. Called once per process by the Listener after `queue_new`. See
 [design.md#workerpool](design.md#workerpool).
@@ -62,6 +76,8 @@ Returns once every worker has returned. Workers return only after `queue_close`.
 
 - **Start:** `queue_new`, then `pool_start`, before the Listener accepts its first connection.
 - **Run:** workers run PingJobs in push order, up to `n_worker_threads` at a time.
+- **Sampler:** if started, `queue_sampler` runs from just after `listening on` until `sampler_stop`, which the
+  Listener calls before `queue_close`.
 - **Stop:** `queue_close` drops the queued jobs (each gets `Aborted`). A burn that is running is not interrupted:
   its worker fills `reply` when the burn ends, then sees `None` and returns. `pool_join` waits for that.
 

@@ -104,6 +104,66 @@ cancellation:
 | 3 | w0: A [0, 300); w1: B [0, 100); w2: C [0, 100) | B and C (tie), then A | all start at 0 |
 | 4 | as for 3, plus one worker blocked in `queue_pop` | B and C, then A | more workers than jobs: the extra one waits |
 
+## QueueLengthLog
+
+The **QueueLengthLog** records the WorkQueue length over time. It counts jobs **waiting** in the queue, not jobs a
+worker is running, so it measures backlog: `0` means every admitted request is being served or done.
+
+```
+function queue_len(q):
+    with q.lock:
+        return length of q.items                  # 0 after queue_close (items were taken)
+
+procedure queue_sampler(q, log, interval_ms):     # own activity; stop is an atomic boolean plus a wake-up
+    start_ns = monotonic_now_ns()
+    write(log, "t_ms,queue_len\n")
+    k = 0                                          # index of the next deadline
+    loop:
+        deadline_ms = k * interval_ms              # u64; relative to start
+        wait until elapsed_ms() >= deadline_ms or stop is set
+        if stop is set: break
+        t_ms = elapsed_ms()                        # floor((monotonic_now_ns() - start_ns) / 1_000_000)
+        n = queue_len(q)
+        if write(log, decimal(t_ms) + "," + decimal(n) + "\n") fails:
+            print to stderr "queue log write failed: <reason>"; break          # keep serving, stop sampling
+        k = t_ms / interval_ms + 1                 # integer division: the next deadline strictly after t_ms
+    flush and close log                            # errors here are reported the same way and ignored
+
+procedure sampler_stop(sampler):
+    set stop; wake the sampler; wait until it has returned
+```
+
+- **Drift-free.** Deadlines are multiples of `interval_ms` from the start, not "last sample + interval", so small
+  delays do not accumulate.
+- **No catch-up burst.** If the sampler wakes late past several deadlines, it writes **one** row at the real time,
+  and the next deadline is the first multiple of `interval_ms` after it. Rows therefore never share a `t_ms`, and
+  `t_ms` strictly increases.
+- **No row at stop.** A stop between two deadlines writes nothing more; the last row is the last deadline reached.
+- **Cheap.** `queue_len` holds the queue lock only to read a length, like a push or a pop. The sampler never touches
+  a job.
+- **Buffered.** Rows may be buffered. They are on disk after `sampler_stop` returns, which the Listener waits for
+  before printing the CancelCounters line ([../design.md#shutdown](../design.md#shutdown)).
+
+Worked example, `interval_ms = 10`:
+
+| Event (ms since start) | Deadline waited for | Row written | Next `k` | Check |
+|---|---|---|---|---|
+| start | — | header | 0 | — |
+| wake at 0 | 0 | `0,<n>` | 1 | 0 / 10 + 1 = 1 |
+| wake at 10 | 10 | `10,<n>` | 2 | 10 / 10 + 1 = 2 |
+| wake at 20 | 20 | `20,<n>` | 3 | 20 / 10 + 1 = 3 |
+| wake at 47 (late: deadlines 30 and 40 missed) | 30 | `47,<n>` | 5 | 47 / 10 + 1 = 5, next deadline 50 |
+| wake at 50 | 50 | `50,<n>` | 6 | 50 / 10 + 1 = 6 |
+| stop at 55 | 60 | none | — | stop before the deadline: no extra row |
+
+| Situation | Behavior |
+|---|---|
+| `queue_log_path` empty | No sampler, no file |
+| `queue_log_path` cannot be created | The server exits non-zero before accepting ([../api.md#lifecycle](../api.md#lifecycle)) |
+| Write fails during the run | One line on standard error, sampling stops, the file is closed, the server keeps serving |
+| Run shorter than `interval_ms` | Header and the `t_ms = 0` row only |
+| `interval_ms` very small (e.g. `1`) | Allowed. Rows may be late under load; the late-wake rule keeps `t_ms` increasing |
+
 ## Concurrency requirement
 
 Every worker **must be able to burn on its own CPU in parallel** with the other workers, with every FrameReader

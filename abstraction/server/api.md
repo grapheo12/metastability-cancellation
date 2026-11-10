@@ -13,6 +13,8 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 | `cancel_check_interval_us` | integer, µs, `>= 1` | `50` |
 | `seed` | u64 | `0` |
 | `n_worker_threads` | integer, `1 ..= 2^32-1` | `1` |
+| `queue_log_path` | path, or empty | empty |
+| `queue_sample_interval_ms` | integer, ms, `>= 1` | `10` |
 
 ## Constants
 
@@ -25,7 +27,7 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 
 ### `ServerConfig`
 
-An immutable record holding the seven parameters above after validation
+An immutable record holding the nine parameters above after validation
 ([design.md#configuration-validation](design.md#configuration-validation)). One read-only copy is
 shared by all Connection Handlers and workers.
 
@@ -51,14 +53,38 @@ At shutdown the server prints exactly one line to standard output, after `listen
 The keys are in this order, there is no whitespace, and the values are decimal. They are defined in
 [cancel_tracker/design.md#cancelcounters](cancel_tracker/design.md#cancelcounters).
 
+## QueueLengthLog output
+
+Written only when `queue_log_path` is not empty. A CSV file, overwritten if it exists:
+
+```
+t_ms,queue_len
+0,0
+10,0
+20,3
+```
+
+| Column | Type / unit | Meaning |
+|---|---|---|
+| `t_ms` | u64, whole ms | Time of the sample since the sampler started, on a monotonic clock. The sampler starts right after `listening on` is printed |
+| `queue_len` | u64 | Number of PingJobs waiting in the WorkQueue at that instant. Jobs being run by a worker are not counted |
+
+Rows are in increasing `t_ms` order, one every `queue_sample_interval_ms` unless the sampler was late
+([worker_pool/design.md#queuelengthlog](worker_pool/design.md#queuelengthlog)). Line endings are `\n`, numbers are
+decimal with no padding, and there is no whitespace. The file is complete once the CancelCounters line has been
+printed.
+
 ## Lifecycle
 
 - **Start:** validate the config, create the CancelRegistry, the CancelCounters, the WorkQueue and the
-  WorkerPool, bind `listen_addr`, print one line `listening on <addr>` to standard output.
+  WorkerPool, open `queue_log_path` if set, bind `listen_addr`, print one line `listening on <addr>` to standard
+  output, then start the QueueLengthLog sampler if set.
 - **Run:** accept connections until stopped.
-- **Stop:** on interrupt or termination signal, stop accepting, close the WorkQueue and all connections, wait for
-  the workers, print the CancelCounters line, exit `0`.
-- **Error:** an invalid config or a failed bind exits non-zero before accepting.
+- **Stop:** on interrupt or termination signal, stop accepting, stop the QueueLengthLog sampler and close its
+  file, close the WorkQueue and all connections, wait for the workers, print the CancelCounters line, exit `0`.
+- **Error:** an invalid config, a `queue_log_path` that cannot be created, or a failed bind exits non-zero before
+  accepting. A write error on the QueueLengthLog later does not stop the server: sampling stops and one warning
+  line goes to standard error.
 
 ## Subcomponents
 
