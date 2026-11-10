@@ -1,6 +1,6 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.5.0)
-"""PointTable (all_points.csv), SweepPlots and ThroughputLatencyPlot (plots/*.png)."""
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.6.0)
+"""PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot and QueueLengthPlot (plots/*.png)."""
 
 import csv
 import glob
@@ -64,6 +64,8 @@ FIGURES = [
                                              for m in ("srv_cancelled_before_processing",
                                                        "srv_cancelled_during_processing",
                                                        "srv_completed_before_cancel")], "linear", (0, 1)),
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#queuelengthplot
+    ("queue_length", "time", [], "linear", None),
 ]
 X_LABELS = {"lg_goodput": "lg_goodput (requests/s)",
             "lg_goodput_normalized": "lg_goodput / (1 - cx_offered_fraction) (requests/s)"}
@@ -224,6 +226,9 @@ def plot(output_dir):
 
     os.makedirs(os.path.join(output_dir, "plots"), exist_ok=True)
     for name, x, metrics, yscale, ylim in FIGURES:
+        if x == "time":  # QueueLengthPlot
+            draw_queue_length(plt, output_dir, done, swept_keys)
+            continue
         fig, axes = plt.subplots(1, len(metrics), figsize=(6 * len(metrics), 4.5), squeeze=False)
         for ax, (title, value) in zip(axes[0], metrics):
             for combo, members in series.items():
@@ -246,3 +251,63 @@ def plot(output_dir):
         fig.tight_layout()
         fig.savefig(os.path.join(output_dir, "plots", f"{name}.png"), dpi=120)
         plt.close(fig)
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#queuelengthplot
+def read_queue_log(path):
+    """QueueLengthLog rows [(t_ms, queue_len)], or None if the file is missing."""
+    if not os.path.exists(path):
+        return None
+    rows = []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        lines = f.read().split("\n")
+    for line in lines[1:]:  # after the header t_ms,queue_len
+        parts = line.split(",")
+        if len(parts) != 2 or not (parts[0].isdigit() and parts[1].isdigit()):
+            break  # e.g. a truncated last line, or the final empty string
+        rows.append((int(parts[0]), int(parts[1])))
+    return rows
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#queuelengthplot
+def point_queue_series(pdir, params):
+    """[(x_s, summed queue_len)] aligned by row index, or None."""
+    instances = params.get("server_instances") or 1  # runs made before server instances
+    logs = [read_queue_log(os.path.join(pdir, f"server_{k}.queue.csv")) for k in range(instances)]
+    logs = [log for log in logs if log is not None]
+    if not logs:
+        return None
+    m = min(len(log) for log in logs)
+    if m == 0:
+        return None
+    return [(logs[0][i][0] / 1000, sum(log[i][1] for log in logs)) for i in range(m)]
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#queuelengthplot
+def draw_queue_length(plt, output_dir, done, swept_keys):
+    path = os.path.join(output_dir, "plots", "queue_length.png")
+    lines = []
+    for row in sorted(done, key=lambda r: int(r["point"])):
+        pdir = os.path.join(output_dir, "points", f"point_{int(row['point']):04d}")
+        params = _read_json(os.path.join(pdir, "params.json")) or {}
+        series = point_queue_series(pdir, params)
+        if series is None:
+            continue
+        label = ", ".join(f"{k}={_cell(row[k])}" for k in swept_keys) or f"point {row['point']}"
+        lines.append((label, series))
+    if not lines:
+        if os.path.exists(path):
+            os.remove(path)
+        return
+    fig, ax = plt.subplots(figsize=(6, 4.5))
+    for label, series in lines:
+        ax.plot([p[0] for p in series], [p[1] for p in series], label=label)
+    ax.set_xlabel("time since server start (s)")
+    ax.set_ylabel("queue_len (waiting jobs, all instances)")
+    ax.set_ylim(bottom=0)
+    ax.set_title("queue_length")
+    if len(lines) > 1:
+        ax.legend(fontsize="small")
+    fig.tight_layout()
+    fig.savefig(path, dpi=120)
+    plt.close(fig)

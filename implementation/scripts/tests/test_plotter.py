@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.5.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.6.0)
 import csv
 import json
 import os
@@ -145,6 +145,56 @@ class PointTableTest(unittest.TestCase):
             write_point(out, 0, {}, done=False)
             with self.assertRaises(plotter.NothingToPlot):
                 plotter.plot(out)
+
+
+def write_queue_log(pdir, k, rows):
+    with open(os.path.join(pdir, f"server_{k}.queue.csv"), "w") as f:
+        f.write("t_ms,queue_len\n" + "".join(f"{t},{n}\n" for t, n in rows))
+
+
+class QueueLengthPlotTest(unittest.TestCase):
+    # Worked example: 2 instances with 3 and 4 rows give 3 summed points.
+    #
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#queuelengthplot
+    def test_worked_example(self):
+        with tempfile.TemporaryDirectory() as pdir:
+            write_queue_log(pdir, 0, [(0, 0), (10, 2), (20, 5)])
+            write_queue_log(pdir, 1, [(0, 1), (10, 0), (21, 1), (30, 4)])
+            self.assertEqual(plotter.point_queue_series(pdir, {"server_instances": 2}),
+                             [(0.0, 1), (0.01, 2), (0.02, 6)])
+
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#queuelengthplot
+    def test_edge_cases(self):
+        with tempfile.TemporaryDirectory() as pdir:
+            self.assertIsNone(plotter.point_queue_series(pdir, {"server_instances": 2}))  # no logs
+            write_queue_log(pdir, 1, [(0, 3), (10, 4)])  # instance 0 missing
+            self.assertEqual(plotter.point_queue_series(pdir, {"server_instances": 2}), [(0.0, 3), (0.01, 4)])
+            self.assertIsNone(plotter.point_queue_series(pdir, {}))  # old run: one instance, k = 0 only
+            write_queue_log(pdir, 0, [])  # header only
+            self.assertIsNone(plotter.point_queue_series(pdir, {"server_instances": 2}))
+            with open(os.path.join(pdir, "server_0.queue.csv"), "w") as f:
+                f.write("t_ms,queue_len\n0,1\n10,2\n2")  # truncated last line
+            self.assertEqual(plotter.read_queue_log(os.path.join(pdir, "server_0.queue.csv")), [(0, 1), (10, 2)])
+
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#queuelengthplot
+    def test_plot_file(self):
+        try:
+            import matplotlib  # noqa: F401
+        except ImportError:
+            self.skipTest("matplotlib not installed")
+        with tempfile.TemporaryDirectory() as out:
+            write_point(out, 0, {"server.n_worker_threads": 1})
+            write_point(out, 1, {"server.n_worker_threads": 4})
+            write_point(out, 2, {"server.n_worker_threads": 8})  # no queue log: left out
+            write_queue_log(os.path.join(out, "points", "point_0000"), 0, [(0, 0), (10, 5), (20, 9)])
+            write_queue_log(os.path.join(out, "points", "point_0001"), 0, [(0, 0), (10, 0), (20, 1)])
+            plotter.plot(out)
+            path = os.path.join(out, "plots", "queue_length.png")
+            self.assertTrue(os.path.getsize(path) > 0)
+            for pid in (0, 1):
+                os.remove(os.path.join(out, "points", f"point_{pid:04d}", "server_0.queue.csv"))
+            plotter.plot(out)
+            self.assertFalse(os.path.exists(path))  # no logs left: stale figure removed
 
 
 if __name__ == "__main__":
