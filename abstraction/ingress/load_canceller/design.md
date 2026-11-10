@@ -81,15 +81,16 @@ function run_schedule(canceller, config, inflight, rng):
 
 ```
 function choose_victim(rng, inflight):
-    snap = inflight_map.snapshot(inflight)                # list of (client_id, InFlightEntry), client-id order
+    snap = inflight_map.snapshot(inflight)                # one (client_id, InFlightEntry) per request, RequestId order
     k = len(snap)
     if k == 0: return none                                # nothing in flight: skipped, no draw
     i = sampling.uniform_int(rng, 0, k - 1)
     return snap[i]
 ```
 
-- Every request in flight at the snapshot is equally likely to be chosen, whichever client or backend it belongs
-  to.
+- Every **request** in flight at the snapshot is equally likely to be chosen, whichever client or backend it belongs
+  to. A client with more requests in flight is proportionally more likely to be targeted; with one request per
+  client this is the same as uniform over clients.
 - The victim may finish between the snapshot and the moment its `/cancel` reaches the backend. The server then
   counts it `completed_before_cancel`; nothing else happens. The shorter the requests, the more often this occurs.
 - Two arrivals close together may pick the same request. The server stores a duplicate id once
@@ -97,9 +98,10 @@ function choose_victim(rng, inflight):
 
 Worked example, 4 clients, 2 backends:
 
-| Snapshot (client: request seq @ server) | `k` | Draw `i` | Victim | `/cancel` sent to |
+| Snapshot (client: request seq @ server, in RequestId order) | `k` | Draw `i` | Victim | `/cancel` sent to |
 |---|---|---|---|---|
 | 0: 17 @ 1, 2: 9 @ 0, 3: 30 @ 1 | 3 | 1 | client 2, seq 9 | server 0 |
+| 0: 17 @ 1, 0: 18 @ 0, 2: 9 @ 0, 2: 10 @ 1 | 4 | 3 | client 2, seq 10 | server 1 |
 | 1: 4 @ 0 | 1 | 0 | client 1, seq 4 | server 0 |
 | (empty) | 0 | (no draw) | none | — (`skipped`) |
 
