@@ -32,6 +32,6 @@ run any client's job, and two jobs of one client may run at once; the client's s
 - [../../protocol/api.md](../../protocol/api.md): `parse_body`, `split_request_id`, `build_body`
 - [../../sampling/api.md](../../sampling/api.md): `exponential_us`
 - [../cpu_burner/api.md](../cpu_burner/api.md): `burn`
-- [../cancel_tracker/api.md](../cancel_tracker/api.md): `ConnectionCancelState`, `registry_client`, `should_cancel`, `registry_publish_finished`, `CancelCounters`
+- [../cancel_tracker/api.md](../cancel_tracker/api.md): `ConnectionCancelState`, `registry_client`, `registry_start`, `should_cancel`, `registry_publish_finished`, `CancelCounters`
 - [../worker_pool/api.md](../worker_pool/api.md): `PingJob`
 - [../api.md](../api.md#constants): `CHECK_ITER`

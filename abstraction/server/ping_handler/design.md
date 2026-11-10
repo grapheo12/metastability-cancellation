@@ -38,7 +38,8 @@ function admit_ping(task, config, rng, conn_state):
 function run_ping(job, config, registry, counters):
     id = job.request_id
     slot = cancel_tracker.registry_client(registry, job.client_id)      # none if the registry is full
-    finish = (completed) -> cancel_tracker.registry_publish_finished(registry, slot, id, completed)
+    cancel_tracker.registry_start(registry, slot, id)                    # CancelMatching: started, not finished
+    finish = (completed) -> cancel_tracker.registry_publish_finished(registry, slot, id, completed, counters)
 
     if config.cancel_mode == cooperative:
         id_check = () -> cancel_tracker.should_cancel(registry, slot, counters, id)
@@ -61,7 +62,7 @@ function run_ping(job, config, registry, counters):
     else:  # ignore
         cpu_burner.burn(job.service_us, NONE, config.cancel_check_interval_us, NONE, CHECK_ITER)
 
-    finish(true)                                                         # also raises last_completed_id
+    finish(true)                                                         # completed: feeds completed_before_cancel
     return Response(202, protocol.build_body(id, config.response_bytes))
 ```
 
@@ -101,28 +102,22 @@ still occupies its place in the line until then, but costs no burn.
 In `ignore` mode no check point runs. The RST flag is never read and `handle_cancel` throws away
 every id, so `should_cancel` is never needed.
 
-## last_completed_id
-
-The client's `last_completed_id` ([../cancel_tracker/design.md#clientcancelstate](../cancel_tracker/design.md#clientcancelstate))
-is raised only when the burn **completes** (`202`, `finish(true)`), never for `503`, `Aborted` or `400`. It is a
-max-update: two requests of one client can finish out of order on different workers, and the value never goes
-down. CancelMatching uses it to tell "already completed" cancels from stale ones
-([../cancel_tracker/design.md#cancelmatching](../cancel_tracker/design.md#cancelmatching)).
-
 ## FinishedWatermark
 
-`finish()` publishes the request's id as the client's FinishedWatermark
-([../cancel_tracker/design.md#finishedwatermark](../cancel_tracker/design.md#finishedwatermark)). It runs **once
+`finish(completed)` publishes the request's id as the client's FinishedWatermark and records its outcome for
+CancelMatching ([../cancel_tracker/design.md#finishedwatermark](../cancel_tracker/design.md#finishedwatermark)):
+`completed` is `true` only for `202`, so only a request whose burn completed can turn a late `/cancel` into
+`completed_before_cancel`. It runs **once
 for every admitted request**, on every way out of `run_ping`, in both modes, and before the response is returned
 for writing:
 
-| Outcome | `finish(completed)` | `last_completed_id` | FinishedWatermark |
-|---|---|---|---|
-| `202` (burn completed) | `finish(true)` | raised to `id` | raised to `id` |
-| `503` (`/cancel` matched at check point 1 or 2) | `finish(false)` | unchanged | raised to `id` |
-| `Aborted` (RST at check point 1 or during the burn) | `finish(false)` | unchanged | raised to `id` |
-| `400` (unparseable, or client id mismatch) | not called: never admitted | unchanged | unchanged |
-| Dropped from the WorkQueue at shutdown | not called: never run | unchanged | unchanged |
+| Outcome | `registry_start` | `finish(completed)` | A later `/cancel` for this id | FinishedWatermark |
+|---|---|---|---|---|
+| `202` (burn completed) | called | `finish(true)` | `completed_before_cancel += 1` | raised to `id` |
+| `503` (`/cancel` matched at check point 1 or 2) | called | `finish(false)` | dropped, not counted | raised to `id` |
+| `Aborted` (RST at check point 1 or during the burn) | called | `finish(false)` | dropped, not counted | raised to `id` |
+| `400` (unparseable, or client id mismatch) | not called: never admitted | not called | aged out, not counted | unchanged |
+| Dropped from the WorkQueue at shutdown | not called: never run | not called | not counted | unchanged |
 
 A `202` that the Connection Handler then drops because of a late RST (check point 3) has still finished its burn,
 so its id is already published. Publishing before the write means a `/cancel` answered after the client
@@ -130,12 +125,12 @@ received its response never reports an older id for that request.
 
 Worked example for client 0 in `cooperative` mode, `/cancel` for id 1 registered before request 1 starts:
 
-| Request | Outcome | `last_completed_id` after | FinishedWatermark after |
+| Request | Outcome | `finish` | FinishedWatermark after |
 |---|---|---|---|
-| 0 | `202` | 0 | 0 |
-| 1 | `503` at check point 1 | 0 | 1 |
-| 2 | RST during the burn → `Aborted` | 0 | 2 |
-| 3 | `202` | 3 | 3 |
+| 0 | `202` | `finish(true)` | 0 |
+| 1 | `503` at check point 1 | `finish(false)` | 1 |
+| 2 | RST during the burn → `Aborted` | `finish(false)` | 2 |
+| 3 | `202` | `finish(true)` | 3 |
 
 ## Response status
 
