@@ -92,10 +92,11 @@ nothing is in progress at shutdown.
 
 ## Why one upstream connection per client and backend
 
-The server binds each connection to the client id of its first `/ping` and serves it serially
+The server binds each connection to the client id of its first `/ping`
 ([../server/description.md](../server/description.md)). Giving each (client, backend) pair its own connection
-keeps both rules true behind the Ingress without changing the server. A shared connection would mix client ids and
-get `400`s.
+keeps that rule true behind the Ingress without changing the server. A shared connection would mix client ids and
+get `400`s. It also keeps each client's ServiceTime draws on that client's own connection stream, as if the client
+had connected directly.
 
 ## Design specific to Go
 
