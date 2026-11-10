@@ -3,7 +3,7 @@
 // Ingress Upstream Pool and the Ingress Load Canceller.
 //
 // Source: abstraction/load_generator/run_controller/design.md (run_controller v0.1.1),
-// abstraction/ingress/upstream_pool/design.md (upstream_pool v0.1.0),
+// abstraction/ingress/upstream_pool/design.md (upstream_pool v0.1.1),
 // abstraction/ingress/load_canceller/design.md (load_canceller v0.3.0)
 package h2client
 

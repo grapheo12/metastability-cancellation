@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/upstream_pool/design.md (upstream_pool v0.1.0)
+// Source: abstraction/ingress/upstream_pool/design.md (upstream_pool v0.1.1)
 package ingress
 
 import (
