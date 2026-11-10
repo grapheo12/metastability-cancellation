@@ -13,6 +13,7 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 | `cancel_check_interval_us` | integer, µs, `>= 1` | `50` |
 | `seed` | u64 | `0` |
 | `n_worker_threads` | integer, `1 ..= 2^32-1` | `1` |
+| `initial_stall_ms` | integer, ms, `>= 0` | `1000` |
 | `queue_log_path` | path, or empty | empty |
 | `queue_sample_interval_ms` | integer, ms, `>= 1` | `10` |
 
@@ -27,7 +28,7 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 
 ### `ServerConfig`
 
-An immutable record holding the nine parameters above after validation
+An immutable record holding the ten parameters above after validation
 ([design.md#configuration-validation](design.md#configuration-validation)). One read-only copy is
 shared by all Connection Handlers and workers.
 
@@ -39,6 +40,8 @@ shared by all Connection Handlers and workers.
   (END_STREAM) and admitted, and runs up to `n_worker_threads` of them at once
   ([worker_pool/design.md#ordering](worker_pool/design.md#ordering)).
 - Answers `/cancel` without queuing it behind any `/ping`.
+- Runs no `/ping` until `initial_stall_ms` after the first admitted `/ping`; until then requests are only queued
+  ([worker_pool/design.md#stallgate](worker_pool/design.md#stallgate)).
 - Binds each connection to the client id of its first valid `/ping`.
 - Cancels work as `cancel_mode` says ([design.md#cancellation-semantics](design.md#cancellation-semantics)).
 

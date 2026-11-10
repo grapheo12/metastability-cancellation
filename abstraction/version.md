@@ -60,3 +60,4 @@
 | 0.7.1 | 2026-11-10T00:00:00Z | Child bump: benchmark_runner 0.2.7 (config 0.6.0) |
 | 0.7.2 | 2026-11-10T00:00:00Z | Child bump: benchmark_runner 0.2.8 (experiment_executor 0.5.0) |
 | 0.7.3 | 2026-11-10T00:00:00Z | Glossary: QueueLengthPlot. Child bump: benchmark_runner 0.2.9 (result_plotter 0.6.0) |
+| 0.8.0 | 2026-11-10T00:00:00Z | Server parameter `initial_stall_ms`; glossary StallGate. Child bump: server 0.5.0 (worker_pool 0.3.0) |

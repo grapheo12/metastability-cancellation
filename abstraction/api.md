@@ -18,6 +18,7 @@ three on remote machines. Its interface is in [Benchmark runner](#benchmark-runn
 | `cancel_check_interval_us` | integer, µs, `>= 1` | `50` | How often CooperativeCpuBurn checks the RST flag |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for ServiceTime sampling |
 | `n_worker_threads` | integer, `1 ..= 2^32-1` | `1` | Number of workers in the server's WorkerPool: how many `/ping` requests run at once ([server/worker_pool/design.md](server/worker_pool/design.md#workerpool)) |
+| `initial_stall_ms` | integer, ms, `>= 0` | `1000` | StallGate: after the first admitted `/ping`, the server queues requests but runs none for this long, to build a backlog. `0`: no stall ([server/worker_pool/design.md](server/worker_pool/design.md#stallgate)) |
 | `queue_log_path` | path, or empty | empty | Where to write the QueueLengthLog CSV. Empty: no log ([server/api.md#queuelengthlog-output](server/api.md#queuelengthlog-output)) |
 | `queue_sample_interval_ms` | integer, ms, `>= 1` | `10` | Time between two QueueLengthLog samples. Ignored when `queue_log_path` is empty |
 
