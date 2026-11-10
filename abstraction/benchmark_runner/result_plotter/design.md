@@ -35,6 +35,7 @@ function plot(output_dir):
     series = group done rows by their tuple of series_keys values, in first-appearance order
     label(series) = ", ".join(k + "=" + v for k, v in series) or "all"
     for figure in FIGURES:
+        if figure.x == "time": draw_queue_length(output_dir, done, swept_keys); continue   # QueueLengthPlot
         if figure.x == "x_key": draw as below
         else: draw as in ThroughputLatencyPlot; continue
         one subplot per metric of the figure, sharing the x-axis, title = metric name
@@ -55,6 +56,7 @@ function plot(output_dir):
 | `throughput_latency` | `lg_goodput` | `e2e_p50_us`, `e2e_p99_us`, `e2e_p999_us` | log |
 | `throughput_latency_normalized` | `lg_goodput / (1 - cx_offered_fraction)` | `e2e_p50_us`, `e2e_p99_us`, `e2e_p999_us` | log |
 | `server_counters_normalized` | `x_key` | `srv_cancelled_before_processing / cx_sent`, `srv_cancelled_during_processing / cx_sent`, `srv_completed_before_cancel / cx_sent` | linear, 0 to 1 |
+| `queue_length` | `time` (s since server start) | one plot: `queue_len` summed over instances, one line per done point ([QueueLengthPlot](#queuelengthplot)) | linear, from 0 |
 
 A fraction is empty when its denominator (`lg_scheduled` or `cx_sent`) is empty or `0`.
 
@@ -174,6 +176,72 @@ x-axis label: `lg_goodput / (1 - cx_offered_fraction) (requests/s)`.
 | 491.0 | 0.01 | 495.9596… | 491 / 0.99 |
 | 992.0 | empty | 992.0 | f = 0 |
 | 50.0 | 1.0 | empty | point left out |
+
+## QueueLengthPlot
+
+The **QueueLengthPlot** (`queue_length.png`) shows each done point's WorkQueue backlog over time, from the servers'
+QueueLengthLogs ([../../server/api.md#queuelengthlog-output](../../server/api.md#queuelengthlog-output)). Unlike the
+other figures it has time on the x-axis and **one line per point**, not per series.
+
+```
+function read_queue_log(path):                     # -> list of (t_ms: u64, queue_len: u64)
+    if path does not exist: return none
+    rows = []
+    for each line after the header "t_ms,queue_len":
+        if the line is not two decimal integers separated by ",": stop   # e.g. a truncated last line
+        rows.append((t_ms, queue_len))
+    return rows
+
+function point_queue_series(pdir, params):         # -> list of (x_s: float, y: u64) | none
+    I = params.server_instances, or 1 if absent    # runs made before server instances
+    logs = [read_queue_log(pdir/server_<k>.queue.csv) for k in 0 ..= I-1]
+    logs = [l for l in logs if l is not none]      # in instance order
+    if logs is empty: return none
+    m = min(len(l) for l in logs)
+    if m == 0: return none                         # some log has a header only
+    return [ (logs[0][i].t_ms / 1000, sum(l[i].queue_len for l in logs)) for i in 0 ..= m-1 ]
+
+function draw_queue_length(output_dir, done, swept_keys):
+    lines = []
+    for row in done, in point-id order:
+        s = point_queue_series(output_dir/points/point_<row.point>, params.json of the point)
+        if s is none: continue
+        label = ", ".join(k + "=" + row[k] for k in swept_keys) or ("point " + row.point)
+        lines.append((label, s))
+    if lines is empty:
+        delete output_dir/plots/queue_length.png if it exists; return     # not an error
+    one plot; for each (label, s) in lines: a line without markers through s
+    x-axis linear, label "time since server start (s)"
+    y-axis linear from 0, label "queue_len (waiting jobs, all instances)"
+    legend with the labels when there is more than one line
+    save as output_dir/plots/queue_length.png, width 6 in
+```
+
+- **Instances are summed by row index.** All instances of a point use the same `queue_sample_interval_ms` and start
+  within a few milliseconds of each other, so row `i` of every log is the same moment to within one interval.
+  Rows beyond the shortest log are dropped, and the x value comes from instance 0's log (the first present one).
+- **Time starts at the server's start**, not the load's. The first part of each line is the idle time before the
+  Ingress and the load generator start.
+- **Labels name the point**, not a series: the values of every swept key, so each line is one SweepPoint.
+
+Worked example, one point with 2 instances:
+
+| `i` | instance 0 (`t_ms`, `queue_len`) | instance 1 (`t_ms`, `queue_len`) | Plotted (x s, y) | Check |
+|---|---|---|---|---|
+| 0 | (0, 0) | (0, 1) | (0.0, 1) | 0 + 1 |
+| 1 | (10, 2) | (10, 0) | (0.01, 2) | 2 + 0 |
+| 2 | (20, 5) | (21, 1) | (0.02, 6) | 5 + 1; x from instance 0 |
+| 3 | — (3 rows) | (30, 4) | not plotted | beyond the shortest log (m = 3) |
+
+| Situation | Result |
+|---|---|
+| No QueueLengthLog files for a point (e.g. a run made before them) | Point left out |
+| One instance's file missing, the other present | Plotted from the present instance only |
+| A log with a header only | Point left out (`m = 0`) |
+| Truncated last line | Rows up to it are used |
+| No done point has a log | No `queue_length.png`; any earlier one is deleted |
+
+Non-goal: no PointTable column summarizes the queue length in this version.
 
 ## Design specific to Python
 
