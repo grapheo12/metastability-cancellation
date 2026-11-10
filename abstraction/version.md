@@ -66,3 +66,4 @@
 | 0.9.0 | 2026-11-10T00:00:00Z | Load generator parameter `n_waiting_requests`; system summary, glossary (SemiOpenLoopClient replaces ClosedLoopPoissonClient; GatedArrival), request flow and WorkQueue rationale for many outstanding requests per client. Child bump: load_generator 0.2.0 (client 0.3.0) |
 | 0.9.1 | 2026-11-10T00:00:00Z | Wire contract: peers accept at least `MAX_WAITING_REQUESTS` (1000) concurrent streams per connection. Child bump: load_generator 0.2.1 (run_controller 0.2.0) |
 | 0.9.2 | 2026-11-10T00:00:00Z | Glossary: ClientCancelState, CancelMatching; WorkQueue rationale no longer relies on request order. Child bump: server 0.5.1 (cancel_tracker 0.4.0) |
+| 0.9.3 | 2026-11-10T00:00:00Z | Child bump: server 0.5.2 (ping_handler 0.5.0) |
