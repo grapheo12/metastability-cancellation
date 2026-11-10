@@ -1,9 +1,15 @@
 # Ping Handler — Description
 
-Leaf component. Handles one routed `POST /ping` StreamTask:
+Leaf component. Handles one routed `POST /ping` in two steps.
+
+On the Connection Handler, when the request is fully received (**admit**):
 
 - Parse the RequestId and bind the connection to its client id (`id >> 32`) on the first `/ping`.
-- Sample a ServiceTime.
+- Sample a ServiceTime from the connection's Rng.
+- Package the request as a **PingJob** for the WorkQueue, or answer `400` straight away.
+
+On a worker of the WorkerPool (**run**):
+
 - In `cooperative` mode, run the **CancelCheckPoints**: once before the burn, and inside the burn
   (RST every `cancel_check_interval_us`, `/cancel` every `CHECK_ITER` spin units).
 - Answer `202` if the burn completed, `503` if a `/cancel` stopped it, or nothing if an RST stopped it.

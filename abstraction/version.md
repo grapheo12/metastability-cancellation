@@ -52,3 +52,4 @@
 | 0.5.9 | 2026-11-04T00:00:00Z | Ingress `num_clients` bounds the InFlightMap key space; child bump: ingress 0.1.6 (inflight_map 0.2.0) |
 | 0.6.0 | 2026-11-10T00:00:00Z | Server parameter `n_worker_threads`. System summary, glossary (WorkQueue, WorkerPool, PingJob replace SerialStreamWorker; CancelInbox, CancelMatching wording), component diagram, request and cancel flows, "Why the server has one shared WorkQueue". Child bump: server 0.3.0 (new worker_pool 0.1.0) |
 | 0.6.1 | 2026-11-10T00:00:00Z | Glossary: ClientCancelState. Child bump: server 0.3.1 (cancel_tracker 0.3.0) |
+| 0.6.2 | 2026-11-10T00:00:00Z | Child bump: server 0.3.2 (ping_handler 0.4.0) |
