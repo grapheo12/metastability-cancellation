@@ -49,7 +49,9 @@ function validate(params):
     cancel_rate >= 0 and finite                             else error
     if cancel_rate > 0: duration_s > 0 and finite           else error "duration_s is required with cancel_rate > 0"
     seed parses as u64                                      else error
-    return IngressConfig(..., duration_ns = round(duration_s * 1e9) if cancel_rate > 0)
+    initial_stall_ms is an integer >= 0                     else error
+    return IngressConfig(..., duration_ns = round(duration_s * 1e9) if cancel_rate > 0,
+                         initial_stall_ns = initial_stall_ms * 1_000_000)
 ```
 
 Duplicate backends are allowed: they are separate `server_id`s that happen to share an address.
