@@ -36,6 +36,7 @@ CancelCounters ([Server outputs](#server-outputs)).
 | `slo_ms` | float, ms, `> 0` | required | A request not fully answered within `slo_ms` of being sent is cancelled |
 | `duration_s` | float, s, `> 0` | required | Length of the active phase. No request is sent at or after this time |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for arrival sampling |
+| `n_waiting_requests` | integer, `1 ..= MAX_WAITING_REQUESTS` (`1000`) | `100` | Most requests one client keeps outstanding at once. An arrival that comes due at the cap waits for a slot. `1` is a closed loop ([load_generator/client/design.md](load_generator/client/design.md#semiopenloopclient)) |
 | `output_path` | path prefix | `results` | Outputs go to `<output_path>.requests.csv` and `<output_path>.summary.json` |
 
 The minimum body size of 42 bytes comes from [protocol/design.md](protocol/design.md#minimum-body-size).

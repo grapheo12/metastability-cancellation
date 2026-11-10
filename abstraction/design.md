@@ -64,7 +64,8 @@ parameters, their output files and the server's `listening on` and CancelCounter
 
 ## End-to-end flow of one request
 
-1. Client `i` reaches scheduled arrival `seq` (a GatedArrival: it waits if request `seq-1` is unresolved).
+1. Client `i`'s sender reaches scheduled arrival `seq` (a GatedArrival: it waits while `n_waiting_requests` of
+   its requests are unresolved).
 2. Client builds RequestId `(i << 32) | seq` and a PaddedJsonBody of `request_bytes`, then sends
    `POST /ping` on its own connection to the Ingress and starts an SLO timer.
    The Ingress's ForwardTask picks a backend, records the request in the InFlightMap, and forwards it unchanged on
@@ -82,7 +83,8 @@ parameters, their output files and the server's `listening on` and CancelCounter
    - The SLO fires first. The client sends `RST_STREAM(CANCEL)` and records `cancelled`. On the
      server, in `cooperative` mode, the worker skips or stops the request and writes nothing. In
      `ignore` mode the server burns the full time and its response is dropped.
-5. The client moves on to scheduled arrival `seq+1`.
+5. The client's receiver records the outcome and frees the request's slot. The sender does not wait for steps
+   2–4: it moves on to scheduled arrival `seq+1` as soon as that is due and a slot is free.
 
 ## End-to-end flow of one cancel
 
@@ -98,9 +100,9 @@ parameters, their output files and the server's `listening on` and CancelCounter
 ## Why the server has one shared WorkQueue
 
 The server runs `/ping`s from all connections on `n_worker_threads` workers fed by **one FIFO, in arrival
-order**, like a CPU-bound service with a fixed number of cores. Clients are closed loops, so normally only one
-request per client is live. After a cancellation, though, the client sends its next request while the server
-may still be working on the cancelled one. In `ignore` mode the abandoned work keeps a worker busy, and every
+order**, like a CPU-bound service with a fixed number of cores. Each client keeps up to `n_waiting_requests` requests live, so the queue can hold many requests per client.
+After a cancellation, the client's slot is free again while the server may still be working on the cancelled
+request. In `ignore` mode the abandoned work keeps a worker busy, and every
 request queued behind it waits, whichever client sent it. That wait is the effect this testbed measures.
 `/cancel` never enters the queue, so it is never stuck behind the work it targets. Requests start in arrival
 order, so the request ids of one client start in increasing order, which CancelMatching depends on. See

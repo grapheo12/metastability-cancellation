@@ -13,6 +13,7 @@ Same as [../api.md#load-generator-parameters](../api.md#load-generator-parameter
 | `slo_ms` | float, ms, `> 0` | required |
 | `duration_s` | float, s, `> 0` | required |
 | `seed` | u64 | `0` |
+| `n_waiting_requests` | integer, `1 ..= MAX_WAITING_REQUESTS` (1000) | `100` |
 | `output_path` | path prefix | `results` |
 
 ## Types
