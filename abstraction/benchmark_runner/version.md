@@ -19,3 +19,4 @@
 | 0.2.3 | 2026-11-02T00:00:00Z | Child bump: result_plotter 0.5.0 |
 | 0.2.4 | 2026-11-03T00:00:00Z | Child bump: config 0.4.0 (IngressPlacement) |
 | 0.2.5 | 2026-11-03T00:00:00Z | Child bump: experiment_executor 0.4.0 |
+| 0.2.6 | 2026-11-10T00:00:00Z | Child bump: config 0.5.0 (`n_worker_threads`) |

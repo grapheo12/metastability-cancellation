@@ -4,7 +4,8 @@
 
 ```
 PROGRAM_PARAMS = {
-  "server":    ["response_rate", "response_bytes", "cancel_mode", "cancel_check_interval_us", "seed"],
+  "server":    ["response_rate", "response_bytes", "cancel_mode", "cancel_check_interval_us", "seed",
+                "n_worker_threads"],
   "load_gen":  ["num_clients", "global_rate", "request_bytes", "slo_ms", "duration_s", "seed"],
   "ingress":   ["lb_policy", "cancel_rate", "duration_s", "seed"],
 }
@@ -190,6 +191,19 @@ for the whole run: they describe the machine split, not a parameter under study.
 them in every SweepPoint's `placement`. It never turns them into program arguments. The Experiment Executor applies
 them when it starts each program, and the run flow ([../design.md#run-flow](../design.md#run-flow)) checks that the
 implementation can honour `threads`.
+
+**`threads` is not `n_worker_threads`.** `[server] threads` is a ProcessPlacement key: the language runtime's
+worker-thread count, fixed for the run and never a program argument. `[server] n_worker_threads` is a server
+program parameter ([../../api.md#server-parameters](../../api.md#server-parameters)): how many `/ping`s the server's
+WorkerPool runs at once. It is passed as `--n_worker_threads` and can be swept like any program parameter. Config
+does not relate the two. For the workers to burn in parallel the server needs at least `n_worker_threads + 1`
+threads and CPUs ([../../server/worker_pool/design.md#concurrency-requirement](../../server/worker_pool/design.md#concurrency-requirement)),
+which the operator arranges with `threads` and `cpu_set`.
+
+| `[server]` keys | `server_args` of each point | `placement.server` |
+|---|---|---|
+| `n_worker_threads = [1, 4]`, `threads = 8` | point 0: `n_worker_threads 1`; point 1: `n_worker_threads 4` (plus the other server parameters) | `{"threads": 8, "cpu_set": none}` for both |
+| `threads = 2` only | no `n_worker_threads` argument: the server's default `1` applies | `{"threads": 2, "cpu_set": none}` |
 
 The CPU list pattern is `^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$`, the list format of `taskset -c`. Config does not
 check that the CPUs exist or that ranges are ascending. The pinning tool rejects bad lists when the program starts,
