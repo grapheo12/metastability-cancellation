@@ -131,10 +131,11 @@ written by the stream, not by the worker ([../connection_handler/design.md](../c
 - With `n_worker_threads > 1`, up to `n_worker_threads` jobs run at once, and a job that started later can finish
   earlier.
 - One connection pushes its jobs in the order it admits them, which is the order their requests were fully
-  received. A client sends its RequestIds in increasing order, so each client's jobs **start** with increasing
-  `request_id`. Two jobs of the same client can only run at the same time after the client gave up on the
-  earlier one (RST), because a client keeps at most one request outstanding. CancelMatching relies on this
-  ([../cancel_tracker/design.md](../cancel_tracker/design.md)).
+  received. A client keeps up to `n_waiting_requests` requests outstanding on its connection, and their streams
+  may complete in any order, so a client's jobs need not start in `request_id` order, and several of them can be
+  queued and running at once. Nothing in the server relies on a per-client order: CancelMatching matches each
+  `/cancel` to its request by id
+  ([../cancel_tracker/design.md#out-of-order-requests](../cancel_tracker/design.md#out-of-order-requests)).
 
 Worked example: jobs `A`, `B`, `C` pushed at `t = 0` in that order, with `service_us` 300, 100 and 100, no
 cancellation:

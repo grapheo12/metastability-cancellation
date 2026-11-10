@@ -15,3 +15,4 @@
 | 0.5.0 | 2026-11-10T00:00:00Z | Parameter `initial_stall_ms` (default 1000): validation, Listener passes it to `queue_new`, wire behavior, RST-during-stall row, shutdown note. Child bump: worker_pool 0.3.0 |
 | 0.5.1 | 2026-11-10T00:00:00Z | WorkQueue rationale for many requests per client. Child bump: cancel_tracker 0.4.0 |
 | 0.5.2 | 2026-11-10T00:00:00Z | Child bump: ping_handler 0.5.0 |
+| 0.5.3 | 2026-11-10T00:00:00Z | Child bump: worker_pool 0.3.1 |
