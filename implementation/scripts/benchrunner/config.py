@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.5.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.6.0)
 """BenchConfig loading and validation, SweepExpansion, argument formatting."""
 
 import datetime
@@ -15,7 +15,7 @@ from . import transport
 # Design: abstraction/benchmark_runner/config/design.md#benchconfig
 PROGRAM_PARAMS = {
     "server": ["response_rate", "response_bytes", "cancel_mode", "cancel_check_interval_us", "seed",
-               "n_worker_threads"],
+               "n_worker_threads", "queue_sample_interval_ms"],
     "load_gen": ["num_clients", "global_rate", "request_bytes", "slo_ms", "duration_s", "seed"],
     "ingress": ["lb_policy", "cancel_rate", "duration_s", "seed"],
 }
@@ -32,7 +32,7 @@ CPU_LIST = re.compile(r"[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*")
 PROGRAM_OF = {"server": "server", "load_gen": "loadgen", "ingress": "ingress"}
 MAX_INSTANCES = 64
 FORBIDDEN = {
-    "server": ["listen_addr"],
+    "server": ["listen_addr", "queue_log_path"],
     "load_gen": ["target", "output_path"],
     "ingress": ["listen_addr", "backends", "num_clients", "output_path"],
 }

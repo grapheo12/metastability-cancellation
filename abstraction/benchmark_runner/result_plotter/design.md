@@ -273,4 +273,5 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [CancelOfferedFraction](#cancelofferedfraction) | [plotter.py:157](../../../implementation/scripts/benchrunner/plotter.py#L157), [test_plotter.py:89](../../../implementation/scripts/tests/test_plotter.py#L89) |
 | [LbImbalance](#lbimbalance) | [plotter.py:172](../../../implementation/scripts/benchrunner/plotter.py#L172), [test_plotter.py:111](../../../implementation/scripts/tests/test_plotter.py#L111) |
 | [ThroughputLatencyNormalizedPlot](#throughputlatencynormalizedplot) | [plotter.py:61](../../../implementation/scripts/benchrunner/plotter.py#L61), [plotter.py:184](../../../implementation/scripts/benchrunner/plotter.py#L184), [test_plotter.py:102](../../../implementation/scripts/tests/test_plotter.py#L102) |
+| [QueueLengthPlot](#queuelengthplot) |  |
 <!-- trace:end -->

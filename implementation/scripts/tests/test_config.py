@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.5.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.6.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -102,6 +102,11 @@ class ConfigTest(unittest.TestCase):
     def test_validation_errors(self):
         self.assertConfigError(BASE + "[server2]\n", "unknown table")
         self.assertConfigError(BASE.replace("response_rate", "listen_addr"), "set by the runner")
+        self.assertConfigError(BASE.replace("num_clients = 4", 'num_clients = 4').replace(
+            "response_rate = 2000", 'response_rate = 2000\nqueue_log_path = "x.csv"'), "server.queue_log_path is set by the runner")
+        swept = cfg.expand_sweep(self.load(BASE.replace("response_rate = 2000",
+                                                        "response_rate = 2000\nqueue_sample_interval_ms = [5, 50]")))
+        self.assertEqual(sorted({dict(p.server_args)["queue_sample_interval_ms"] for p in swept}), [5, 50])
         self.assertConfigError(BASE.replace("global_rate", "global_load"), "unknown key load_gen.global_load")
         self.assertConfigError(BASE.replace("response_rate = 2000", "listen_port = [1, 2]"), "cannot be swept")
         self.assertConfigError(BASE.replace("slo_ms = 5", ""), "load_gen.slo_ms is required")
