@@ -6,7 +6,8 @@
 PROGRAM_PARAMS = {
   "server":    ["response_rate", "response_bytes", "cancel_mode", "cancel_check_interval_us", "seed",
                 "n_worker_threads", "queue_sample_interval_ms", "initial_stall_ms"],
-  "load_gen":  ["num_clients", "global_rate", "request_bytes", "slo_ms", "duration_s", "seed"],
+  "load_gen":  ["num_clients", "global_rate", "request_bytes", "slo_ms", "duration_s", "seed",
+                "n_waiting_requests"],
   "ingress":   ["lb_policy", "cancel_rate", "duration_s", "seed", "initial_stall_ms"],
 }
 PLACEMENT_KEYS = ["threads", "cpu_set"]                                  # ProcessPlacement

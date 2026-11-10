@@ -72,3 +72,4 @@
 | 0.9.6 | 2026-11-10T00:00:00Z | Child bump: ingress 0.1.10 (frontend 0.2.0) |
 | 0.9.7 | 2026-11-10T00:00:00Z | Glossary: InFlightVictimChoice per request. Child bump: ingress 0.1.11 (load_canceller 0.5.0) |
 | 0.9.8 | 2026-11-10T00:00:00Z | Child bump: ingress 0.1.12 (upstream_pool 0.1.2) |
+| 0.9.9 | 2026-11-10T00:00:00Z | Child bump: benchmark_runner 0.2.11 (config 0.8.0) |

@@ -24,3 +24,4 @@
 | 0.2.8 | 2026-11-10T00:00:00Z | Output tree: `server_<k>.queue.csv`. Child bump: experiment_executor 0.5.0 |
 | 0.2.9 | 2026-11-10T00:00:00Z | Output tree: `queue_length.png`. Child bump: result_plotter 0.6.0 |
 | 0.2.10 | 2026-11-10T00:00:00Z | Child bump: config 0.7.0 (`initial_stall_ms`) |
+| 0.2.11 | 2026-11-10T00:00:00Z | Child bump: config 0.8.0 (`n_waiting_requests`) |
