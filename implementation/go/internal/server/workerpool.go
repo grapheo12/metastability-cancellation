@@ -1,4 +1,4 @@
-// Source: abstraction/server/worker_pool/design.md (worker_pool v0.2.0)
+// Source: abstraction/server/worker_pool/design.md (worker_pool v0.3.0)
 package server
 
 import (
@@ -35,7 +35,8 @@ func newPingJob(task *StreamTask, requestID uint64, clientID uint32, serviceUs u
 func (j *PingJob) Reply() Response { return <-j.reply }
 
 // WorkQueue is the process-wide unbounded MPMC FIFO: one mutex, one condition
-// variable and a slice used as a FIFO (Go channels are bounded).
+// variable and a slice used as a FIFO (Go channels are bounded). armed/openAt
+// are the StallGate, guarded by mu like everything else.
 //
 // Design: abstraction/server/worker_pool/design.md#workqueue
 type WorkQueue struct {
@@ -43,13 +44,17 @@ type WorkQueue struct {
 	notEmpty *sync.Cond
 	items    []*PingJob
 	closed   bool
+	stall    time.Duration
+	armed    bool
+	openAt   time.Time // monotonic reading; valid once armed
 }
 
-// NewWorkQueue returns an empty, open queue.
+// NewWorkQueue returns an empty, open queue whose StallGate opens
+// initialStallMs after the first push.
 //
 // Design: abstraction/server/worker_pool/design.md#workqueue
-func NewWorkQueue() *WorkQueue {
-	q := &WorkQueue{}
+func NewWorkQueue(initialStallMs uint64) *WorkQueue {
+	q := &WorkQueue{stall: time.Duration(initialStallMs) * time.Millisecond}
 	q.notEmpty = sync.NewCond(&q.mu)
 	return q
 }
@@ -64,20 +69,42 @@ func (q *WorkQueue) Push(job *PingJob) error {
 	if q.closed {
 		return ErrQueueClosed
 	}
+	if !q.armed { // StallGate: the first push arms it
+		q.arm()
+	}
 	q.items = append(q.items, job)
 	q.notEmpty.Signal()
 	return nil
 }
 
-// Pop removes and returns the head job, waiting while the queue is empty and
-// open. It returns nil once the queue is closed (closed wins over items).
+// arm sets the StallGate's opening time. With a stall, a timer wakes every
+// waiting worker at openAt; time.AfterFunc fires no earlier than that, and Pop
+// re-checks the time anyway. Called with mu held.
+//
+// Design: abstraction/server/worker_pool/design.md#stallgate
+func (q *WorkQueue) arm() {
+	q.armed = true
+	q.openAt = time.Now().Add(q.stall)
+	if q.stall > 0 {
+		time.AfterFunc(q.stall, func() {
+			q.mu.Lock()
+			q.notEmpty.Broadcast()
+			q.mu.Unlock()
+		})
+	}
+}
+
+// Pop removes and returns the head job, waiting while the queue is empty or
+// the StallGate is closed, and the queue is open. It returns nil once the
+// queue is closed (closed wins over items).
 //
 // Design: abstraction/server/worker_pool/design.md#workqueue
+// Design: abstraction/server/worker_pool/design.md#stallgate
 func (q *WorkQueue) Pop() *PingJob {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	for len(q.items) == 0 && !q.closed {
-		q.notEmpty.Wait()
+	for !q.closed && (len(q.items) == 0 || time.Now().Before(q.openAt)) {
+		q.notEmpty.Wait() // woken by a push, the gate's timer, or Close
 	}
 	if q.closed {
 		return nil

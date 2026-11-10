@@ -1,7 +1,7 @@
 // Package server implements the HTTP/2 /ping + /cancel server. Each file maps
 // to one component of abstraction/server.
 //
-// Source: abstraction/server/design.md (server v0.4.0)
+// Source: abstraction/server/design.md (server v0.5.0)
 package server
 
 import (
@@ -39,6 +39,7 @@ type Config struct {
 	NWorkerThreads        uint32
 	QueueLogPath          string // empty: no QueueLengthLog
 	QueueSampleIntervalMs uint64
+	InitialStallMs        uint64 // StallGate; 0: no stall
 }
 
 // Params holds the raw command-line values, named after the API parameters.
@@ -52,6 +53,7 @@ type Params struct {
 	NWorkerThreads        string
 	QueueLogPath          string
 	QueueSampleIntervalMs string
+	InitialStallMs        string
 }
 
 // DefaultParams returns the defaults from abstraction/server/api.md#program-parameters.
@@ -63,6 +65,7 @@ func DefaultParams() Params {
 		Seed:                  "0",
 		NWorkerThreads:        "1",
 		QueueSampleIntervalMs: "10",
+		InitialStallMs:        "1000",
 	}
 }
 
@@ -120,5 +123,10 @@ func Validate(p Params) (Config, error) {
 	}
 	c.QueueSampleIntervalMs = qi
 	c.QueueLogPath = p.QueueLogPath
+	st, err := strconv.ParseUint(p.InitialStallMs, 10, 64)
+	if err != nil {
+		return c, errors.New("initial_stall_ms must be an integer >= 0")
+	}
+	c.InitialStallMs = st
 	return c, nil
 }

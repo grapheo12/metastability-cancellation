@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.4.0)
+// Source: abstraction/server/design.md (server v0.5.0)
 package server
 
 import (
@@ -315,4 +315,45 @@ func TestQueueLengthLogEndToEnd(t *testing.T) {
 		QueueLogPath: filepath.Join(dir, "missing", "q.csv"), QueueSampleIntervalMs: 10}); err == nil {
 		t.Fatal("unwritable queue_log_path must fail Listen")
 	}
+}
+
+// End to end: /cancel does not arm the StallGate; the first /ping does, and is
+// answered only after the stall. A /cancel registered during the stall is
+// caught at CancelCheckPoint 1.
+//
+// Design: abstraction/server/worker_pool/design.md#stallgate
+func TestInitialStallEndToEnd(t *testing.T) {
+	s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: 100000, ResponseBytes: 64,
+		CancelMode: CancelCooperative, CancelCheckIntervalUs: 50, NWorkerThreads: 1, InitialStallMs: 300})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go s.Serve()
+	addr := s.Addr().String()
+	a, b, canceller := dialTest(t, addr), dialTest(t, addr), dialTest(t, addr)
+	if st, _ := canceller.do(t, "DELETE", "/cancel", protocol.BuildCancelBody(protocol.MakeRequestID(9, 9))); st != 202 {
+		t.Fatalf("cancel before any ping: %d", st)
+	}
+	time.Sleep(200 * time.Millisecond) // must not count towards the stall
+	idA, idB := protocol.MakeRequestID(0, 0), protocol.MakeRequestID(0, 1)
+	resB := make(chan int, 1)
+	start := time.Now()
+	go func() { st, _ := b.do(t, "POST", "/ping", protocol.BuildBody(idB, 64)); resB <- st }()
+	time.Sleep(50 * time.Millisecond)
+	if st, _ := canceller.do(t, "DELETE", "/cancel", protocol.BuildCancelBody(idB)); st != 202 {
+		t.Fatalf("cancel during stall: %d", st)
+	}
+	if st, _ := a.do(t, "POST", "/ping", protocol.BuildBody(idA, 64)); st != 202 {
+		t.Fatalf("A: %d", st)
+	}
+	if waited := time.Since(start); waited < 300*time.Millisecond {
+		t.Fatalf("answered after %v, before the 300ms stall", waited)
+	}
+	if st := <-resB; st != 503 {
+		t.Fatalf("B cancelled during the stall: %d, want 503", st)
+	}
+	if bp, _, _ := s.Counters().Snapshot(); bp != 1 {
+		t.Fatalf("cancelled_before_processing %d, want 1", bp)
+	}
+	s.Shutdown()
 }
