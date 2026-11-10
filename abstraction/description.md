@@ -24,8 +24,9 @@ process-wide, unbounded **WorkQueue**. A **WorkerPool** of `n_worker_threads` wo
 arrival order. For each `/ping` a worker busy-loops on the CPU for a random
 time drawn from an exponential distribution, then answers `202` (completed) or `503` (cancelled by
 `/cancel`) with a JSON body of a fixed size. A **Load Generator** simulates `N` clients, each on its
-own connection. Every client has its own Poisson arrival clock (rate `global_rate / N`) but keeps at
-most one request outstanding (a gated closed loop), and cancels requests that go past their SLO. The
+own connection. Every client has its own Poisson arrival clock (rate `global_rate / N`) and keeps up to
+`n_waiting_requests` requests outstanding (a semi-open loop: arrivals wait only when that cap is reached), and
+cancels requests that go past their SLO. The
 clients talk to an **Ingress**, which serves the same `/ping`: for each request it picks a backend server
 with a **LoadBalancer** (`lb_policy`), forwards the request on its own connection for that client and
 backend, waits, and relays the answer. While it waits it records the request in a lock-free
@@ -81,8 +82,8 @@ downloads each point's results and plots all points together.
 | **CancelMatching** | Per-client algorithm that matches pending cancel ids against the request a worker is running | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelmatching) |
 | **CancelCheckPoint** | A point where the worker consults CancelMatching: before a request starts, and every `CHECK_ITER` spin units during its burn | [server/ping_handler/design.md](server/ping_handler/design.md#cancelcheckpoints) |
 | **CancelCounters** | Server-wide atomic counters: cancelled before processing, cancelled during processing, completed before cancel | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelcounters) |
-| **ClosedLoopPoissonClient** | Client with a Poisson arrival clock and at most one outstanding request | [load_generator/client/design.md](load_generator/client/design.md#closedlooppoissonclient) |
-| **GatedArrival** | A scheduled arrival that must wait for the previous request to resolve | [load_generator/client/design.md](load_generator/client/design.md#gatedarrival) |
+| **SemiOpenLoopClient** | Client with a Poisson arrival clock, a sender and a receiver, and up to `n_waiting_requests` outstanding requests | [load_generator/client/design.md](load_generator/client/design.md#semiopenloopclient) |
+| **GatedArrival** | A scheduled arrival that must wait for a slot because `n_waiting_requests` are outstanding | [load_generator/client/design.md](load_generator/client/design.md#gatedarrival) |
 | **SLOCancellation** | Client resets a stream once `slo_ms` has passed since send | [load_generator/client/design.md](load_generator/client/design.md#slocancellation) |
 | **DrainPhase** | Time after `duration_s` when no new requests are sent and in-flight ones resolve | [load_generator/run_controller/design.md](load_generator/run_controller/design.md#drainphase) |
 | **RequestRecord** | One output row per scheduled arrival | [load_generator/metrics/design.md](load_generator/metrics/design.md#requestrecord) |

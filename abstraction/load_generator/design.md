@@ -17,7 +17,7 @@ flowchart TD
 | Subcomponent | Responsibility | Spec |
 |---|---|---|
 | Run Controller | Validate config, open connections, start clients, wait through DrainPhase, close, write outputs | [run_controller/description.md](run_controller/description.md) |
-| Client | ClosedLoopPoissonClient: schedule, GatedArrival, send, SLOCancellation, record | [client/description.md](client/description.md) |
+| Client | SemiOpenLoopClient: schedule, sender and receiver, GatedArrival, SLOCancellation, record | [client/description.md](client/description.md) |
 | Metrics | RequestRecord schema, aggregation, CSV and summary output | [metrics/description.md](metrics/description.md) |
 
 ## Time base
@@ -28,8 +28,10 @@ clients share this origin.
 
 ## Concurrency
 
-Each client runs as its own concurrent activity (coroutine or thread). Clients share no
-mutable state: each one owns its connection, its `Rng`, and its own list of records. The lists are
+Each client runs as its own concurrent activities (a sender and a receiver, coroutines or threads). Clients share
+no mutable state: each one owns its connection, its `Rng`, and its own list of records. Within a client, the
+sender and the receiver share only the client's outstanding count and event queue
+([client/design.md#semiopenloopclient](client/design.md#semiopenloopclient)). The lists are
 merged only after every client has returned. Timers and sleeps must use the same monotonic clock.
 
 ## Phases
