@@ -64,3 +64,4 @@
 | 0.8.1 | 2026-11-10T00:00:00Z | Ingress parameter `initial_stall_ms`. Child bump: ingress 0.1.8 (load_canceller 0.4.0) |
 | 0.8.2 | 2026-11-10T00:00:00Z | Child bump: benchmark_runner 0.2.10 (config 0.7.0) |
 | 0.9.0 | 2026-11-10T00:00:00Z | Load generator parameter `n_waiting_requests`; system summary, glossary (SemiOpenLoopClient replaces ClosedLoopPoissonClient; GatedArrival), request flow and WorkQueue rationale for many outstanding requests per client. Child bump: load_generator 0.2.0 (client 0.3.0) |
+| 0.9.1 | 2026-11-10T00:00:00Z | Wire contract: peers accept at least `MAX_WAITING_REQUESTS` (1000) concurrent streams per connection. Child bump: load_generator 0.2.1 (run_controller 0.2.0) |
