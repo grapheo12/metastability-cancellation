@@ -23,21 +23,29 @@ An implementation may use any library queue with the same four properties: FIFO 
 `pop` blocks while empty and open, and `close` wakes every blocked `pop`.
 
 ```
-WorkQueue: { lock, not_empty: condition variable, items: FIFO of PingJob (unbounded), closed: boolean = false }
+WorkQueue: { lock, not_empty: condition variable, items: FIFO of PingJob (unbounded), closed: boolean = false,
+             stall_ns: u64, open_at_ns: u64 or none = none }      # StallGate, see below
+
+function queue_new(initial_stall_ms):
+    return WorkQueue(stall_ns = initial_stall_ms * 1_000_000)
 
 function queue_push(q, job):
     with q.lock:
         if q.closed: return Closed
+        if q.open_at_ns is none:                 # StallGate: the first push arms it
+            q.open_at_ns = monotonic_now_ns() + q.stall_ns
+            if q.stall_ns > 0: schedule q.not_empty.notify_all() at q.open_at_ns
         q.items.push_back(job)
         q.not_empty.notify_one()
     return ok
 
 function queue_pop(q):
     with q.lock:
-        while q.items is empty and not q.closed:
-            q.not_empty.wait()
-        if q.closed: return None                 # closed wins over queued items
-        return q.items.pop_front()
+        loop:
+            if q.closed: return None             # closed wins over queued items
+            if q.items is not empty and monotonic_now_ns() >= q.open_at_ns:
+                return q.items.pop_front()
+            q.not_empty.wait()                   # woken by a push, the gate opening, or close
 
 procedure queue_close(q):
     with q.lock:
@@ -53,9 +61,43 @@ procedure queue_close(q):
   does no admission control ([../../description.md#non-goals](../../description.md#non-goals)).
 - **Closed wins.** After `queue_close`, `queue_pop` returns `None` even if a job was pushed just before the close
   and not yet popped. `queue_close` has already answered that job with `Aborted`.
+- **StallGate.** Workers pop nothing until the gate opens ([StallGate](#stallgate)). Pushes, `queue_len` and
+  `queue_close` are not affected by it.
 - **No reordering.** A job is never pushed back or skipped. If its stream was reset while it was queued, it is
   still popped in turn, and the Ping Handler's CancelCheckPoint 1 sees the RST flag
   ([../ping_handler/design.md#cancelcheckpoints](../ping_handler/design.md#cancelcheckpoints)).
+
+## StallGate
+
+The **StallGate** holds every worker back for `initial_stall_ms` after the server admits its **first** `/ping`, so
+a backlog builds in the WorkQueue before any request runs. It is part of the WorkQueue (above), not a separate
+lock.
+
+- **Armed by the first successful `queue_push`.** That is the first admitted `/ping` of the process, on any
+  connection. A `/ping` that gets `400` is never pushed and does not arm it. `/cancel` never touches the queue and
+  does not arm it.
+- **Opens once**, at `open_at_ns = arm time + initial_stall_ms`, and never closes again. With `initial_stall_ms =
+  0`, it is open as soon as it is armed, which is the behavior without a stall.
+- **Only popping waits.** During the stall, connections keep admitting and pushing, `/cancel` is answered inline and
+  pushes onto CancelInboxes, RST flags are set, and the QueueLengthLog samples the growing queue.
+- **Cancels during the stall** are handled when their jobs reach CancelCheckPoint 1 after the gate opens: a reset
+  job is skipped with no burn, and a matching `/cancel` gives `503` and `cancelled_before_processing += 1`
+  ([../ping_handler/design.md#cancelcheckpoints](../ping_handler/design.md#cancelcheckpoints)).
+- **Shutdown during the stall:** `queue_close` wakes every waiting worker. They return `None` at once and the queued
+  jobs are answered `Aborted`, as without a stall.
+- **Timing:** `schedule ... at` is any timer that wakes the waiting workers no earlier than `open_at_ns`. A worker
+  re-checks the time after every wake-up, so an early or spurious wake-up only waits again.
+
+Worked example, `initial_stall_ms = 1000`, times in ms since the server started:
+
+| Event | `open_at` | Effect | Check |
+|---|---|---|---|
+| `/cancel` at 100 | none | answered `202`, nothing popped | the gate is not armed by `/cancel` |
+| first `/ping` pushed at 250 | 1250 | queue 1, no pop | 250 + 1000 |
+| 9 more pushed until 1200 | 1250 | queue 10, no pop | the gate is still closed |
+| 1250 | 1250 | workers pop in push order | 1250 >= 1250 |
+| `initial_stall_ms = 0`, first push at 250 | 250 | popped at once | 250 + 0 |
+| `queue_close` at 600, stall 1000 | 1250 | queued jobs `Aborted`, workers return | close wins |
 
 ## WorkerPool
 
@@ -186,3 +228,4 @@ The WorkQueue lock is held only to move one job in or out. A worker never holds 
 | Stream reset while its job is queued | The job stays in place. At its turn, `cooperative` mode skips it at CancelCheckPoint 1; `ignore` mode burns it fully |
 | Connection closed while its jobs are queued or running | The jobs stay in place. The Connection Handler sets their RST flags when it closes ([../connection_handler/design.md#connection-close](../connection_handler/design.md#connection-close)), so they behave like reset streams; their writes are dropped |
 | `queue_close` called twice | The second call does nothing |
+| `queue_close` during the stall | As above: queued jobs `Aborted`, workers return, the timer's wake-up later finds the queue closed |

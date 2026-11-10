@@ -40,6 +40,7 @@ function validate(params):
     seed parses as u64                        else error
     n_worker_threads is an integer in 1 ..= 2^32-1   else error
     queue_sample_interval_ms is an integer >= 1      else error   # checked even if queue_log_path is empty
+    initial_stall_ms is an integer >= 0              else error
     queue_log_path is any string; empty means no QueueLengthLog
     return ServerConfig(params)
 ```
@@ -50,7 +51,7 @@ function validate(params):
 function serve(config):
     registry = cancel_tracker.registry_new(CANCEL_REGISTRY_CAPACITY)     # one per process
     counters = cancel_tracker.counters_new()                            # one per process
-    queue = worker_pool.queue_new()                                     # one per process
+    queue = worker_pool.queue_new(config.initial_stall_ms)              # one per process; StallGate
     pool = worker_pool.pool_start(config.n_worker_threads, queue, config, registry, counters)
     log = open_for_write(config.queue_log_path) if config.queue_log_path != "" else none   # error: exit non-zero
     socket = bind_and_listen(config.listen_addr)
@@ -103,7 +104,7 @@ RST (client SLO) cases:
 
 | Situation | `ignore` | `cooperative` |
 |---|---|---|
-| RST arrives before the request starts (still in the WorkQueue) | Burn the full ServiceTime anyway when its turn comes. Response write is dropped | Skipped at its turn: no burn, no write |
+| RST arrives before the request starts (still in the WorkQueue, including during the StallGate's stall) | Burn the full ServiceTime anyway when its turn comes. Response write is dropped | Skipped at its turn: no burn, no write |
 | RST arrives during the burn | Keep burning to the end. Response write is dropped | Burner stops within one `cancel_check_interval_us`. No write |
 | RST arrives after the burn, before the write | Write is dropped by the HTTP/2 layer | Flag checked before writing. No write |
 
@@ -129,7 +130,8 @@ not on which worker runs what ([ping_handler/design.md](ping_handler/design.md#s
 
 ## Shutdown
 
-When a signal arrives, the Listener stops accepting, stops the QueueLengthLog sampler (it writes no extra row and
+A stall in progress (StallGate, [worker_pool/design.md#stallgate](worker_pool/design.md#stallgate)) does not delay
+shutdown. When a signal arrives, the Listener stops accepting, stops the QueueLengthLog sampler (it writes no extra row and
 closes the file, [worker_pool/design.md#queuelengthlog](worker_pool/design.md#queuelengthlog)) and closes the WorkQueue
 ([worker_pool/design.md#workqueue](worker_pool/design.md#workqueue)): jobs still queued are answered `Aborted`
 and never run. Then each Connection Handler is told to close: it sends `GOAWAY`, stops reading and sets the RST

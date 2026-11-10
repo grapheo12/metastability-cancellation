@@ -5,6 +5,7 @@
 | Parameter | Type / unit / constraint | Default | Meaning |
 |---|---|---|---|
 | `n_worker_threads` | integer, `1 ..= 2^32-1` | `1` | Number of workers. Same as [../../api.md#server-parameters](../../api.md#server-parameters) |
+| `initial_stall_ms` | integer, ms, `>= 0` | `1000` | StallGate: no job is popped until this long after the first push. `0`: no stall. Same as [../../api.md#server-parameters](../../api.md#server-parameters) |
 | `queue_sample_interval_ms` | integer, ms, `>= 1` | `10` | Time between QueueLengthLog samples. Same as [../../api.md#server-parameters](../../api.md#server-parameters) |
 
 ## Types
@@ -35,16 +36,18 @@ The set of `n_worker_threads` running workers. See [design.md#workerpool](design
 
 ## Functions
 
-### `queue_new() -> WorkQueue`
-Creates an empty, open queue. Called once per process by the Listener
+### `queue_new(initial_stall_ms: u64) -> WorkQueue`
+Creates an empty, open queue whose StallGate opens `initial_stall_ms` after the first push. Called once per process by the Listener
 ([../design.md#listener](../design.md#listener)). See [design.md#workqueue](design.md#workqueue).
 
 ### `queue_push(queue, job: PingJob) -> ok | Closed`
-Appends `job` at the tail. Never blocks. Returns `Closed`, and leaves `job.reply` untouched, if the queue has
+Appends `job` at the tail. Never blocks. The first successful push arms the StallGate
+([design.md#stallgate](design.md#stallgate)). Returns `Closed`, and leaves `job.reply` untouched, if the queue has
 been closed. Called by Connection Handlers. See [design.md#workqueue](design.md#workqueue).
 
 ### `queue_pop(queue) -> PingJob | None`
-Removes and returns the head job, waiting while the queue is empty and open. Returns `None` once the queue is
+Removes and returns the head job, waiting while the queue is empty or the StallGate is not yet open, and the
+queue is open. Returns `None` once the queue is
 closed. Called by workers only. See [design.md#workqueue](design.md#workqueue).
 
 ### `queue_close(queue) -> nothing`
@@ -75,7 +78,7 @@ Returns once every worker has returned. Workers return only after `queue_close`.
 ## Lifecycle
 
 - **Start:** `queue_new`, then `pool_start`, before the Listener accepts its first connection.
-- **Run:** workers run PingJobs in push order, up to `n_worker_threads` at a time.
+- **Run:** after the StallGate opens, workers run PingJobs in push order, up to `n_worker_threads` at a time.
 - **Sampler:** if started, `queue_sampler` runs from just after `listening on` until `sampler_stop`, which the
   Listener calls before `queue_close`.
 - **Stop:** `queue_close` drops the queued jobs (each gets `Aborted`). A burn that is running is not interrupted:

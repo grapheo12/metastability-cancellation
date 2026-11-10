@@ -75,6 +75,7 @@ downloads each point's results and plots all points together.
 | **CancelMode** | Server switch: `ignore` or `cooperative`. Applies to both cancellation paths | [api.md](api.md#server-parameters) |
 | **CancelRegistry** | Global lock-free map from client id to a CancelInbox | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelregistry) |
 | **CancelInbox** | Lock-free multi-producer stack of cancelled RequestIds for one client, drained by the worker running that client's request | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelinbox) |
+| **StallGate** | Server start-up stall: no `/ping` runs until `initial_stall_ms` after the first one is admitted, so a backlog builds | [server/worker_pool/design.md](server/worker_pool/design.md#stallgate) |
 | **QueueLengthLog** | Optional server CSV of the WorkQueue length (waiting jobs) sampled every `queue_sample_interval_ms` | [server/worker_pool/design.md](server/worker_pool/design.md#queuelengthlog) |
 | **ClientCancelState** | Per-client pending `/cancel` ids and last completed RequestId, in the client's registry slot under a per-client lock | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#clientcancelstate) |
 | **CancelMatching** | Per-client algorithm that matches pending cancel ids against the request a worker is running | [server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelmatching) |
