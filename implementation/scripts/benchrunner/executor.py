@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.4.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.5.0)
 """run_point: ServerLifecycle, IngressLifecycle, ClientRun and point outputs for one SweepPoint."""
 
 import json
@@ -146,7 +146,8 @@ def _ingress_pid_file(client):
 def start_servers(point, config, server, rd):
     for k in range(point.server_instances):
         words = placement_prefix("server", point, server) + \
-            [server.binaries["server"], "--listen_addr", f"0.0.0.0:{config.listen_port + k}"] + \
+            [server.binaries["server"], "--listen_addr", f"0.0.0.0:{config.listen_port + k}",
+             "--queue_log_path", f"{rd}/server_{k}.queue.csv"] + \
             arg_words(point.server_args)
         start_program(server, f"server {k}", words, f"{rd}/server_{k}.out", _server_pid_file(server, k),
                       config.run.server_ready_timeout_s)
@@ -239,6 +240,11 @@ def collect_outputs(point, server, client, rd_server, rd_client, pdir, ingress_h
     for k in range(point.server_instances):
         out = os.path.join(pdir, f"server_{k}.out")
         server.transport.fetch(f"{rd_server}/server_{k}.out", out)
+        # QueueLengthLog: optional, a missing one only warns and never fails the point
+        queue_csv = os.path.join(pdir, f"server_{k}.queue.csv")
+        server.transport.fetch(f"{rd_server}/server_{k}.queue.csv", queue_csv)
+        if not os.path.exists(queue_csv):
+            print(f"point {point.id}: server_{k}.queue.csv missing (left out of queue_length.png)")
         c = _last_counters(out)
         if c is not None:
             with open(os.path.join(pdir, f"server_counters_{k}.json"), "w") as f:

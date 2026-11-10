@@ -1,5 +1,7 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.4.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.5.0)
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -115,6 +117,44 @@ class PointOutputsTest(unittest.TestCase):
             executor.collect_outputs(p, m, m, remote, remote, pdir)
             self.assertFalse(os.path.exists(os.path.join(pdir, "server_counters.json")))
             self.assertIn("instance 1", executor.validate_outputs(p, pdir))
+
+    # Design: abstraction/benchmark_runner/experiment_executor/design.md#point-outputs
+    def test_queue_logs_fetched_missing_only_warns(self):
+        with tempfile.TemporaryDirectory() as remote, tempfile.TemporaryDirectory() as pdir:
+            m = LocalMachine(remote)
+            with open(os.path.join(remote, "server_0.queue.csv"), "w") as f:
+                f.write("t_ms,queue_len\n0,0\n")
+            for k in range(2):
+                with open(os.path.join(remote, f"server_{k}.out"), "w") as f:
+                    f.write(json.dumps(dict(zip(executor.COUNTER_KEYS, (0, 0, 0)))) + "\n")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                executor.collect_outputs(point(instances=2), m, m, remote, remote, pdir)
+            self.assertTrue(os.path.exists(os.path.join(pdir, "server_0.queue.csv")))
+            self.assertEqual(out.getvalue().strip(),
+                             "point 0: server_1.queue.csv missing (left out of queue_length.png)")
+            for name in ("loadgen.summary.json", "ingress.summary.json"):
+                open(os.path.join(pdir, name), "w").close()
+            self.assertIsNone(executor.validate_outputs(point(instances=2), pdir))
+
+
+class ServerLifecycleTest(unittest.TestCase):
+    # Design: abstraction/benchmark_runner/experiment_executor/design.md#serverlifecycle
+    def test_every_instance_gets_its_queue_log_path(self):
+        started = []
+        orig = executor.start_program
+        executor.start_program = lambda m, name, words, *rest: started.append(words)
+        try:
+            server = MachineReady(None, "server", "/w", "/w/repo", {"server": "/b/server"}, None, "GOMAXPROCS", True)
+            config = SimpleNamespace(listen_port=8080, run=SimpleNamespace(server_ready_timeout_s=1.0))
+            p = point(instances=2)
+            p.server_args = [("response_rate", 10)]
+            executor.start_servers(p, config, server, "/rd")
+        finally:
+            executor.start_program = orig
+        self.assertEqual(started[1][:5], ["/b/server", "--listen_addr", "0.0.0.0:8081",
+                                          "--queue_log_path", "/rd/server_1.queue.csv"])
+        self.assertIn("--response_rate", started[1])
 
 
 if __name__ == "__main__":
