@@ -13,26 +13,28 @@ Immutable once published.
 
 ### `InFlightMap`
 
-A lock-free map whose valid keys are `0 ..= num_clients - 1`, with at most one InFlightEntry per key. Safe for any
+A lock-free map from RequestId to the InFlightEntry of that request's forward. Valid keys are RequestIds whose
+client id (`request_id >> 32`) is below `num_clients`; a client may have any number of keys at once. Safe for any
 number of concurrent callers. The representation need not allocate one slot per possible key. See
 [design.md#inflightmap](design.md#inflightmap).
 
 ## Functions
 
 ### `inflight_new(num_clients: integer) -> InFlightMap`
-The map is empty. `num_clients` sets the exclusive upper bound for client ids and may be used as a capacity hint;
-construction need not allocate storage for every client. See [design.md#inflightmap](design.md#inflightmap).
+The map is empty. `num_clients` sets the exclusive upper bound for the client ids of keys and may be used as a
+capacity hint; construction need not allocate storage for every client. See [design.md#inflightmap](design.md#inflightmap).
 
-### `publish(map, client_id: u32, entry: InFlightEntry) -> nothing`
-Precondition: `client_id < num_clients`. Called by the Frontend before it forwards. Replaces any entry already
-mapped to the client id. See [design.md#publish-and-clear](design.md#publish-and-clear).
+### `publish(map, entry: InFlightEntry) -> nothing`
+Precondition: `entry.request_id >> 32 < num_clients`. Called by the Frontend before it forwards. The key is
+`entry.request_id`; any entry already mapped to it is replaced. See [design.md#publish-and-clear](design.md#publish-and-clear).
 
-### `clear(map, client_id: u32, entry: InFlightEntry) -> boolean`
-Removes the mapping only if it still holds exactly `entry` (the same published record, not just equal fields).
+### `clear(map, entry: InFlightEntry) -> boolean`
+Removes the mapping of `entry.request_id` only if it still holds exactly `entry` (the same published record, not just equal fields).
 Returns whether it did. Called by the Frontend when the forward ends. See
 [design.md#publish-and-clear](design.md#publish-and-clear).
 
 ### `snapshot(map) -> list of (client_id: u32, InFlightEntry)`
-At most one observed entry per client, in increasing `client_id` order. Lock-free; not an atomic picture of the map
+One pair per observed in-flight request (`client_id = entry.request_id >> 32`), any number per client, in
+increasing `request_id` order (so by client, then by seq). Lock-free; not an atomic picture of the map
 at one instant, so it may include an entry concurrently cleared or omit one concurrently published. See
 [design.md#snapshot](design.md#snapshot).

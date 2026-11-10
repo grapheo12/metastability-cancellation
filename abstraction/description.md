@@ -96,7 +96,7 @@ downloads each point's results and plots all points together.
 | **LoadBalancer** | Picks a backend per `/ping` by LbPolicy and keeps BackendStats | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#loadbalancer) |
 | **BackendStats** | Per-backend atomic counters: outstanding, forwarded and outcomes | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#loadbalancer) |
 | **UpstreamPool** | One h2c connection per (client, backend), dialed once | [ingress/upstream_pool/design.md](ingress/upstream_pool/design.md#upstreampool) |
-| **InFlightMap** | Lock-free `client_id → InFlightEntry` of the requests the Ingress is waiting on | [ingress/inflight_map/design.md](ingress/inflight_map/design.md#inflightmap) |
+| **InFlightMap** | Lock-free `request_id → InFlightEntry` of the requests the Ingress is waiting on | [ingress/inflight_map/design.md](ingress/inflight_map/design.md#inflightmap) |
 | **InFlightEntry** | `(request_id, server_id)` of one forward in progress | [ingress/inflight_map/design.md](ingress/inflight_map/design.md#inflightmap) |
 | **ForwardTask** | The Ingress's handling of one client `/ping`: pick, publish, forward, clear, relay | [ingress/frontend/design.md](ingress/frontend/design.md#forwardtask) |
 | **BenchmarkRunner** | Operator-side driver: setup over SSH, sweep execution, result download, plots | [benchmark_runner/design.md](benchmark_runner/design.md#run-flow) |
