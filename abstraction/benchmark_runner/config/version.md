@@ -11,3 +11,4 @@
 | 0.5.0 | 2026-11-10T00:00:00Z | Server program parameter `n_worker_threads` (settable and sweepable); ProcessPlacement says how it differs from `threads`, with examples |
 | 0.6.0 | 2026-11-10T00:00:00Z | Server: `queue_log_path` is set by the runner (forbidden in the config); `queue_sample_interval_ms` is a settable, sweepable program parameter |
 | 0.7.0 | 2026-11-10T00:00:00Z | `initial_stall_ms` is a settable, sweepable program parameter of the server and of the Ingress |
+| 0.8.0 | 2026-11-10T00:00:00Z | `n_waiting_requests` is a settable, sweepable load generator parameter |
