@@ -12,8 +12,26 @@ Both are used by [design.md#cancelregistry](design.md#cancelregistry).
 ## Types
 
 ### `CancelRegistry`
-Process-wide. It is safe for any number of concurrent `registry_push` calls together with one
-`registry_drain` caller per client id. See [design.md#cancelregistry](design.md#cancelregistry).
+Process-wide. It is safe for any number of concurrent callers of every function below: inbox pushes and
+watermark reads are lock-free, and everything that reads or changes a client's ClientCancelState takes that
+client's lock. See [design.md#cancelregistry](design.md#cancelregistry).
+
+### `ClientSlot`
+A handle to one client's registry slot (its index), or `none` when the registry is full and the client has no
+slot. Returned by `registry_client`. See [design.md#cancelregistry](design.md#cancelregistry).
+
+### `ClientCancelState`
+
+One per registry slot, shared by every worker that runs a request of that client. Every field is read and
+written only with `lock` held.
+
+| Field | Type | Initial | Meaning |
+|---|---|---|---|
+| `lock` | mutual-exclusion lock | unlocked | Serializes CancelMatching passes and watermark updates of this client |
+| `last_completed_id` | u64 or `none` | `none` | Highest id of this client whose burn finished (`202`) |
+| `pending` | ordered set of u64 | empty | Drained `/cancel` ids not yet resolved |
+
+See [design.md#clientcancelstate](design.md#clientcancelstate).
 
 ### `CancelCounters`
 
@@ -27,46 +45,51 @@ See [design.md#cancelcounters](design.md#cancelcounters).
 
 ### `ConnectionCancelState`
 
-Owned by one Connection Handler's worker only, so it needs no synchronization.
+The cancel-related state of one connection: only its client binding. Owned by one Connection Handler and touched
+only when it admits a `/ping`, which it does one request at a time, so it needs no further synchronization.
 
 | Field | Type | Initial | Meaning |
 |---|---|---|---|
 | `client_id` | u32 or `unbound` | `unbound` | Set by the connection's first valid `/ping` |
-| `slot` | registry slot or `none` | `none` | This client's registry slot, cached once found or created (by `registry_drain` or `registry_publish_finished`) |
-| `last_completed_id` | u64 or `none` | `none` | Id of the last request whose burn finished (`202`) |
-| `pending` | ordered set of u64 | empty | The local set: drained ids not yet resolved |
 
-See [design.md#cancelmatching](design.md#cancelmatching).
+See [design.md#clientcancelstate](design.md#clientcancelstate).
 
 ## Functions
 
 ### `registry_new(capacity: integer) -> CancelRegistry`
 Precondition: `capacity` is a power of two. See [design.md#cancelregistry](design.md#cancelregistry).
 
+### `registry_client(registry, client_id: u32) -> ClientSlot`
+Finds the client's slot, creating it if needed. Returns `none` if the client is new and no slot is free.
+Lock-free. Called by a worker before it runs a request. See [design.md#cancelregistry](design.md#cancelregistry).
+
 ### `registry_push(registry, client_id: u32, id: u64) -> ok | Full`
 Adds `id` to the client's inbox, creating the entry if needed. Returns `Full` if the client is new
-and no slot is free. Lock-free. See [design.md#cancelinbox](design.md#cancelinbox).
+and no slot is free. Lock-free, never takes a client's lock. See [design.md#cancelinbox](design.md#cancelinbox).
 
-### `registry_drain(registry, state: ConnectionCancelState) -> list of u64`
-Removes and returns every id in `state.client_id`'s inbox, in no particular order, and caches the
-slot. Returns an empty list if the client has no entry yet. See [design.md#cancelinbox](design.md#cancelinbox).
+### `registry_drain(registry, slot: ClientSlot) -> list of u64`
+Removes and returns every id in the slot's inbox, in no particular order. The caller holds the slot's lock. Used
+only inside `should_cancel`. See [design.md#cancelinbox](design.md#cancelinbox).
 
-### `registry_publish_finished(registry, state: ConnectionCancelState, id: u64) -> nothing`
-Called by the client's worker when a request finishes with any outcome. It records `id` as the client's
-FinishedWatermark, creating the client's slot if needed. If the registry is full, it does nothing. See
+### `registry_publish_finished(registry, slot: ClientSlot, id: u64, completed: boolean) -> nothing`
+Called by a worker when a request of that client finishes with any outcome; `completed` is `true` for `202`.
+Under the slot's lock it raises the client's FinishedWatermark to at least `id`, and, if `completed`, raises
+`last_completed_id` to at least `id`. Does nothing for slot `none`. See
 [design.md#finishedwatermark](design.md#finishedwatermark).
 
 ### `registry_finished(registry, client_id: u32) -> u64 | none`
 The client's FinishedWatermark, or none if the client has no slot or has finished nothing. Lock-free, callable
 from any thread. See [design.md#finishedwatermark](design.md#finishedwatermark).
 
-### `should_cancel(state, registry, counters, target_id: u64) -> boolean`
-Runs CancelMatching for the request `target_id`. Returns `true` if a `/cancel` targets it. It may
-increment `completed_before_cancel`. See [design.md#cancelmatching](design.md#cancelmatching).
+### `should_cancel(registry, slot: ClientSlot, counters, target_id: u64) -> boolean`
+Runs CancelMatching for the request `target_id` under the slot's lock. Returns `true` if a `/cancel` targets it,
+and `false` for slot `none`. It may increment `completed_before_cancel`. See
+[design.md#cancelmatching](design.md#cancelmatching).
 
 ### `handle_cancel(body: bytes, config: ServerConfig, registry) -> Response`
 Handles a routed `DELETE /cancel`. Responses: `202` with a CancelReplyBody holding the target client's
-FinishedWatermark, or `400` / `503` with an empty body. See [design.md#handle_cancel](design.md#handle_cancel).
+FinishedWatermark, or `400` / `503` with an empty body. Never takes a client's lock. See
+[design.md#handle_cancel](design.md#handle_cancel).
 
 ### `counters_new() -> CancelCounters`
 All fields start at 0. See [design.md#cancelcounters](design.md#cancelcounters).

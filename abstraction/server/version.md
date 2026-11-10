@@ -8,3 +8,4 @@
 | 0.2.2 | 2026-11-02T00:00:00Z | Child bump: cancel_tracker 0.2.0. Cancellation semantics: every `/cancel` `202` carries the FinishedWatermark |
 | 0.2.3 | 2026-11-02T00:00:00Z | Child bump: ping_handler 0.3.0 |
 | 0.3.0 | 2026-11-10T00:00:00Z | Shared WorkQueue and WorkerPool: new parameter `n_worker_threads`, new child worker_pool 0.1.0, structure, Listener, concurrency model, cancellation semantics and shutdown for the shared queue; `/cancel` answered inline, ServiceTime drawn at admission. "Why one shared WorkQueue" |
+| 0.3.1 | 2026-11-10T00:00:00Z | Child bump: cancel_tracker 0.3.0 (ClientCancelState under a per-client lock, max-updates, overlap and ordering) |
