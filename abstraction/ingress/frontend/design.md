@@ -44,9 +44,9 @@ function handle_ping(stream, ctx):
 
     s = load_balancer.pick(ctx.lb)
     entry = InFlightEntry(request_id = id, server_id = s)
-    inflight_map.publish(ctx.inflight, client_id, entry)
+    inflight_map.publish(ctx.inflight, entry)                     # keyed by the RequestId
     (response, outcome) = forward(ctx, client_id, s, stream)
-    inflight_map.clear(ctx.inflight, client_id, entry)            # before relaying: see below
+    inflight_map.clear(ctx.inflight, entry)                       # before relaying: see below
     load_balancer.finish(ctx.lb, s, outcome)
     return response
 
@@ -76,6 +76,9 @@ function forward(ctx, c, s, stream):
   written to the client, so the Load Canceller never picks a request that the Ingress has already finished with.
   The `clear` checks identity ([../inflight_map/design.md#publish-and-clear](../inflight_map/design.md#publish-and-clear)).
 - Every `pick` is matched by exactly one `finish`, on every path, so `outstanding` returns to 0.
+- **Many per client.** A client connection carries up to `n_waiting_requests` concurrent streams, so up to that
+  many ForwardTasks of one client run at once, each with its own InFlightMap entry, and those that go to the same
+  backend share the client's upstream connection as concurrent streams.
 
 ## StartOnce
 
