@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.1.0)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.2.0)
 package ingress
 
 import (
@@ -66,9 +66,9 @@ func (ing *Ingress) handlePing(ctx context.Context, body []byte) fwdResponse {
 
 	s := ing.lb.Pick()
 	entry := &InFlightEntry{RequestID: id, ServerID: s}
-	ing.inflight.Publish(clientID, entry)
+	ing.inflight.Publish(entry) // keyed by the RequestId
 	resp, outcome := ing.forward(ctx, clientID, s, body)
-	ing.inflight.Clear(clientID, entry) // before relaying the answer
+	ing.inflight.Clear(entry) // before relaying the answer
 	ing.lb.Finish(s, outcome)
 	return resp
 }

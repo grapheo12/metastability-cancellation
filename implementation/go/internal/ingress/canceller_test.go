@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_canceller/design.md (load_canceller v0.4.0)
+// Source: abstraction/ingress/load_canceller/design.md (load_canceller v0.5.0)
 package ingress
 
 import (
@@ -19,20 +19,21 @@ func TestChooseVictim(t *testing.T) {
 	if _, ok := chooseVictim(rng, m); ok || *rng != before {
 		t.Fatal("empty snapshot: no victim and no draw")
 	}
-	m.Publish(0, &InFlightEntry{RequestID: 17, ServerID: 1})
-	m.Publish(2, &InFlightEntry{RequestID: 2<<32 | 9, ServerID: 0})
-	m.Publish(3, &InFlightEntry{RequestID: 3<<32 | 30, ServerID: 1})
-	counts := map[uint32]int{}
-	for i := 0; i < 30000; i++ {
+	m.Publish(&InFlightEntry{RequestID: 17, ServerID: 1})
+	m.Publish(&InFlightEntry{RequestID: 18, ServerID: 0}) // client 0 has two requests in flight
+	m.Publish(&InFlightEntry{RequestID: 2<<32 | 9, ServerID: 0})
+	m.Publish(&InFlightEntry{RequestID: 3<<32 | 30, ServerID: 1})
+	counts := map[uint64]int{}
+	for i := 0; i < 40000; i++ {
 		v, ok := chooseVictim(rng, m)
 		if !ok {
 			t.Fatal("victim expected")
 		}
-		counts[v.ClientID]++
+		counts[v.Entry.RequestID]++
 	}
-	for _, c := range []uint32{0, 2, 3} {
-		if counts[c] < 9000 || counts[c] > 11000 {
-			t.Fatalf("not uniform: %v", counts)
+	for _, id := range []uint64{17, 18, 2<<32 | 9, 3<<32 | 30} { // uniform over requests, not clients
+		if counts[id] < 9000 || counts[id] > 11000 {
+			t.Fatalf("not uniform over requests: %v", counts)
 		}
 	}
 }

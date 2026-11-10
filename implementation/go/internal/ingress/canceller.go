@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_canceller/design.md (load_canceller v0.4.0)
+// Source: abstraction/ingress/load_canceller/design.md (load_canceller v0.5.0)
 package ingress
 
 import (

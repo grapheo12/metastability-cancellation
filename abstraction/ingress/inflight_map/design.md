@@ -97,11 +97,12 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 
 ### Go choices
 
-- File `internal/ingress/inflight.go`. Keep the Go 1.21 toolchain and use the documented component-specific fallback: an `atomic.Pointer` to an immutable state containing `map[uint32]*InFlightEntry`. `num_clients` is stored only as the key bound; construction starts with an empty map and does not allocate one slot per possible client.
+- File `internal/ingress/inflight.go`. Keep the Go 1.21 toolchain and use the documented component-specific fallback, sharded by client: one `atomic.Pointer` per client (`shards`, a slice of `num_clients` pointers, 8 bytes each) to an immutable `map[uint64]*InFlightEntry` holding that client's in-flight requests by RequestId. A shard is nil until the client's first publish.
 - The standard-library `sync.Map` is not documented as lock-free and its Go 1.21 write paths may wait on a mutex. Maintained Go 1.21-compatible lock-free maps such as `github.com/cornelk/hashmap` v1.0.8 do not expose an atomic conditional remove or stable entry handle, while `github.com/Snawoot/lfmap` releases with transactions require Go 1.23 or newer. Those missing operations prevent identity-safe `clear` without changing the toolchain, so no third-party dependency is added.
-- `publish` and `clear` load the immutable state, copy its built-in map, apply one replacement or identity-checked removal, and compare-and-swap the state pointer. A failed swap means another caller completed an update, so retrying is lock-free. Published maps are never mutated; garbage collection keeps old states and entries alive while a caller or snapshot still refers to them.
-- `snapshot` reads one immutable state, builds `[]Victim{ClientID, Entry}`, and sorts it by `ClientID`. This consistent single-state view is stronger than the required weakly consistent traversal.
-- Tests: `inflight_test.go` checks the publish/clear table, a concurrent publish-versus-stale-clear race, snapshot order, the maximum key-space bound without eager slot allocation, and concurrent churn against snapshots.
+- `publish` and `clear` load the client's shard, copy it, apply one replacement or identity-checked removal, and compare-and-swap that client's pointer. A failed swap means another caller completed an update of the same client, so retrying is lock-free. Each copy holds at most that client's outstanding requests (`n_waiting_requests`), not the whole map, so the cost of a publish does not grow with the number of clients.
+- `active` is an append-only, copy-on-write list (an `atomic.Pointer` to a `[]uint32`) of the clients that have ever published. It is extended once, by the publish that makes a client's shard non-nil, so `snapshot` visits only those clients rather than all `num_clients` shards.
+- `snapshot` loads each active shard once (each is a consistent view of its client; across clients the view is weakly consistent, as the design allows), builds `[]Victim{ClientID, Entry}`, and sorts it by `Entry.RequestID`.
+- Tests: `inflight_test.go` checks the publish/clear table with two requests of one client and a reused id, a concurrent publish-versus-stale-clear race, the snapshot worked example (RequestId order), concurrent churn with 4 streams per client against snapshots, and the maximum key space.
 
 ### Traceability
 
@@ -111,7 +112,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [InFlightMap](#inflightmap) | [inflight.go:25](../../../implementation/go/internal/ingress/inflight.go#L25), [inflight.go:39](../../../implementation/go/internal/ingress/inflight.go#L39), [inflight_test.go:95](../../../implementation/go/internal/ingress/inflight_test.go#L95) |
-| [Publish and clear](#publish-and-clear) | [inflight.go:51](../../../implementation/go/internal/ingress/inflight.go#L51), [inflight.go:66](../../../implementation/go/internal/ingress/inflight.go#L66), [inflight_test.go:12](../../../implementation/go/internal/ingress/inflight_test.go#L12), [inflight_test.go:33](../../../implementation/go/internal/ingress/inflight_test.go#L33) |
-| [Snapshot](#snapshot) | [inflight.go:85](../../../implementation/go/internal/ingress/inflight.go#L85), [inflight_test.go:58](../../../implementation/go/internal/ingress/inflight_test.go#L58) |
+| [InFlightMap](#inflightmap) | [inflight.go:30](../../../implementation/go/internal/ingress/inflight.go#L30), [inflight.go:47](../../../implementation/go/internal/ingress/inflight.go#L47), [inflight_test.go:108](../../../implementation/go/internal/ingress/inflight_test.go#L108) |
+| [Publish and clear](#publish-and-clear) | [inflight.go:59](../../../implementation/go/internal/ingress/inflight.go#L59), [inflight.go:77](../../../implementation/go/internal/ingress/inflight.go#L77), [inflight_test.go:15](../../../implementation/go/internal/ingress/inflight_test.go#L15), [inflight_test.go:41](../../../implementation/go/internal/ingress/inflight_test.go#L41) |
+| [Snapshot](#snapshot) | [inflight.go:97](../../../implementation/go/internal/ingress/inflight.go#L97), [inflight_test.go:64](../../../implementation/go/internal/ingress/inflight_test.go#L64) |
 <!-- trace:end -->
