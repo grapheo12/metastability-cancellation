@@ -1,6 +1,6 @@
 // Command server runs the HTTP/2 /ping + /cancel server.
 //
-// Source: abstraction/server/api.md (server v0.2.3)
+// Source: abstraction/server/api.md (server v0.3.3)
 package main
 
 import (
@@ -23,6 +23,7 @@ func main() {
 	fs.StringVar(&p.CancelMode, "cancel_mode", p.CancelMode, "ignore | cooperative")
 	fs.StringVar(&p.CancelCheckIntervalUs, "cancel_check_interval_us", p.CancelCheckIntervalUs, "RST check interval in µs")
 	fs.StringVar(&p.Seed, "seed", p.Seed, "base seed")
+	fs.StringVar(&p.NWorkerThreads, "n_worker_threads", p.NWorkerThreads, "number of WorkerPool workers (>= 1)")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)
 	}

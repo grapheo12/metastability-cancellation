@@ -1,4 +1,4 @@
-// Source: abstraction/server/cancel_tracker/design.md (cancel_tracker v0.2.0)
+// Source: abstraction/server/cancel_tracker/design.md (cancel_tracker v0.3.0)
 package server
 
 import (
@@ -7,19 +7,28 @@ import (
 	"testing"
 )
 
-func boundState(clientID uint32) *ConnectionCancelState {
-	st := NewConnectionCancelState()
-	st.bound, st.clientID = true, clientID
-	return st
+func slotOf(t *testing.T, reg *CancelRegistry, clientID uint32) ClientSlot {
+	t.Helper()
+	slot := reg.Client(clientID)
+	if slot == NoSlot {
+		t.Fatal("registry full")
+	}
+	return slot
 }
 
-func pendingSorted(st *ConnectionCancelState) []uint64 {
+func pendingSorted(reg *CancelRegistry, slot ClientSlot) []uint64 {
 	var out []uint64
-	for id := range st.pending.members {
+	for id := range reg.state[slot].pending.members {
 		out = append(out, id)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
+}
+
+func lockedDrain(reg *CancelRegistry, slot ClientSlot) []uint64 {
+	reg.state[slot].mu.Lock()
+	defer reg.state[slot].mu.Unlock()
+	return reg.drain(slot)
 }
 
 // Worked examples from the CancelMatching table.
@@ -42,7 +51,8 @@ func TestCancelMatchingWorkedExamples(t *testing.T) {
 	for i, c := range cases {
 		reg := NewCancelRegistry(16)
 		ctr := &CancelCounters{}
-		st := boundState(0)
+		slot := slotOf(t, reg, 0)
+		st := &reg.state[slot]
 		st.hasLastCompleted, st.lastCompletedID = true, c.lastCompleted
 		for _, id := range c.pending {
 			st.pending.insert(id)
@@ -52,10 +62,10 @@ func TestCancelMatchingWorkedExamples(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if got := ShouldCancel(st, reg, ctr, c.target); got != c.want {
+		if got := ShouldCancel(reg, slot, ctr, c.target); got != c.want {
 			t.Errorf("case %d: got %v want %v", i, got, c.want)
 		}
-		if got := pendingSorted(st); len(got) != len(c.pendingAfter) || (len(got) > 0 && got[0] != c.pendingAfter[0]) {
+		if got := pendingSorted(reg, slot); len(got) != len(c.pendingAfter) || (len(got) > 0 && got[0] != c.pendingAfter[0]) {
 			t.Errorf("case %d: pending after %v want %v", i, got, c.pendingAfter)
 		}
 		if ctr.CompletedBeforeCancel.Load() != c.completedDelta {
@@ -65,11 +75,16 @@ func TestCancelMatchingWorkedExamples(t *testing.T) {
 }
 
 // Design: abstraction/server/cancel_tracker/design.md#cancelmatching
-func TestUnboundNeverCancels(t *testing.T) {
+func TestNoSlotNeverCancels(t *testing.T) {
 	reg := NewCancelRegistry(16)
 	_ = reg.Push(0, 0)
-	if ShouldCancel(NewConnectionCancelState(), reg, &CancelCounters{}, 0) {
-		t.Fatal("unbound state must not cancel")
+	if ShouldCancel(reg, NoSlot, &CancelCounters{}, 0) {
+		t.Fatal("NoSlot must not cancel")
+	}
+	// Empty pending, no last_completed_id, target 0: false, nothing counted.
+	ctr := &CancelCounters{}
+	if ShouldCancel(reg, slotOf(t, reg, 5), ctr, 0) || ctr.CompletedBeforeCancel.Load() != 0 {
+		t.Fatal("empty state must not cancel")
 	}
 }
 
@@ -89,7 +104,7 @@ func TestConcurrentPushThenDrain(t *testing.T) {
 	wg.Wait()
 	total := 0
 	for c := uint32(0); c < 50; c++ {
-		total += len(reg.Drain(boundState(c)))
+		total += len(lockedDrain(reg, slotOf(t, reg, c)))
 	}
 	if total != 8000 {
 		t.Fatalf("drained %d ids, want 8000", total)
@@ -110,8 +125,11 @@ func TestRegistryFull(t *testing.T) {
 	if reg.Push(2, 9) != nil {
 		t.Fatal("existing client must still accept pushes")
 	}
-	if ids := reg.Drain(boundState(7)); ids != nil {
-		t.Fatal("absent client drains nothing")
+	if reg.Client(7) != NoSlot {
+		t.Fatal("a new client must not get a slot in a full registry")
+	}
+	if reg.Client(2) == NoSlot {
+		t.Fatal("an existing client keeps its slot")
 	}
 }
 
@@ -122,7 +140,7 @@ func TestHandleCancel(t *testing.T) {
 	if r := HandleCancel([]byte(`{"id":"12884901889"}`), coop, reg); r.Status != 202 || string(r.Body) != `{"finished":null}` {
 		t.Fatalf("got %+v", r)
 	}
-	if ids := reg.Drain(boundState(3)); len(ids) != 1 || ids[0] != 12884901889 {
+	if ids := lockedDrain(reg, slotOf(t, reg, 3)); len(ids) != 1 || ids[0] != 12884901889 {
 		t.Fatalf("registry content %v", ids)
 	}
 	if r := HandleCancel([]byte(`nope`), coop, reg); r.Status != 400 || len(r.Body) != 0 {
@@ -131,7 +149,7 @@ func TestHandleCancel(t *testing.T) {
 	if r := HandleCancel([]byte(`{"id":"5"}`), Config{CancelMode: CancelIgnore}, reg); r.Status != 202 {
 		t.Fatalf("got %+v", r)
 	}
-	if ids := reg.Drain(boundState(0)); ids != nil {
+	if ids := lockedDrain(reg, slotOf(t, reg, 0)); ids != nil {
 		t.Fatal("ignore mode must discard ids")
 	}
 }
@@ -144,16 +162,16 @@ func TestFinishedWatermark(t *testing.T) {
 	if _, ok := reg.Finished(3); ok {
 		t.Fatal("no slot yet: want none")
 	}
-	st := boundState(3)
+	slot := slotOf(t, reg, 3)
 	for seq := uint32(0); seq < 3; seq++ {
 		id := uint64(3)<<32 | uint64(seq)
-		reg.PublishFinished(st, id)
+		reg.PublishFinished(slot, id, seq == 0) // 202, 503, RST
 		if got, ok := reg.Finished(3); !ok || got != id {
 			t.Fatalf("after seq %d: %d %v", seq, got, ok)
 		}
 	}
-	if st.slot < 0 {
-		t.Fatal("publishing must cache the slot")
+	if st := &reg.state[slot]; !st.hasLastCompleted || st.lastCompletedID != uint64(3)<<32 {
+		t.Fatal("last_completed_id must stay at seq 0 (only 202 raises it)")
 	}
 	coop := Config{CancelMode: CancelCooperative}
 	if r := HandleCancel([]byte(`{"id":"12884901891"}`), coop, reg); string(r.Body) != `{"finished":"12884901890"}` {
@@ -164,8 +182,7 @@ func TestFinishedWatermark(t *testing.T) {
 		t.Fatalf("ignore mode reply %d %s", r.Status, r.Body)
 	}
 	// Id 0 must be distinguishable from none (stored as 1).
-	st0 := boundState(0)
-	reg.PublishFinished(st0, 0)
+	reg.PublishFinished(slotOf(t, reg, 0), 0, true)
 	if got, ok := reg.Finished(0); !ok || got != 0 {
 		t.Fatalf("id 0: %d %v", got, ok)
 	}
@@ -177,12 +194,94 @@ func TestPublishFinishedRegistryFull(t *testing.T) {
 	if reg.Push(1, 7) != nil {
 		t.Fatal("first client must fit")
 	}
-	st := boundState(2)
-	reg.PublishFinished(st, uint64(2)<<32)
-	if _, ok := reg.Finished(2); ok || st.slot >= 0 {
+	slot := reg.Client(2)
+	reg.PublishFinished(slot, uint64(2)<<32, true)
+	if _, ok := reg.Finished(2); ok || slot != NoSlot {
 		t.Fatal("full registry: nothing published")
 	}
 	if r := HandleCancel([]byte(`{"id":"8589934593"}`), Config{CancelMode: CancelIgnore}, reg); string(r.Body) != `{"finished":null}` {
 		t.Fatalf("reply %s", r.Body)
+	}
+}
+
+// Two requests of one client finish out of order (seq 5 before seq 4): both
+// values are max-updates and never go down.
+//
+// Design: abstraction/server/cancel_tracker/design.md#finishedwatermark
+func TestOutOfOrderFinishKeepsMax(t *testing.T) {
+	reg := NewCancelRegistry(16)
+	slot := slotOf(t, reg, 3)
+	id4, id5 := uint64(3)<<32|4, uint64(3)<<32|5
+	reg.PublishFinished(slot, id5, true)
+	reg.PublishFinished(slot, id4, true)
+	if got, ok := reg.Finished(3); !ok || got != id5 {
+		t.Fatalf("watermark %d %v, want id(5)", got, ok)
+	}
+	if st := &reg.state[slot]; st.lastCompletedID != id5 {
+		t.Fatalf("last_completed_id %d, want id(5)", st.lastCompletedID)
+	}
+}
+
+// Worked example: /cancel 4 and 5 while reset request 4 still runs; the check
+// for 5 drops 4 as stale and cancels 5; 4's late finish lowers nothing.
+//
+// Design: abstraction/server/cancel_tracker/design.md#overlap-and-ordering
+func TestOverlapWorkedExample(t *testing.T) {
+	reg := NewCancelRegistry(16)
+	ctr := &CancelCounters{}
+	slot := slotOf(t, reg, 0)
+	reg.PublishFinished(slot, 3, true) // state before: last_completed_id 3
+	_ = reg.Push(0, 4)
+	_ = reg.Push(0, 5)
+	if !ShouldCancel(reg, slot, ctr, 5) {
+		t.Fatal("5 must be cancelled")
+	}
+	reg.PublishFinished(slot, 5, false) // 503
+	if got := pendingSorted(reg, slot); len(got) != 0 {
+		t.Fatalf("pending %v, want empty", got)
+	}
+	reg.PublishFinished(slot, 4, false) // 4 aborted by RST, finishes late
+	if f, _ := reg.Finished(0); f != 5 || reg.state[slot].lastCompletedID != 3 || ctr.CompletedBeforeCancel.Load() != 0 {
+		t.Fatalf("watermark %d last_completed %d completed_before_cancel %d", f, reg.state[slot].lastCompletedID, ctr.CompletedBeforeCancel.Load())
+	}
+}
+
+// Many workers check one client at once while cancels are pushed: every
+// cancelled id is matched exactly once (run with -race).
+//
+// Design: abstraction/server/cancel_tracker/design.md#clientcancelstate
+func TestConcurrentShouldCancel(t *testing.T) {
+	reg := NewCancelRegistry(16)
+	ctr := &CancelCounters{}
+	slot := slotOf(t, reg, 1)
+	const n = 2000
+	var matched sync.Map
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for id := uint64(0); id < n; id++ {
+			_ = reg.Push(1, id)
+		}
+	}()
+	for w := 0; w < 4; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for id := uint64(w); id < n; id += 4 {
+				for spin := 0; spin < 1000; spin++ { // checks until pushed or dropped
+					if ShouldCancel(reg, slot, ctr, id) {
+						if _, dup := matched.LoadOrStore(id, true); dup {
+							t.Errorf("id %d matched twice", id)
+						}
+						break
+					}
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+	if ctr.CompletedBeforeCancel.Load() != 0 {
+		t.Fatal("nothing completed: no completed_before_cancel")
 	}
 }

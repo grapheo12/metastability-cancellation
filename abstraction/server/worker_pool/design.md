@@ -126,3 +126,32 @@ The WorkQueue lock is held only to move one job in or out. A worker never holds 
 | Stream reset while its job is queued | The job stays in place. At its turn, `cooperative` mode skips it at CancelCheckPoint 1; `ignore` mode burns it fully |
 | Connection closed while its jobs are queued or running | The jobs stay in place. The Connection Handler sets their RST flags when it closes ([../connection_handler/design.md#connection-close](../connection_handler/design.md#connection-close)), so they behave like reset streams; their writes are dropped |
 | `queue_close` called twice | The second call does nothing |
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- File `internal/server/workerpool.go`. `PingJob` is a struct whose `reply` (the OneShot) is a 1-buffered `chan Response`: `put` is a send that never blocks, `take` is `(*PingJob).Reply()` or a receive in the stream handler.
+- The WorkQueue is `sync.Mutex` + `sync.Cond` + a slice used as a FIFO (`append` at the tail, re-slice at the head, with the vacated element set to `nil` for the GC). Go channels are bounded, so a channel cannot be the unbounded queue. `queue_push` is `Push` (returns `ErrQueueClosed`), `queue_pop` is `Pop` (returns `nil` for None), `queue_close` is `Close`.
+- Each worker is a goroutine started by `StartWorkerPool`; `pool_join` is `(*WorkerPool).Join`, a `sync.WaitGroup`. Go preempts goroutines asynchronously and runs them on `GOMAXPROCS` OS threads, so burns run in parallel with each other and with the HTTP/2 read loops as long as `GOMAXPROCS >= n_worker_threads + 1`. The server does not check this; the BenchmarkRunner sets `GOMAXPROCS` through ProcessPlacement `threads`.
+- Tests: `workerpool_test.go` checks FIFO order, close (queued jobs answered `Aborted`, pop returns `nil`, push fails, close twice), idle workers returning on close, the Ordering worked example for 1 and 2 workers, and a job reset while queued. `server_test.go` `TestTwoWorkersServeInParallel` runs end to end with two workers.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [PingJob](#pingjob) | [workerpool.go:17](../../../implementation/go/internal/server/workerpool.go#L17) |
+| [WorkQueue](#workqueue) | [workerpool.go:36](../../../implementation/go/internal/server/workerpool.go#L36), [workerpool.go:46](../../../implementation/go/internal/server/workerpool.go#L46), [workerpool.go:56](../../../implementation/go/internal/server/workerpool.go#L56), [workerpool.go:71](../../../implementation/go/internal/server/workerpool.go#L71), [workerpool.go:90](../../../implementation/go/internal/server/workerpool.go#L90), [workerpool_test.go:21](../../../implementation/go/internal/server/workerpool_test.go#L21) |
+| [WorkerPool](#workerpool) | [workerpool.go:109](../../../implementation/go/internal/server/workerpool.go#L109), [workerpool.go:120](../../../implementation/go/internal/server/workerpool.go#L120), [workerpool.go:136](../../../implementation/go/internal/server/workerpool.go#L136), [workerpool.go:149](../../../implementation/go/internal/server/workerpool.go#L149) |
+| [Ordering](#ordering) | [workerpool.go:136](../../../implementation/go/internal/server/workerpool.go#L136), [workerpool_test.go:67](../../../implementation/go/internal/server/workerpool_test.go#L67) |
+| [Concurrency requirement](#concurrency-requirement) | [workerpool.go:120](../../../implementation/go/internal/server/workerpool.go#L120) |
+| [Failure and edge cases](#failure-and-edge-cases) | [workerpool_test.go:50](../../../implementation/go/internal/server/workerpool_test.go#L50), [workerpool_test.go:110](../../../implementation/go/internal/server/workerpool_test.go#L110) |
+<!-- trace:end -->

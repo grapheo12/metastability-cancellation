@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.2.3)
+// Source: abstraction/server/design.md (server v0.3.3)
 package server
 
 import (
@@ -17,7 +17,8 @@ import (
 	"testbed/internal/sampling"
 )
 
-// Server ties the Listener to the process-wide CancelRegistry and CancelCounters.
+// Server ties the Listener to the process-wide CancelRegistry, CancelCounters,
+// WorkQueue and WorkerPool.
 //
 // Design: abstraction/server/design.md#structure
 type Server struct {
@@ -25,6 +26,8 @@ type Server struct {
 	ln       net.Listener
 	registry *CancelRegistry
 	counters *CancelCounters
+	queue    *WorkQueue
+	pool     *WorkerPool
 	h2s      *http2.Server
 	base     *http.Server // only carries the shutdown hook that sends GOAWAY
 
@@ -34,15 +37,21 @@ type Server struct {
 	shuttingDown atomic.Bool
 }
 
-// Listen creates the registry and counters, binds listen_addr and prints
+// Listen creates the registry, counters, WorkQueue and WorkerPool, binds
+// listen_addr and prints
 // "listening on <addr>".
 //
 // Design: abstraction/server/design.md#listener
 func Listen(cfg Config) (*Server, error) {
+	if cfg.NWorkerThreads < 1 {
+		return nil, errors.New("n_worker_threads must be >= 1") // an unvalidated Config would hang
+	}
 	s := &Server{
 		cfg:      cfg,
 		registry: NewCancelRegistry(CancelRegistryCapacity),
 		counters: &CancelCounters{},
+		// Design: abstraction/server/design.md#why-one-shared-workqueue
+		queue:    NewWorkQueue(),
 		h2s:      &http2.Server{MaxConcurrentStreams: maxConcurrentStreams},
 		base:     &http.Server{},
 		handlers: map[*connectionHandler]struct{}{},
@@ -55,6 +64,8 @@ func Listen(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	s.ln = ln
+	// Design: abstraction/server/design.md#concurrency-model
+	s.pool = StartWorkerPool(cfg.NWorkerThreads, s.queue, cfg, s.registry, s.counters)
 	fmt.Println("listening on " + cfg.ListenAddr)
 	return s, nil
 }
@@ -81,7 +92,7 @@ func (s *Server) Serve() {
 			continue
 		}
 		seed := sampling.DeriveSeed(s.cfg.Seed, sampling.StreamServerConnection, connIndex)
-		h := newConnectionHandler(conn, s.cfg, sampling.NewRng(seed), s.registry, s.counters)
+		h := newConnectionHandler(conn, s.cfg, sampling.NewRng(seed), s.registry, s.queue)
 		if !s.track(h) {
 			_ = conn.Close()
 			return
@@ -112,9 +123,10 @@ func (s *Server) untrack(h *connectionHandler) {
 	s.mu.Unlock()
 }
 
-// Shutdown stops accepting, sends GOAWAY (best effort, via the base server's
-// shutdown hook), closes every connection, waits for all handlers to return
-// and prints the CancelCounters line.
+// Shutdown stops accepting, closes the WorkQueue (queued jobs are answered
+// Aborted), sends GOAWAY (best effort, via the base server's shutdown hook),
+// closes every connection, waits for all workers and handlers to return and
+// prints the CancelCounters line.
 //
 // Design: abstraction/server/design.md#shutdown
 func (s *Server) Shutdown() {
@@ -122,6 +134,7 @@ func (s *Server) Shutdown() {
 	s.shuttingDown.Store(true)
 	s.mu.Unlock()
 	_ = s.ln.Close()
+	s.queue.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	_ = s.base.Shutdown(ctx) // triggers GOAWAY on every http2 connection
@@ -132,6 +145,7 @@ func (s *Server) Shutdown() {
 		h.close()
 	}
 	s.mu.Unlock()
+	s.pool.Join()
 	s.wg.Wait()
 
 	// API: abstraction/server/api.md#cancelcounters-output

@@ -1,9 +1,10 @@
-// Source: abstraction/server/cancel_tracker/design.md (cancel_tracker v0.2.0)
+// Source: abstraction/server/cancel_tracker/design.md (cancel_tracker v0.3.0)
 package server
 
 import (
 	"container/heap"
 	"errors"
+	"sync"
 	"sync/atomic"
 
 	"testbed/internal/protocol"
@@ -27,7 +28,8 @@ type inboxNode struct {
 }
 
 // CancelRegistry is a fixed-capacity, lock-free, open-addressing map from
-// client id to a CancelInbox (a Treiber stack head). Slots are never deleted.
+// client id to a slot holding a CancelInbox (a Treiber stack head), a
+// ClientCancelState and a FinishedWatermark. Slots are never deleted.
 // Go atomics are sequentially consistent, which subsumes the acquire/release
 // orderings the design requires.
 //
@@ -37,6 +39,27 @@ type CancelRegistry struct {
 	keys     []atomic.Uint64
 	heads    []atomic.Pointer[inboxNode]
 	finished []atomic.Uint64 // FinishedWatermark per slot: id + 1, 0 = none
+	state    []clientCancelState
+}
+
+// ClientSlot is a client's registry slot index, or NoSlot when the registry
+// was full. It stays valid for the life of the process.
+//
+// API: abstraction/server/cancel_tracker/api.md#clientslot
+type ClientSlot int
+
+// NoSlot is the design's slot "none".
+const NoSlot ClientSlot = -1
+
+// clientCancelState is shared by every worker that runs a request of the
+// slot's client. Every field is used only with mu held.
+//
+// Design: abstraction/server/cancel_tracker/design.md#clientcancelstate
+type clientCancelState struct {
+	mu               sync.Mutex
+	hasLastCompleted bool
+	lastCompletedID  uint64
+	pending          pendingSet
 }
 
 // NewCancelRegistry allocates capacity slots; capacity must be a power of two.
@@ -51,6 +74,7 @@ func NewCancelRegistry(capacity int) *CancelRegistry {
 		keys:     make([]atomic.Uint64, capacity),
 		heads:    make([]atomic.Pointer[inboxNode], capacity),
 		finished: make([]atomic.Uint64, capacity),
+		state:    make([]clientCancelState, capacity),
 	}
 }
 
@@ -82,7 +106,20 @@ func (r *CancelRegistry) findSlot(clientID uint32, insert bool) (int, bool) {
 	return -1, false
 }
 
-// Push adds id to clientID's inbox (multi-producer Treiber push).
+// Client finds clientID's slot, creating it if needed; NoSlot if the
+// registry is full. Lock-free.
+//
+// Design: abstraction/server/cancel_tracker/design.md#cancelregistry
+func (r *CancelRegistry) Client(clientID uint32) ClientSlot {
+	i, ok := r.findSlot(clientID, true)
+	if !ok {
+		return NoSlot
+	}
+	return ClientSlot(i)
+}
+
+// Push adds id to clientID's inbox (multi-producer Treiber push). It never
+// takes the client's lock.
 //
 // Design: abstraction/server/cancel_tracker/design.md#cancelinbox
 func (r *CancelRegistry) Push(clientID uint32, id uint64) error {
@@ -100,43 +137,43 @@ func (r *CancelRegistry) Push(clientID uint32, id uint64) error {
 	}
 }
 
-// Drain detaches the whole inbox of st's client with one atomic Swap. Only
-// the worker bound to that client calls it. Detached nodes are reclaimed by
-// the garbage collector, which stands in for the design's explicit free.
+// drain detaches the whole inbox of slot with one atomic Swap. The caller
+// holds the slot's lock, so there is one consumer at a time. Detached nodes are
+// reclaimed by the garbage collector, which stands in for the design's free.
 //
 // Design: abstraction/server/cancel_tracker/design.md#cancelinbox
-func (r *CancelRegistry) Drain(st *ConnectionCancelState) []uint64 {
-	if st.slot < 0 {
-		s, ok := r.findSlot(st.clientID, false)
-		if !ok {
-			return nil
-		}
-		st.slot = s
-	}
+func (r *CancelRegistry) drain(slot ClientSlot) []uint64 {
 	var ids []uint64
-	for h := r.heads[st.slot].Swap(nil); h != nil; h = h.next {
+	for h := r.heads[slot].Swap(nil); h != nil; h = h.next {
 		ids = append(ids, h.id)
 	}
 	return ids
 }
 
-// PublishFinished records id as st's client's FinishedWatermark. Only the
-// worker bound to that client calls it; ids increase, so a plain Store suffices.
-// If the registry is full the call does nothing (replies then say null).
+// PublishFinished is called by a worker when a request of slot's client
+// finishes with any outcome (completed is true for 202). Under the slot's
+// lock it max-updates last_completed_id (if completed) and the
+// FinishedWatermark. Slot NoSlot (registry full) does nothing.
 //
 // Design: abstraction/server/cancel_tracker/design.md#finishedwatermark
-func (r *CancelRegistry) PublishFinished(st *ConnectionCancelState, id uint64) {
-	if st.slot < 0 {
-		s, ok := r.findSlot(st.clientID, true)
-		if !ok {
-			return
-		}
-		st.slot = s // Drain reuses the cached slot
+func (r *CancelRegistry) PublishFinished(slot ClientSlot, id uint64, completed bool) {
+	if slot == NoSlot {
+		return
 	}
-	r.finished[st.slot].Store(id + 1) // id <= 2^64 - 2^32 - 1: no wrap to 0
+	st := &r.state[slot]
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if completed && (!st.hasLastCompleted || id > st.lastCompletedID) {
+		st.hasLastCompleted, st.lastCompletedID = true, id
+	}
+	// One writer at a time (the lock), so load-compare-store needs no CAS.
+	// id <= 2^64 - 2^32 - 1: id + 1 never wraps to 0.
+	if id+1 > r.finished[slot].Load() {
+		r.finished[slot].Store(id + 1)
+	}
 }
 
-// Finished returns clientID's FinishedWatermark; ok is false for none.
+// Finished returns clientID's FinishedWatermark; ok is false for none. No lock.
 //
 // Design: abstraction/server/cancel_tracker/design.md#finishedwatermark
 func (r *CancelRegistry) Finished(clientID uint32) (id uint64, ok bool) {
@@ -167,24 +204,21 @@ func (c *CancelCounters) Snapshot() (before, during, completed uint64) {
 	return c.CancelledBeforeProcessing.Load(), c.CancelledDuringProcessing.Load(), c.CompletedBeforeCancel.Load()
 }
 
-// ConnectionCancelState is owned by one connection's worker; no locking.
+// ConnectionCancelState is a connection's client binding. Only the
+// connection's admission path touches it, under the admission lock.
 //
 // API: abstraction/server/cancel_tracker/api.md#connectioncancelstate
 type ConnectionCancelState struct {
-	bound            bool
-	clientID         uint32
-	slot             int // -1 until found in the registry
-	hasLastCompleted bool
-	lastCompletedID  uint64
-	pending          pendingSet
+	bound    bool
+	clientID uint32
 }
 
-// NewConnectionCancelState returns an unbound state with an empty pending set.
+// NewConnectionCancelState returns an unbound state.
 func NewConnectionCancelState() *ConnectionCancelState {
-	return &ConnectionCancelState{slot: -1, pending: pendingSet{members: map[uint64]struct{}{}}}
+	return &ConnectionCancelState{}
 }
 
-// pendingSet is the "local set": an ordered set (min-heap plus membership map).
+// pendingSet is a client's pending set: an ordered set (min-heap plus membership map).
 //
 // Design: abstraction/server/cancel_tracker/design.md#cancelmatching
 type pendingSet struct {
@@ -193,6 +227,9 @@ type pendingSet struct {
 }
 
 func (p *pendingSet) insert(id uint64) {
+	if p.members == nil {
+		p.members = map[uint64]struct{}{}
+	}
 	if _, dup := p.members[id]; dup {
 		return
 	}
@@ -222,14 +259,19 @@ func (h *uint64Heap) Pop() any {
 	return x
 }
 
-// ShouldCancel runs CancelMatching for the request targetID at a CancelCheckPoint.
+// ShouldCancel runs CancelMatching for the request targetID at a
+// CancelCheckPoint, under the slot's lock. NoSlot never cancels.
 //
 // Design: abstraction/server/cancel_tracker/design.md#cancelmatching
-func ShouldCancel(st *ConnectionCancelState, registry *CancelRegistry, counters *CancelCounters, targetID uint64) bool {
-	if !st.bound {
+// Design: abstraction/server/cancel_tracker/design.md#overlap-and-ordering
+func ShouldCancel(registry *CancelRegistry, slot ClientSlot, counters *CancelCounters, targetID uint64) bool {
+	if slot == NoSlot {
 		return false
 	}
-	for _, id := range registry.Drain(st) {
+	st := &registry.state[slot]
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	for _, id := range registry.drain(slot) {
 		st.pending.insert(id)
 	}
 	for st.pending.len() > 0 && st.pending.min() <= targetID {
@@ -239,12 +281,14 @@ func ShouldCancel(st *ConnectionCancelState, registry *CancelRegistry, counters 
 		} else if id == targetID {
 			return true // the caller counts before/during
 		}
-		// else stale: an earlier request that was stopped, rejected or never received
+		// else stale: an earlier request that was stopped, rejected or never
+		// received, or a reset request still overlapping this one
 	}
 	return false // ids > targetID stay pending
 }
 
-// HandleCancel serves a routed DELETE /cancel. A 202 carries the target
+// HandleCancel serves a routed DELETE /cancel on the connection's handler,
+// never on a worker, and takes no lock. A 202 carries the target
 // client's FinishedWatermark in a CancelReplyBody; 400 and 503 are empty.
 //
 // Design: abstraction/server/cancel_tracker/design.md#handle_cancel

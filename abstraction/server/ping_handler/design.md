@@ -154,11 +154,11 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 
 ### Go choices
 
-- File `internal/server/pinghandler.go`, function `handlePing`. `cancel_ctx` is the struct `cancelContext`.
-- `id_check` is a Go closure over the connection's state and the request id, passed to `Burn`.
+- File `internal/server/pinghandler.go`. `admit_ping` is `admitPing(task, cfg, rng, st) (*PingJob, Response)`: a nil job means the returned `Response` (a `400`) is the answer. `run_ping` is `runPing(job, cfg, registry, counters) Response`.
+- `admitPing` runs under the connection's admission lock (`connectionHandler.mu`), because x/net/http2 runs one handler goroutine per stream.
+- `id_check` is a Go closure over the registry, the slot and the request id, passed to `Burn`. `finish(completed)` is a closure over `PublishFinished`, called explicitly on each way out.
 - Counters are incremented with `atomic.Uint64.Add(1)`.
-- `finish()` is `defer cc.registry.PublishFinished(st, id)`, placed right after the ServiceTime draw. A deferred call runs on every return after that point (`202`, `503`, `Aborted`) and before `handlePing` hands the response to the writer, which is exactly the spec's "every way out after the draw". The `400` returns come before the `defer`.
-- Tests: `server_test.go` `TestFinishedWatermarkReplies` checks the `/cancel` reply end to end after a `202`, a `503`, and an RST-stopped burn.
+- Tests: `server_test.go` `TestFinishedWatermarkReplies` checks the `/cancel` reply end to end after a `202`, a `503`, and an RST-stopped burn. `workerpool_test.go` `TestResetWhileQueued` checks check point 1 for a job reset while queued.
 
 ### Traceability
 
@@ -168,11 +168,13 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [handle_ping](#handle_ping) | [pinghandler.go:23](../../../implementation/go/internal/server/pinghandler.go#L23) |
-| [Client binding](#client-binding) | [pinghandler.go:32](../../../implementation/go/internal/server/pinghandler.go#L32) |
-| [Sampling order](#sampling-order) | [pinghandler.go:40](../../../implementation/go/internal/server/pinghandler.go#L40) |
-| [CancelCheckPoints](#cancelcheckpoints) | [pinghandler.go:50](../../../implementation/go/internal/server/pinghandler.go#L50) |
-| [last_completed_id](#last_completed_id) | [pinghandler.go:70](../../../implementation/go/internal/server/pinghandler.go#L70) |
-| [FinishedWatermark](#finishedwatermark) | [pinghandler.go:44](../../../implementation/go/internal/server/pinghandler.go#L44), [server_test.go:148](../../../implementation/go/internal/server/server_test.go#L148) |
-| [Response status](#response-status) | [pinghandler.go:73](../../../implementation/go/internal/server/pinghandler.go#L73) |
+| [handle_ping](#handle_ping) | [pinghandler.go:14](../../../implementation/go/internal/server/pinghandler.go#L14) |
+| [admit_ping](#admit_ping) | [pinghandler.go:14](../../../implementation/go/internal/server/pinghandler.go#L14) |
+| [run_ping](#run_ping) | [pinghandler.go:39](../../../implementation/go/internal/server/pinghandler.go#L39) |
+| [Client binding](#client-binding) | [pinghandler.go:22](../../../implementation/go/internal/server/pinghandler.go#L22) |
+| [Sampling order](#sampling-order) | [pinghandler.go:30](../../../implementation/go/internal/server/pinghandler.go#L30) |
+| [CancelCheckPoints](#cancelcheckpoints) | [pinghandler.go:49](../../../implementation/go/internal/server/pinghandler.go#L49) |
+| [last_completed_id](#last_completed_id) | [pinghandler.go:73](../../../implementation/go/internal/server/pinghandler.go#L73) |
+| [FinishedWatermark](#finishedwatermark) | [pinghandler.go:43](../../../implementation/go/internal/server/pinghandler.go#L43), [server_test.go:153](../../../implementation/go/internal/server/server_test.go#L153) |
+| [Response status](#response-status) | [pinghandler.go:75](../../../implementation/go/internal/server/pinghandler.go#L75) |
 <!-- trace:end -->

@@ -1,0 +1,125 @@
+// Source: abstraction/server/worker_pool/design.md (worker_pool v0.1.0)
+package server
+
+import (
+	"sync"
+	"testing"
+	"time"
+
+	"testbed/internal/protocol"
+)
+
+func testJob(seq uint32, serviceUs uint64) *PingJob {
+	id := protocol.MakeRequestID(seq, 0)
+	return newPingJob(&StreamTask{}, id, 0, serviceUs)
+}
+
+// Jobs leave the queue in push order; Close answers the rest Aborted and
+// makes Pop return nil; Push after Close fails; Close twice is a no-op.
+//
+// Design: abstraction/server/worker_pool/design.md#workqueue
+func TestWorkQueueFIFOAndClose(t *testing.T) {
+	q := NewWorkQueue()
+	jobs := []*PingJob{testJob(0, 0), testJob(1, 0), testJob(2, 0)}
+	for _, j := range jobs {
+		if err := q.Push(j); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := q.Pop(); got != jobs[0] {
+		t.Fatal("first pop must return the first push")
+	}
+	q.Close()
+	q.Close()
+	for _, j := range jobs[1:] {
+		if r := j.Reply(); !r.Aborted {
+			t.Fatalf("dropped job got %+v, want Aborted", r)
+		}
+	}
+	if q.Pop() != nil {
+		t.Fatal("pop after close must return nil")
+	}
+	if q.Push(testJob(3, 0)) != ErrQueueClosed {
+		t.Fatal("push after close must fail")
+	}
+}
+
+// Workers blocked in Pop wake up and return on Close.
+//
+// Design: abstraction/server/worker_pool/design.md#failure-and-edge-cases
+func TestWorkerPoolJoinAfterClose(t *testing.T) {
+	q := NewWorkQueue()
+	p := StartWorkerPool(4, q, Config{CancelMode: CancelCooperative, ResponseBytes: 64, CancelCheckIntervalUs: 50}, NewCancelRegistry(16), &CancelCounters{})
+	q.Close()
+	done := make(chan struct{})
+	go func() { p.Join(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("idle workers did not return")
+	}
+}
+
+// Worked example: A=300ms, B=100ms, C=100ms. One worker finishes A, B, C;
+// two workers finish B, C, A.
+//
+// Design: abstraction/server/worker_pool/design.md#ordering
+func TestWorkerPoolOrdering(t *testing.T) {
+	cfg := Config{CancelMode: CancelIgnore, ResponseBytes: 64, CancelCheckIntervalUs: 50}
+	for _, c := range []struct {
+		n    uint32
+		want []uint32
+	}{{1, []uint32{0, 1, 2}}, {2, []uint32{1, 2, 0}}} {
+		q := NewWorkQueue()
+		jobs := []*PingJob{testJob(0, 300_000), testJob(1, 100_000), testJob(2, 100_000)}
+		for _, j := range jobs {
+			_ = q.Push(j)
+		}
+		p := StartWorkerPool(c.n, q, cfg, NewCancelRegistry(16), &CancelCounters{})
+		var mu sync.Mutex
+		var order []uint32
+		var wg sync.WaitGroup
+		for _, j := range jobs {
+			wg.Add(1)
+			go func(j *PingJob) {
+				defer wg.Done()
+				if r := j.Reply(); r.Status != 202 {
+					t.Errorf("job %d: %+v", j.RequestID, r)
+				}
+				mu.Lock()
+				seq, _ := protocol.SplitRequestID(j.RequestID)
+				order = append(order, seq)
+				mu.Unlock()
+			}(j)
+		}
+		wg.Wait()
+		q.Close()
+		p.Join()
+		for i := range c.want {
+			if order[i] != c.want[i] {
+				t.Fatalf("n=%d: finish order %v, want %v", c.n, order, c.want)
+			}
+		}
+	}
+}
+
+// A job whose stream was reset while queued is skipped at CancelCheckPoint 1
+// in cooperative mode (no burn) and still publishes its id.
+//
+// Design: abstraction/server/worker_pool/design.md#failure-and-edge-cases
+func TestResetWhileQueued(t *testing.T) {
+	q := NewWorkQueue()
+	reg := NewCancelRegistry(16)
+	j := testJob(9, 3_600_000_000) // an hour: must not run
+	j.Task.Cancelled.Store(true)
+	_ = q.Push(j)
+	p := StartWorkerPool(1, q, Config{CancelMode: CancelCooperative, ResponseBytes: 64, CancelCheckIntervalUs: 50}, reg, &CancelCounters{})
+	if r := j.Reply(); !r.Aborted {
+		t.Fatalf("got %+v, want Aborted", r)
+	}
+	if f, ok := reg.Finished(0); !ok || f != j.RequestID {
+		t.Fatal("aborted job must publish its id")
+	}
+	q.Close()
+	p.Join()
+}

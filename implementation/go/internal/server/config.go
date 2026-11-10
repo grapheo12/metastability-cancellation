@@ -1,7 +1,7 @@
 // Package server implements the HTTP/2 /ping + /cancel server. Each file maps
 // to one component of abstraction/server.
 //
-// Source: abstraction/server/design.md (server v0.2.3)
+// Source: abstraction/server/design.md (server v0.3.3)
 package server
 
 import (
@@ -26,7 +26,7 @@ const (
 	CancelCooperative
 )
 
-// Config is the validated, immutable ServerConfig shared by all connection handlers.
+// Config is the validated, immutable ServerConfig shared by all connection handlers and workers.
 //
 // Design: abstraction/server/design.md#configuration-validation
 type Config struct {
@@ -36,6 +36,7 @@ type Config struct {
 	CancelMode            CancelMode
 	CancelCheckIntervalUs uint64
 	Seed                  uint64
+	NWorkerThreads        uint32
 }
 
 // Params holds the raw command-line values, named after the API parameters.
@@ -46,6 +47,7 @@ type Params struct {
 	CancelMode            string
 	CancelCheckIntervalUs string
 	Seed                  string
+	NWorkerThreads        string
 }
 
 // DefaultParams returns the defaults from abstraction/server/api.md#program-parameters.
@@ -55,6 +57,7 @@ func DefaultParams() Params {
 		CancelMode:            "cooperative",
 		CancelCheckIntervalUs: "50",
 		Seed:                  "0",
+		NWorkerThreads:        "1",
 	}
 }
 
@@ -101,5 +104,10 @@ func Validate(p Params) (Config, error) {
 		return c, errors.New("seed must be an unsigned 64-bit integer")
 	}
 	c.Seed = seed
+	nw, err := strconv.ParseUint(p.NWorkerThreads, 10, 32)
+	if err != nil || nw < 1 {
+		return c, errors.New("n_worker_threads must be an integer in 1..=4294967295")
+	}
+	c.NWorkerThreads = uint32(nw)
 	return c, nil
 }

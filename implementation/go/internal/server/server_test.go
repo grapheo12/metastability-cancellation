@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.2.3)
+// Source: abstraction/server/design.md (server v0.3.3)
 package server
 
 import (
@@ -51,7 +51,12 @@ func (c *testClient) do(t *testing.T, method, path string, body []byte) (int, []
 
 func startTestServer(t *testing.T, mode CancelMode, rate float64) *Server {
 	t.Helper()
-	s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: rate, ResponseBytes: 64, CancelMode: mode, CancelCheckIntervalUs: 50})
+	return startTestServerN(t, mode, rate, 1)
+}
+
+func startTestServerN(t *testing.T, mode CancelMode, rate float64, workers uint32) *Server {
+	t.Helper()
+	s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: rate, ResponseBytes: 64, CancelMode: mode, CancelCheckIntervalUs: 50, NWorkerThreads: workers})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,4 +202,72 @@ func TestFinishedWatermarkReplies(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	s.Shutdown()
+}
+
+// With n_worker_threads = 2, a second client is served while the first one's
+// long burn occupies a worker, and /cancel is answered while every worker is
+// busy (it is never queued).
+//
+// Design: abstraction/server/design.md#concurrency-model
+func TestTwoWorkersServeInParallel(t *testing.T) {
+	s := startTestServerN(t, CancelCooperative, 0.0001, 2) // mean ServiceTime ~ hours
+	addr := s.Addr().String()
+	slow, slow2, canceller := dialTest(t, addr), dialTest(t, addr), dialTest(t, addr)
+	idA, idB := protocol.MakeRequestID(1, 0), protocol.MakeRequestID(1, 1) // clients 0 and 1
+	resA, resB := make(chan int, 1), make(chan int, 1)
+	go func() { st, _ := slow.do(t, "POST", "/ping", protocol.BuildBody(idA, 64)); resA <- st }()
+	go func() { st, _ := slow2.do(t, "POST", "/ping", protocol.BuildBody(idB, 64)); resB <- st }()
+	time.Sleep(100 * time.Millisecond) // both workers are now burning
+
+	start := time.Now()
+	if st, _ := canceller.do(t, "DELETE", "/cancel", protocol.BuildCancelBody(idA)); st != 202 {
+		t.Fatalf("cancel A: %d", st)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("/cancel waited for a worker")
+	}
+	select {
+	case st := <-resA:
+		if st != 503 {
+			t.Fatalf("A: %d", st)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("A was not stopped")
+	}
+	if st, _ := canceller.do(t, "DELETE", "/cancel", protocol.BuildCancelBody(idB)); st != 202 {
+		t.Fatalf("cancel B: %d", st)
+	}
+	select {
+	case st := <-resB:
+		if st != 503 {
+			t.Fatalf("B: %d", st)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("B was not stopped")
+	}
+	if _, d, _ := s.Counters().Snapshot(); d != 2 {
+		t.Fatalf("cancelled_during_processing %d, want 2", d)
+	}
+	s.Shutdown()
+}
+
+// Configuration validation of n_worker_threads.
+//
+// Design: abstraction/server/design.md#configuration-validation
+func TestValidateNWorkerThreads(t *testing.T) {
+	p := DefaultParams()
+	p.ResponseRate, p.ResponseBytes = "10", "64"
+	if c, err := Validate(p); err != nil || c.NWorkerThreads != 1 {
+		t.Fatalf("default: %+v %v", c, err)
+	}
+	for _, bad := range []string{"0", "-1", "x", "4294967296"} {
+		p.NWorkerThreads = bad
+		if _, err := Validate(p); err == nil {
+			t.Fatalf("n_worker_threads %q must be rejected", bad)
+		}
+	}
+	p.NWorkerThreads = "4294967295"
+	if c, err := Validate(p); err != nil || c.NWorkerThreads != 4294967295 {
+		t.Fatalf("max: %+v %v", c, err)
+	}
 }

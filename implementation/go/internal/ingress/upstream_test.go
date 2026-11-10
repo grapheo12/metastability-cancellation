@@ -14,7 +14,7 @@ import (
 func startBackend(t *testing.T, rate float64) *server.Server {
 	t.Helper()
 	s, err := server.Listen(server.Config{ListenAddr: "127.0.0.1:0", ResponseRate: rate, ResponseBytes: 64,
-		CancelMode: server.CancelCooperative, CancelCheckIntervalUs: 50})
+		CancelMode: server.CancelCooperative, CancelCheckIntervalUs: 50, NWorkerThreads: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
