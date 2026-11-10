@@ -17,7 +17,7 @@ flowchart LR
 
 | Subcomponent | Responsibility | Spec |
 |---|---|---|
-| In-Flight Map | Lock-free `client_id → InFlightEntry` of the forwards in progress | [inflight_map/description.md](inflight_map/description.md) |
+| In-Flight Map | Lock-free `request_id → InFlightEntry` of the forwards in progress, any number per client | [inflight_map/description.md](inflight_map/description.md) |
 | Load Balancer | LbPolicy (`pick`), BackendStats (`finish`) | [load_balancer/description.md](load_balancer/description.md) |
 | Upstream Pool | One h2c connection per (client, backend), dialed once, dropped on connection error | [upstream_pool/description.md](upstream_pool/description.md) |
 | Load Canceller | CancelSchedule from the first `/ping`, InFlightVictimChoice, `/cancel` on its own connection per backend | [load_canceller/description.md](load_canceller/description.md) |

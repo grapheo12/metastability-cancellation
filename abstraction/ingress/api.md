@@ -56,8 +56,8 @@ One record per backend, all fields atomic u64 starting at 0, kept by the LoadBal
   stream failed ([../protocol/api.md](../protocol/api.md): `STATUS_BAD_GATEWAY`).
 - A body that does not parse, or whose client id is `>= num_clients`, gets `400` with an empty body. Other paths
   get `404`, other methods on `/ping` get `405`. The Ingress does not serve `/cancel`.
-- Requests on one client connection are handled concurrently. A load-generator client keeps at most one
-  outstanding, so in practice each client has at most one forward in progress.
+- Requests on one client connection are handled concurrently. A load-generator client keeps up to
+  `n_waiting_requests` outstanding, so a client can have that many forwards in progress at once.
 
 ## Outputs
 

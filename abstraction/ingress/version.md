@@ -11,3 +11,4 @@
 | 0.1.6 | 2026-11-04T00:00:00Z | InFlightMap key-space wording; child bump: inflight_map 0.2.0 (library-backed lock-free map contract) |
 | 0.1.7 | 2026-11-10T00:00:00Z | The server binds connections but no longer serves them serially (shared WorkQueue): design rationale and Uses wording. Child bump: upstream_pool 0.1.1. No behavior change |
 | 0.1.8 | 2026-11-10T00:00:00Z | Parameter `initial_stall_ms` (default 1000) restated and validated. Child bump: load_canceller 0.4.0 |
+| 0.1.9 | 2026-11-10T00:00:00Z | Many forwards per client at once; InFlightMap keyed by RequestId. Child bump: inflight_map 0.3.0 |

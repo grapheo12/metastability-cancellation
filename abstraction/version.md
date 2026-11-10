@@ -68,3 +68,4 @@
 | 0.9.2 | 2026-11-10T00:00:00Z | Glossary: ClientCancelState, CancelMatching; WorkQueue rationale no longer relies on request order. Child bump: server 0.5.1 (cancel_tracker 0.4.0) |
 | 0.9.3 | 2026-11-10T00:00:00Z | Child bump: server 0.5.2 (ping_handler 0.5.0) |
 | 0.9.4 | 2026-11-10T00:00:00Z | Child bump: server 0.5.3 (worker_pool 0.3.1) |
+| 0.9.5 | 2026-11-10T00:00:00Z | Glossary: InFlightMap keyed by RequestId. Child bump: ingress 0.1.9 (inflight_map 0.3.0) |
