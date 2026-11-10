@@ -1,7 +1,11 @@
-// Source: abstraction/server/worker_pool/design.md (worker_pool v0.1.0)
+// Source: abstraction/server/worker_pool/design.md (worker_pool v0.2.0)
 package server
 
 import (
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -122,4 +126,58 @@ func TestResetWhileQueued(t *testing.T) {
 	}
 	q.Close()
 	p.Join()
+}
+
+// Worked example of the late-wake rule, interval 10 ms.
+//
+// Design: abstraction/server/worker_pool/design.md#queuelengthlog
+func TestNextSampleIndexWorkedExample(t *testing.T) {
+	for _, c := range []struct{ tMs, want uint64 }{{0, 1}, {10, 2}, {20, 3}, {47, 5}, {50, 6}} {
+		if got := nextSampleIndex(c.tMs, 10); got != c.want {
+			t.Errorf("t=%d: next k %d, want %d", c.tMs, got, c.want)
+		}
+	}
+}
+
+// The sampler writes the header, then rows with strictly increasing t_ms and
+// the current queue length; Stop closes the file.
+//
+// Design: abstraction/server/worker_pool/design.md#queuelengthlog
+func TestQueueSamplerRows(t *testing.T) {
+	q := NewWorkQueue()
+	for i := uint32(0); i < 3; i++ {
+		_ = q.Push(testJob(i, 0))
+	}
+	path := filepath.Join(t.TempDir(), "q.csv")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := StartQueueSampler(q, f, 5)
+	time.Sleep(60 * time.Millisecond)
+	s.Stop()
+	b, _ := os.ReadFile(path)
+	lines := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+	if lines[0] != "t_ms,queue_len" || len(lines) < 4 {
+		t.Fatalf("log %q", b)
+	}
+	if !strings.HasPrefix(lines[1], "0,") {
+		t.Fatalf("first row %q, want t_ms 0", lines[1])
+	}
+	prev := int64(-1)
+	for _, l := range lines[1:] {
+		parts := strings.Split(l, ",")
+		tMs, _ := strconv.ParseInt(parts[0], 10, 64)
+		if tMs <= prev || parts[1] != "3" {
+			t.Fatalf("row %q after t=%d", l, prev)
+		}
+		prev = tMs
+	}
+	if q.Len() != 3 {
+		t.Fatal("sampling must not change the queue")
+	}
+	q.Close()
+	if q.Len() != 0 {
+		t.Fatal("closed queue has length 0")
+	}
 }

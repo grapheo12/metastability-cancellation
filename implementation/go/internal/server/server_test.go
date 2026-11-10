@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.3.3)
+// Source: abstraction/server/design.md (server v0.4.0)
 package server
 
 import (
@@ -7,6 +7,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -266,8 +269,50 @@ func TestValidateNWorkerThreads(t *testing.T) {
 			t.Fatalf("n_worker_threads %q must be rejected", bad)
 		}
 	}
+	p.NWorkerThreads = "1"
+	p.QueueSampleIntervalMs = "0"
+	if _, err := Validate(p); err == nil {
+		t.Fatal("queue_sample_interval_ms 0 must be rejected")
+	}
+	p.QueueSampleIntervalMs = "10"
 	p.NWorkerThreads = "4294967295"
 	if c, err := Validate(p); err != nil || c.NWorkerThreads != 4294967295 {
 		t.Fatalf("max: %+v %v", c, err)
+	}
+}
+
+// End to end: with one worker busy on a long burn, later requests wait in the
+// WorkQueue and the QueueLengthLog shows them; the file is complete after
+// Shutdown, and an unwritable path makes Listen fail.
+//
+// Design: abstraction/server/design.md#listener
+func TestQueueLengthLogEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "server_0.queue.csv")
+	s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: 0.0001, ResponseBytes: 64,
+		CancelMode: CancelCooperative, CancelCheckIntervalUs: 50, NWorkerThreads: 1,
+		QueueLogPath: path, QueueSampleIntervalMs: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go s.Serve()
+	addr := s.Addr().String()
+	ctx, cancel := context.WithCancel(context.Background())
+	for c := uint32(0); c < 3; c++ { // three clients; one burns, two wait
+		client := dialTest(t, addr)
+		req, _ := http.NewRequestWithContext(ctx, "POST", "http://"+addr+"/ping",
+			bytes.NewReader(protocol.BuildBody(protocol.MakeRequestID(0, c), 64)))
+		go func() { _, _ = client.cc.RoundTrip(req) }()
+	}
+	time.Sleep(150 * time.Millisecond)
+	cancel() // RST all three so shutdown is prompt
+	s.Shutdown()
+	b, _ := os.ReadFile(path)
+	if !strings.HasPrefix(string(b), "t_ms,queue_len\n") || !strings.Contains(string(b), ",2\n") {
+		t.Fatalf("queue log does not show 2 waiting jobs:\n%s", b)
+	}
+	if _, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: 1, ResponseBytes: 64, NWorkerThreads: 1,
+		QueueLogPath: filepath.Join(dir, "missing", "q.csv"), QueueSampleIntervalMs: 10}); err == nil {
+		t.Fatal("unwritable queue_log_path must fail Listen")
 	}
 }

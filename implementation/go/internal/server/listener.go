@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.3.3)
+// Source: abstraction/server/design.md (server v0.4.0)
 package server
 
 import (
@@ -28,6 +28,8 @@ type Server struct {
 	counters *CancelCounters
 	queue    *WorkQueue
 	pool     *WorkerPool
+	queueLog *os.File      // nil: no QueueLengthLog
+	sampler  *QueueSampler // started after "listening on"
 	h2s      *http2.Server
 	base     *http.Server // only carries the shutdown hook that sends GOAWAY
 
@@ -59,14 +61,28 @@ func Listen(cfg Config) (*Server, error) {
 	if err := http2.ConfigureServer(s.base, s.h2s); err != nil {
 		return nil, err
 	}
+	if cfg.QueueLogPath != "" {
+		f, err := os.Create(cfg.QueueLogPath)
+		if err != nil {
+			return nil, err
+		}
+		s.queueLog = f
+	}
 	ln, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
+		if s.queueLog != nil {
+			_ = s.queueLog.Close()
+		}
 		return nil, err
 	}
 	s.ln = ln
 	// Design: abstraction/server/design.md#concurrency-model
 	s.pool = StartWorkerPool(cfg.NWorkerThreads, s.queue, cfg, s.registry, s.counters)
 	fmt.Println("listening on " + cfg.ListenAddr)
+	if s.queueLog != nil {
+		// Design: abstraction/server/design.md#listener
+		s.sampler = StartQueueSampler(s.queue, s.queueLog, cfg.QueueSampleIntervalMs)
+	}
 	return s, nil
 }
 
@@ -134,6 +150,9 @@ func (s *Server) Shutdown() {
 	s.shuttingDown.Store(true)
 	s.mu.Unlock()
 	_ = s.ln.Close()
+	if s.sampler != nil {
+		s.sampler.Stop() // no extra row; the file is closed
+	}
 	s.queue.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)

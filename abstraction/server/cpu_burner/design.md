@@ -81,7 +81,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [CooperativeCpuBurn](#cooperativecpuburn) | [cpuburner.go:36](../../../implementation/go/internal/server/cpuburner.go#L36), [server_test.go:105](../../../implementation/go/internal/server/server_test.go#L105) |
+| [CooperativeCpuBurn](#cooperativecpuburn) | [cpuburner.go:36](../../../implementation/go/internal/server/cpuburner.go#L36), [server_test.go:108](../../../implementation/go/internal/server/server_test.go#L108) |
 | [Spin unit](#spin-unit) | [cpuburner.go:19](../../../implementation/go/internal/server/cpuburner.go#L19), [cpuburner.go:66](../../../implementation/go/internal/server/cpuburner.go#L66), [cpuburner.go:69](../../../implementation/go/internal/server/cpuburner.go#L69) |
 | [Timing](#timing) | [cpuburner.go:25](../../../implementation/go/internal/server/cpuburner.go#L25), [cpuburner.go:28](../../../implementation/go/internal/server/cpuburner.go#L28) |
 <!-- trace:end -->
