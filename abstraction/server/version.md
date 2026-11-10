@@ -13,3 +13,4 @@
 | 0.3.3 | 2026-11-10T00:00:00Z | Child bump: connection_handler 0.3.0 (admission onto the WorkQueue, `/cancel` inline) |
 | 0.4.0 | 2026-11-10T00:00:00Z | Parameters `queue_log_path` and `queue_sample_interval_ms`; QueueLengthLog output (CSV `t_ms,queue_len`); Listener starts the sampler, Shutdown stops it before closing the WorkQueue; lifecycle errors. Child bump: worker_pool 0.2.0 |
 | 0.5.0 | 2026-11-10T00:00:00Z | Parameter `initial_stall_ms` (default 1000): validation, Listener passes it to `queue_new`, wire behavior, RST-during-stall row, shutdown note. Child bump: worker_pool 0.3.0 |
+| 0.5.1 | 2026-11-10T00:00:00Z | WorkQueue rationale for many requests per client. Child bump: cancel_tracker 0.4.0 |

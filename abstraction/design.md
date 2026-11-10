@@ -104,8 +104,9 @@ order**, like a CPU-bound service with a fixed number of cores. Each client keep
 After a cancellation, the client's slot is free again while the server may still be working on the cancelled
 request. In `ignore` mode the abandoned work keeps a worker busy, and every
 request queued behind it waits, whichever client sent it. That wait is the effect this testbed measures.
-`/cancel` never enters the queue, so it is never stuck behind the work it targets. Requests start in arrival
-order, so the request ids of one client start in increasing order, which CancelMatching depends on. See
+`/cancel` never enters the queue, so it is never stuck behind the work it targets. CancelMatching matches each
+`/cancel` to its request by id, so it does not depend on the order in which a client's many requests start or
+finish. See
 [server/design.md#why-one-shared-workqueue](server/design.md#why-one-shared-workqueue) and
 [server/worker_pool/design.md#ordering](server/worker_pool/design.md#ordering).
 

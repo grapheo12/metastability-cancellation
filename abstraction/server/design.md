@@ -144,8 +144,9 @@ CancelCounters line ([api.md#cancelcounters-output](api.md#cancelcounters-output
 The server models a CPU-bound service with a fixed number of cores: `n_worker_threads` workers fed by one line.
 How long a request waits depends on all the work ahead of it, from every client, not only its own client's work.
 Abandoned work therefore costs everyone: in `ignore` mode a request the client already gave up on still holds a
-worker for its full ServiceTime, and that is the effect this testbed measures. Clients are closed loops, so the
-WorkQueue holds at most about one request per client plus the abandoned ones.
+worker for its full ServiceTime, and that is the effect this testbed measures. Each client keeps up to
+`n_waiting_requests` requests outstanding, so the WorkQueue can hold many requests per client, plus the abandoned
+ones.
 
 `/cancel` is answered by the Connection Handler and never queued, so a cancel is never stuck behind the work it is
 trying to stop. It reaches the worker through the lock-free CancelInbox.

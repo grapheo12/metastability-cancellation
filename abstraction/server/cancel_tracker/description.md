@@ -6,11 +6,12 @@ Leaf component. It holds everything the server needs for server-directed cancell
   CancelInbox, its ClientCancelState and its FinishedWatermark. Entries are created on first use and never deleted.
 - **CancelInbox**: a lock-free multi-producer stack of RequestIds for one client. `/cancel` handlers
   push onto it. The worker running that client's request drains it all at once.
-- **ClientCancelState**: per client, the pending set of drained `/cancel` ids and the last completed RequestId,
-  guarded by a per-client lock because any worker may run any client's request.
-- **CancelMatching**: the per-client algorithm a worker runs at each CancelCheckPoint. It
-  moves drained ids into the client's ordered pending set and decides whether the current request is
-  cancelled. Along the way it counts cancels that arrived too late.
+- **ClientCancelState**: per client, the drained `/cancel` ids not yet resolved, the requests started and not yet
+  finished, and a ring of recently finished requests with their outcomes, guarded by a per-client lock because
+  any worker may run any client's request and a client has many requests at once.
+- **CancelMatching**: the per-client algorithm a worker runs at each CancelCheckPoint. It matches `/cancel` ids to
+  requests **by id**, whatever order the requests arrive, run and finish in, and decides whether the current
+  request is cancelled. Along the way it counts cancels that arrived too late.
 - **CancelCounters**: three process-wide atomic counters.
 - **FinishedWatermark**: per client, the highest RequestId the server has finished with any outcome, kept in the
   client's registry slot.
