@@ -20,3 +20,4 @@
 | 0.2.4 | 2026-11-03T00:00:00Z | Child bump: config 0.4.0 (IngressPlacement) |
 | 0.2.5 | 2026-11-03T00:00:00Z | Child bump: experiment_executor 0.4.0 |
 | 0.2.6 | 2026-11-10T00:00:00Z | Child bump: config 0.5.0 (`n_worker_threads`) |
+| 0.2.7 | 2026-11-10T00:00:00Z | Child bump: config 0.6.0 (QueueLengthLog parameters) |
