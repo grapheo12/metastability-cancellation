@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.7.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.8.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -217,6 +217,13 @@ class ConfigTest(unittest.TestCase):
         self.assertTrue(all(dict(p.ingress_args)["initial_stall_ms"] == 500 for p in points))
         unset = cfg.expand_sweep(self.load(BASE))[0]
         self.assertNotIn("initial_stall_ms", dict(unset.server_args))  # program default (1000) applies
+
+    # Design: abstraction/benchmark_runner/config/design.md#benchconfig
+    def test_n_waiting_requests_is_a_load_gen_param(self):
+        text = BASE.replace("num_clients = 4", "num_clients = 4\nn_waiting_requests = [1, 100]")
+        points = cfg.expand_sweep(self.load(text))
+        self.assertEqual(sorted({dict(p.loadgen_args)["n_waiting_requests"] for p in points}), [1, 100])
+        self.assertNotIn("n_waiting_requests", dict(cfg.expand_sweep(self.load(BASE))[0].loadgen_args))
 
 
 if __name__ == "__main__":
