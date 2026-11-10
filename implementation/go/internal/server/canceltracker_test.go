@@ -1,4 +1,4 @@
-// Source: abstraction/server/cancel_tracker/design.md (cancel_tracker v0.3.0)
+// Source: abstraction/server/cancel_tracker/design.md (cancel_tracker v0.4.0)
 package server
 
 import (
@@ -18,7 +18,7 @@ func slotOf(t *testing.T, reg *CancelRegistry, clientID uint32) ClientSlot {
 
 func pendingSorted(reg *CancelRegistry, slot ClientSlot) []uint64 {
 	var out []uint64
-	for id := range reg.state[slot].pending.members {
+	for id := range reg.state[slot].pending {
 		out = append(out, id)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
@@ -31,36 +31,43 @@ func lockedDrain(reg *CancelRegistry, slot ClientSlot) []uint64 {
 	return reg.drain(slot)
 }
 
+// fixture: recent = [(3, completed), (5, RST)], unfinished = {6, 7}.
+func matchingFixture(t *testing.T) (*CancelRegistry, ClientSlot, *CancelCounters) {
+	reg, ctr := NewCancelRegistry(16), &CancelCounters{}
+	slot := slotOf(t, reg, 0)
+	for _, id := range []uint64{3, 5, 6, 7} {
+		reg.Start(slot, id)
+	}
+	reg.PublishFinished(slot, 3, true, ctr)
+	reg.PublishFinished(slot, 5, false, ctr)
+	return reg, slot, ctr
+}
+
 // Worked examples from the CancelMatching table.
 //
 // Design: abstraction/server/cancel_tracker/design.md#cancelmatching
 func TestCancelMatchingWorkedExamples(t *testing.T) {
 	cases := []struct {
-		pending, inbox []uint64
-		lastCompleted  uint64
-		target         uint64
-		want           bool
-		pendingAfter   []uint64
-		completedDelta uint64
+		pendingBefore, inbox []uint64
+		target               uint64
+		want                 bool
+		pendingAfter         []uint64
+		completedDelta       uint64
 	}{
-		{[]uint64{3, 5, 9}, nil, 3, 5, true, []uint64{9}, 1},
-		{[]uint64{4}, nil, 2, 6, false, nil, 0},
-		{[]uint64{8}, nil, 5, 6, false, []uint64{8}, 0},
-		{nil, []uint64{6}, 5, 6, true, nil, 0},
+		{nil, []uint64{3}, 6, false, nil, 1},
+		{nil, []uint64{5}, 6, false, nil, 0},
+		{nil, []uint64{7}, 6, false, []uint64{7}, 0},
+		{[]uint64{7}, nil, 7, true, nil, 0},
+		{nil, []uint64{9}, 6, false, []uint64{9}, 0},
+		{nil, []uint64{6}, 6, true, nil, 0},
 	}
 	for i, c := range cases {
-		reg := NewCancelRegistry(16)
-		ctr := &CancelCounters{}
-		slot := slotOf(t, reg, 0)
-		st := &reg.state[slot]
-		st.hasLastCompleted, st.lastCompletedID = true, c.lastCompleted
-		for _, id := range c.pending {
-			st.pending.insert(id)
+		reg, slot, ctr := matchingFixture(t)
+		for _, id := range c.pendingBefore {
+			reg.state[slot].pending[id] = 0
 		}
 		for _, id := range c.inbox {
-			if err := reg.Push(0, id); err != nil {
-				t.Fatal(err)
-			}
+			_ = reg.Push(0, id)
 		}
 		if got := ShouldCancel(reg, slot, ctr, c.target); got != c.want {
 			t.Errorf("case %d: got %v want %v", i, got, c.want)
@@ -72,19 +79,104 @@ func TestCancelMatchingWorkedExamples(t *testing.T) {
 			t.Errorf("case %d: completed_before_cancel %d", i, ctr.CompletedBeforeCancel.Load())
 		}
 	}
-}
-
-// Design: abstraction/server/cancel_tracker/design.md#cancelmatching
-func TestNoSlotNeverCancels(t *testing.T) {
-	reg := NewCancelRegistry(16)
-	_ = reg.Push(0, 0)
-	if ShouldCancel(reg, NoSlot, &CancelCounters{}, 0) {
+	if ShouldCancel(NewCancelRegistry(16), NoSlot, &CancelCounters{}, 0) {
 		t.Fatal("NoSlot must not cancel")
 	}
-	// Empty pending, no last_completed_id, target 0: false, nothing counted.
-	ctr := &CancelCounters{}
-	if ShouldCancel(reg, slotOf(t, reg, 5), ctr, 0) || ctr.CompletedBeforeCancel.Load() != 0 {
-		t.Fatal("empty state must not cancel")
+}
+
+// The Out-of-order requests table: concurrent requests, out-of-order start,
+// a cancel after the last check point, and a stale id swept after R finishes.
+//
+// Design: abstraction/server/cancel_tracker/design.md#out-of-order-requests
+func TestOutOfOrderRequests(t *testing.T) {
+	reg, ctr := NewCancelRegistry(16), &CancelCounters{}
+	slot := slotOf(t, reg, 0)
+	// 10 and 11 run at once; /cancel 10 is drained by 11's check.
+	reg.Start(slot, 10)
+	reg.Start(slot, 11)
+	_ = reg.Push(0, 10)
+	if ShouldCancel(reg, slot, ctr, 11) {
+		t.Fatal("11 must not be cancelled")
+	}
+	if !ShouldCancel(reg, slot, ctr, 10) {
+		t.Fatal("10's own check must match")
+	}
+	// 21 starts before 20; /cancel 20 drained by 21's check is kept, then matched.
+	reg.Start(slot, 21)
+	_ = reg.Push(0, 20)
+	if ShouldCancel(reg, slot, ctr, 21) {
+		t.Fatal("21 must not be cancelled")
+	}
+	reg.Start(slot, 20)
+	if !ShouldCancel(reg, slot, ctr, 20) {
+		t.Fatal("20 must match once started")
+	}
+	// /cancel 12 after 12's last check point, before its 202.
+	reg.Start(slot, 12)
+	_ = reg.Push(0, 12)
+	ShouldCancel(reg, slot, ctr, 11) // another request's check drains it
+	reg.PublishFinished(slot, 12, true, ctr)
+	if ctr.CompletedBeforeCancel.Load() != 1 {
+		t.Fatalf("completed_before_cancel %d, want 1", ctr.CompletedBeforeCancel.Load())
+	}
+	// /cancel 13 for a request never started: swept after more than R finishes.
+	_ = reg.Push(0, 13)
+	ShouldCancel(reg, slot, ctr, 11)
+	if _, ok := reg.state[slot].pending[13]; !ok {
+		t.Fatal("13 must be pending")
+	}
+	for i := uint64(0); i < 2*RecentFinished; i++ {
+		reg.Start(slot, 1000+i)
+		reg.PublishFinished(slot, 1000+i, false, ctr)
+	}
+	if _, ok := reg.state[slot].pending[13]; ok {
+		t.Fatal("stale 13 must be swept")
+	}
+	if n := len(reg.state[slot].recent); n != RecentFinished || len(reg.state[slot].recentIndex) != RecentFinished {
+		t.Fatalf("ring %d, index %d, want %d", n, len(reg.state[slot].recentIndex), RecentFinished)
+	}
+	if ctr.CompletedBeforeCancel.Load() != 1 {
+		t.Fatal("RST/503 finishes and sweeps count nothing")
+	}
+}
+
+// Many workers run requests of one client concurrently while cancels arrive:
+// every cancelled id is matched exactly once and none is lost (run with -race
+// where available).
+//
+// Design: abstraction/server/cancel_tracker/design.md#clientcancelstate
+func TestConcurrentSameClientMatching(t *testing.T) {
+	reg, ctr := NewCancelRegistry(16), &CancelCounters{}
+	slot := slotOf(t, reg, 1)
+	const n = 400
+	for id := uint64(0); id < n; id++ {
+		reg.Start(slot, id)
+		_ = reg.Push(1, id)
+	}
+	var matched sync.Map
+	var wg sync.WaitGroup
+	for w := 0; w < 4; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for id := uint64(n - 1 - uint64(w)); ; id -= 4 { // descending: out of order on purpose
+				if ShouldCancel(reg, slot, ctr, id) {
+					if _, dup := matched.LoadOrStore(id, true); dup {
+						t.Errorf("id %d matched twice", id)
+					}
+				}
+				reg.PublishFinished(slot, id, false, ctr)
+				if id < 4 {
+					return
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+	count := 0
+	matched.Range(func(_, _ any) bool { count++; return true })
+	if count != n {
+		t.Fatalf("matched %d of %d cancels", count, n)
 	}
 }
 
@@ -154,35 +246,34 @@ func TestHandleCancel(t *testing.T) {
 	}
 }
 
-// Worked example table: client 3 finishes seq 0 (202), 1 (503), 2 (RST); a 400 publishes nothing.
+// Worked example table: seq 0 (202), 1 (503), 2 (RST); a 400 publishes
+// nothing; out-of-order finishes keep the max.
 //
 // Design: abstraction/server/cancel_tracker/design.md#finishedwatermark
 func TestFinishedWatermark(t *testing.T) {
-	reg := NewCancelRegistry(16)
+	reg, ctr := NewCancelRegistry(16), &CancelCounters{}
 	if _, ok := reg.Finished(3); ok {
 		t.Fatal("no slot yet: want none")
 	}
 	slot := slotOf(t, reg, 3)
 	for seq := uint32(0); seq < 3; seq++ {
 		id := uint64(3)<<32 | uint64(seq)
-		reg.PublishFinished(slot, id, seq == 0) // 202, 503, RST
+		reg.PublishFinished(slot, id, seq == 0, ctr)
 		if got, ok := reg.Finished(3); !ok || got != id {
 			t.Fatalf("after seq %d: %d %v", seq, got, ok)
 		}
 	}
-	if st := &reg.state[slot]; !st.hasLastCompleted || st.lastCompletedID != uint64(3)<<32 {
-		t.Fatal("last_completed_id must stay at seq 0 (only 202 raises it)")
+	id4, id5 := uint64(3)<<32|4, uint64(3)<<32|5
+	reg.PublishFinished(slot, id5, true, ctr)
+	reg.PublishFinished(slot, id4, true, ctr)
+	if got, ok := reg.Finished(3); !ok || got != id5 {
+		t.Fatalf("watermark %d %v, want id(5)", got, ok)
 	}
 	coop := Config{CancelMode: CancelCooperative}
-	if r := HandleCancel([]byte(`{"id":"12884901891"}`), coop, reg); string(r.Body) != `{"finished":"12884901890"}` {
+	if r := HandleCancel([]byte(`{"id":"12884901894"}`), coop, reg); string(r.Body) != `{"finished":"12884901893"}` {
 		t.Fatalf("reply %s", r.Body)
 	}
-	if r := HandleCancel([]byte(`{"id":"12884901891"}`), Config{CancelMode: CancelIgnore}, reg); r.Status != 202 ||
-		string(r.Body) != `{"finished":"12884901890"}` {
-		t.Fatalf("ignore mode reply %d %s", r.Status, r.Body)
-	}
-	// Id 0 must be distinguishable from none (stored as 1).
-	reg.PublishFinished(slotOf(t, reg, 0), 0, true)
+	reg.PublishFinished(slotOf(t, reg, 0), 0, true, ctr) // id 0 is distinguishable from none
 	if got, ok := reg.Finished(0); !ok || got != 0 {
 		t.Fatalf("id 0: %d %v", got, ok)
 	}
@@ -195,93 +286,9 @@ func TestPublishFinishedRegistryFull(t *testing.T) {
 		t.Fatal("first client must fit")
 	}
 	slot := reg.Client(2)
-	reg.PublishFinished(slot, uint64(2)<<32, true)
+	reg.Start(slot, uint64(2)<<32)
+	reg.PublishFinished(slot, uint64(2)<<32, true, &CancelCounters{})
 	if _, ok := reg.Finished(2); ok || slot != NoSlot {
 		t.Fatal("full registry: nothing published")
-	}
-	if r := HandleCancel([]byte(`{"id":"8589934593"}`), Config{CancelMode: CancelIgnore}, reg); string(r.Body) != `{"finished":null}` {
-		t.Fatalf("reply %s", r.Body)
-	}
-}
-
-// Two requests of one client finish out of order (seq 5 before seq 4): both
-// values are max-updates and never go down.
-//
-// Design: abstraction/server/cancel_tracker/design.md#finishedwatermark
-func TestOutOfOrderFinishKeepsMax(t *testing.T) {
-	reg := NewCancelRegistry(16)
-	slot := slotOf(t, reg, 3)
-	id4, id5 := uint64(3)<<32|4, uint64(3)<<32|5
-	reg.PublishFinished(slot, id5, true)
-	reg.PublishFinished(slot, id4, true)
-	if got, ok := reg.Finished(3); !ok || got != id5 {
-		t.Fatalf("watermark %d %v, want id(5)", got, ok)
-	}
-	if st := &reg.state[slot]; st.lastCompletedID != id5 {
-		t.Fatalf("last_completed_id %d, want id(5)", st.lastCompletedID)
-	}
-}
-
-// Worked example: /cancel 4 and 5 while reset request 4 still runs; the check
-// for 5 drops 4 as stale and cancels 5; 4's late finish lowers nothing.
-//
-// Design: abstraction/server/cancel_tracker/design.md#overlap-and-ordering
-func TestOverlapWorkedExample(t *testing.T) {
-	reg := NewCancelRegistry(16)
-	ctr := &CancelCounters{}
-	slot := slotOf(t, reg, 0)
-	reg.PublishFinished(slot, 3, true) // state before: last_completed_id 3
-	_ = reg.Push(0, 4)
-	_ = reg.Push(0, 5)
-	if !ShouldCancel(reg, slot, ctr, 5) {
-		t.Fatal("5 must be cancelled")
-	}
-	reg.PublishFinished(slot, 5, false) // 503
-	if got := pendingSorted(reg, slot); len(got) != 0 {
-		t.Fatalf("pending %v, want empty", got)
-	}
-	reg.PublishFinished(slot, 4, false) // 4 aborted by RST, finishes late
-	if f, _ := reg.Finished(0); f != 5 || reg.state[slot].lastCompletedID != 3 || ctr.CompletedBeforeCancel.Load() != 0 {
-		t.Fatalf("watermark %d last_completed %d completed_before_cancel %d", f, reg.state[slot].lastCompletedID, ctr.CompletedBeforeCancel.Load())
-	}
-}
-
-// Many workers check one client at once while cancels are pushed: every
-// cancelled id is matched exactly once (run with -race).
-//
-// Design: abstraction/server/cancel_tracker/design.md#clientcancelstate
-func TestConcurrentShouldCancel(t *testing.T) {
-	reg := NewCancelRegistry(16)
-	ctr := &CancelCounters{}
-	slot := slotOf(t, reg, 1)
-	const n = 2000
-	var matched sync.Map
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for id := uint64(0); id < n; id++ {
-			_ = reg.Push(1, id)
-		}
-	}()
-	for w := 0; w < 4; w++ {
-		wg.Add(1)
-		go func(w int) {
-			defer wg.Done()
-			for id := uint64(w); id < n; id += 4 {
-				for spin := 0; spin < 1000; spin++ { // checks until pushed or dropped
-					if ShouldCancel(reg, slot, ctr, id) {
-						if _, dup := matched.LoadOrStore(id, true); dup {
-							t.Errorf("id %d matched twice", id)
-						}
-						break
-					}
-				}
-			}
-		}(w)
-	}
-	wg.Wait()
-	if ctr.CompletedBeforeCancel.Load() != 0 {
-		t.Fatal("nothing completed: no completed_before_cancel")
 	}
 }

@@ -1,4 +1,4 @@
-// Source: abstraction/server/ping_handler/design.md (ping_handler v0.4.0)
+// Source: abstraction/server/ping_handler/design.md (ping_handler v0.5.0)
 package server
 
 import (
@@ -39,8 +39,9 @@ func admitPing(task *StreamTask, cfg Config, rng *sampling.Rng, st *ConnectionCa
 func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *CancelCounters) Response {
 	id := job.RequestID
 	slot := registry.Client(job.ClientID) // NoSlot if the registry is full
+	registry.Start(slot, id)              // CancelMatching: started, not finished
 	// Design: abstraction/server/ping_handler/design.md#finishedwatermark
-	finish := func(completed bool) { registry.PublishFinished(slot, id, completed) }
+	finish := func(completed bool) { registry.PublishFinished(slot, id, completed, counters) }
 
 	if cfg.CancelMode == CancelCooperative {
 		idCheck := func() bool { return ShouldCancel(registry, slot, counters, id) }
@@ -69,8 +70,7 @@ func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *Cance
 		Burn(job.ServiceUs, nil, cfg.CancelCheckIntervalUs, nil, CheckIter)
 	}
 
-	// Design: abstraction/server/ping_handler/design.md#last_completed_id
-	finish(true)
+	finish(true) // completed: a later /cancel counts completed_before_cancel
 	// Design: abstraction/server/ping_handler/design.md#response-status
 	return Response{Status: protocol.StatusOK, Body: protocol.BuildBody(id, cfg.ResponseBytes)}
 }

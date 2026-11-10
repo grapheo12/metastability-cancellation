@@ -1,4 +1,4 @@
-// Source: abstraction/server/worker_pool/design.md (worker_pool v0.3.0)
+// Source: abstraction/server/worker_pool/design.md (worker_pool v0.3.1)
 package server
 
 import (

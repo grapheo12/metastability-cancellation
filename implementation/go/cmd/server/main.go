@@ -1,6 +1,6 @@
 // Command server runs the HTTP/2 /ping + /cancel server.
 //
-// Source: abstraction/server/api.md (server v0.5.0)
+// Source: abstraction/server/api.md (server v0.5.3)
 package main
 
 import (
