@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_canceller/design.md (load_canceller v0.3.0)
+// Source: abstraction/ingress/load_canceller/design.md (load_canceller v0.4.0)
 package ingress
 
 import (
@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"testbed/internal/sampling"
 )
@@ -72,5 +73,32 @@ func TestSummarizeAndCSV(t *testing.T) {
 	}
 	if strings.Join(lines, "|") != strings.Join(want, "|") {
 		t.Fatalf("csv:\n%s", b)
+	}
+}
+
+// Initial stall: the schedule is the stall-free one shifted by S and cut at D;
+// S >= D sends nothing. No backends and nothing in flight: every arrival is
+// skipped, which is enough to see the arrival times.
+//
+// Design: abstraction/ingress/load_canceller/design.md#cancelschedule
+func TestCancelScheduleInitialStall(t *testing.T) {
+	run := func(stallMs uint64, durationMs int64) []*CancelRecord {
+		cfg := Config{CancelRate: 1000, DurationNs: durationMs * 1_000_000, InitialStallMs: stallMs,
+			InitialStallNs: int64(stallMs) * 1_000_000}
+		c := StartCanceller(cfg, NewInFlightMap(4), time.Now())
+		time.Sleep(time.Duration(durationMs+100) * time.Millisecond)
+		return c.Stop()
+	}
+	base, stalled := run(0, 300), run(200, 300)
+	if len(stalled) == 0 || len(stalled) >= len(base) {
+		t.Fatalf("records: %d with stall, %d without", len(stalled), len(base))
+	}
+	for i, r := range stalled {
+		if r.ScheduledNs != base[i].ScheduledNs+200_000_000 || r.ScheduledNs >= 300_000_000 {
+			t.Fatalf("arrival %d at %d, want %d + 200ms and < 300ms", i, r.ScheduledNs, base[i].ScheduledNs)
+		}
+	}
+	if recs := run(300, 300); len(recs) != 0 {
+		t.Fatalf("stall >= duration: %d records, want 0", len(recs))
 	}
 }

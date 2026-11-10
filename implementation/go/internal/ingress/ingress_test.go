@@ -20,7 +20,7 @@ import (
 func startIngress(t *testing.T, backends []string, policy string, cancelRate float64) *Ingress {
 	t.Helper()
 	cfg, err := Validate(Params{ListenAddr: "127.0.0.1:0", Backends: joinComma(backends), NumClients: "4",
-		LbPolicy: policy, CancelRate: ftoa(cancelRate), DurationS: "5", Seed: "1",
+		LbPolicy: policy, CancelRate: ftoa(cancelRate), DurationS: "5", Seed: "1", InitialStallMs: "0",
 		OutputPath: filepath.Join(t.TempDir(), "ingress")})
 	if err != nil {
 		t.Fatal(err)

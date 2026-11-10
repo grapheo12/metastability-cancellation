@@ -188,6 +188,7 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 - The drain loop polls `outstanding` every 1 ms until it reaches 0 or the deadline passes.
 - `summarize` is `summarizeCancels`; it returns zero rates when `duration_s` is 0 (canceller disabled). The CSV is written by `writeCancelsCSV`; the Ingress calls it at shutdown.
 - Tests: `canceller_test.go` checks that an empty snapshot gives no victim and no draw, that victims are uniform over the snapshot, the outcome table, the summary, and the CSV columns. The end-to-end cancel path is tested with the Frontend.
+- Initial stall: `runSchedule` starts `t` at `addGap(cfg.InitialStallNs, gap)`, so the draws are unchanged and every arrival moves by the stall. `TestCancelScheduleInitialStall` checks the shift against a stall-free run, the cut at `D`, and that `S >= D` gives no records.
 
 ### Traceability
 
@@ -198,10 +199,10 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | Design subsection | Implementation (file:line) |
 |---|---|
 | [Startup](#startup) | [h2client.go:31](../../../implementation/go/internal/h2client/h2client.go#L31), [canceller.go:86](../../../implementation/go/internal/ingress/canceller.go#L86) |
-| [CancelSchedule](#cancelschedule) | [canceller.go:112](../../../implementation/go/internal/ingress/canceller.go#L112), [canceller.go:169](../../../implementation/go/internal/ingress/canceller.go#L169) |
-| [InFlightVictimChoice](#inflightvictimchoice) | [canceller.go:157](../../../implementation/go/internal/ingress/canceller.go#L157), [canceller_test.go:14](../../../implementation/go/internal/ingress/canceller_test.go#L14), [ingress_test.go:122](../../../implementation/go/internal/ingress/ingress_test.go#L122) |
-| [Response collection](#response-collection) | [canceller.go:189](../../../implementation/go/internal/ingress/canceller.go#L189) |
-| [Outcome classification](#outcome-classification) | [canceller.go:28](../../../implementation/go/internal/ingress/canceller.go#L28), [canceller.go:208](../../../implementation/go/internal/ingress/canceller.go#L208), [canceller_test.go:40](../../../implementation/go/internal/ingress/canceller_test.go#L40) |
-| [CancellerDrain](#cancellerdrain) | [h2client.go:55](../../../implementation/go/internal/h2client/h2client.go#L55), [canceller.go:225](../../../implementation/go/internal/ingress/canceller.go#L225) |
-| [Summary](#summary) | [canceller.go:270](../../../implementation/go/internal/ingress/canceller.go#L270), [canceller_test.go:48](../../../implementation/go/internal/ingress/canceller_test.go#L48) |
+| [CancelSchedule](#cancelschedule) | [canceller.go:112](../../../implementation/go/internal/ingress/canceller.go#L112), [canceller.go:116](../../../implementation/go/internal/ingress/canceller.go#L116), [canceller.go:170](../../../implementation/go/internal/ingress/canceller.go#L170), [canceller_test.go:84](../../../implementation/go/internal/ingress/canceller_test.go#L84) |
+| [InFlightVictimChoice](#inflightvictimchoice) | [canceller.go:158](../../../implementation/go/internal/ingress/canceller.go#L158), [canceller_test.go:15](../../../implementation/go/internal/ingress/canceller_test.go#L15), [ingress_test.go:122](../../../implementation/go/internal/ingress/ingress_test.go#L122) |
+| [Response collection](#response-collection) | [canceller.go:190](../../../implementation/go/internal/ingress/canceller.go#L190) |
+| [Outcome classification](#outcome-classification) | [canceller.go:28](../../../implementation/go/internal/ingress/canceller.go#L28), [canceller.go:209](../../../implementation/go/internal/ingress/canceller.go#L209), [canceller_test.go:41](../../../implementation/go/internal/ingress/canceller_test.go#L41) |
+| [CancellerDrain](#cancellerdrain) | [h2client.go:55](../../../implementation/go/internal/h2client/h2client.go#L55), [canceller.go:226](../../../implementation/go/internal/ingress/canceller.go#L226) |
+| [Summary](#summary) | [canceller.go:271](../../../implementation/go/internal/ingress/canceller.go#L271), [canceller_test.go:49](../../../implementation/go/internal/ingress/canceller_test.go#L49) |
 <!-- trace:end -->

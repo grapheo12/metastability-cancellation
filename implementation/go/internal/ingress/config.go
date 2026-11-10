@@ -2,7 +2,7 @@
 // proxy in front of several servers, with an in-process LoadCanceller that
 // picks victims from the InFlightMap.
 //
-// Source: abstraction/ingress/design.md (ingress v0.1.7)
+// Source: abstraction/ingress/design.md (ingress v0.1.8)
 package ingress
 
 import (
@@ -42,24 +42,28 @@ type Config struct {
 	Seed       uint64
 	OutputPath string
 	DurationNs int64
+	// InitialStallMs delays the LoadCanceller's first arrival; InitialStallNs is it in ns.
+	InitialStallMs uint64
+	InitialStallNs int64
 }
 
 // Params holds the raw command-line values, named after the API parameters.
 type Params struct {
-	ListenAddr string
-	Backends   string
-	NumClients string
-	LbPolicy   string
-	CancelRate string
-	DurationS  string
-	Seed       string
-	OutputPath string
+	ListenAddr     string
+	Backends       string
+	NumClients     string
+	LbPolicy       string
+	CancelRate     string
+	DurationS      string
+	Seed           string
+	OutputPath     string
+	InitialStallMs string
 }
 
 // DefaultParams returns the defaults from abstraction/ingress/api.md#program-parameters.
 func DefaultParams() Params {
 	return Params{ListenAddr: "0.0.0.0:9090", LbPolicy: PolicyLeastOutstanding, CancelRate: "0", Seed: "0",
-		OutputPath: "ingress"}
+		OutputPath: "ingress", InitialStallMs: "1000"}
 }
 
 // Validate turns Params into a Config or returns a one-line error.
@@ -110,6 +114,11 @@ func Validate(p Params) (Config, error) {
 	if c.Seed, err = strconv.ParseUint(p.Seed, 10, 64); err != nil {
 		return c, errors.New("seed must be an unsigned 64-bit integer")
 	}
+	st, err := strconv.ParseUint(p.InitialStallMs, 10, 64)
+	if err != nil || st > math.MaxInt64/1_000_000 {
+		return c, errors.New("initial_stall_ms must be an integer >= 0")
+	}
+	c.InitialStallMs, c.InitialStallNs = st, int64(st)*1_000_000
 	c.OutputPath = p.OutputPath
 	return c, nil
 }

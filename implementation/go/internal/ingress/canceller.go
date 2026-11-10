@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_canceller/design.md (load_canceller v0.3.0)
+// Source: abstraction/ingress/load_canceller/design.md (load_canceller v0.4.0)
 package ingress
 
 import (
@@ -112,7 +112,8 @@ func StartCanceller(cfg Config, inflight *InFlightMap, runStart time.Time) *Canc
 func (c *Canceller) runSchedule() {
 	d := c.cfg.DurationNs
 	var arrival uint64
-	t := addGap(0, c.rng.ExponentialNs(c.cfg.CancelRate))
+	// Design: abstraction/ingress/load_canceller/design.md#cancelschedule
+	t := addGap(c.cfg.InitialStallNs, c.rng.ExponentialNs(c.cfg.CancelRate)) // initial stall: nothing before S
 	timer := time.NewTimer(0)
 	<-timer.C
 	for t < d {

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.1.7)
+// Source: abstraction/ingress/design.md (ingress v0.1.8)
 package ingress
 
 import (
@@ -147,14 +147,15 @@ func (ing *Ingress) Shutdown() error {
 }
 
 type summaryConfig struct {
-	ListenAddr string   `json:"listen_addr"`
-	Backends   []string `json:"backends"`
-	NumClients uint32   `json:"num_clients"`
-	LbPolicy   string   `json:"lb_policy"`
-	CancelRate float64  `json:"cancel_rate"`
-	DurationS  float64  `json:"duration_s"`
-	Seed       uint64   `json:"seed"`
-	OutputPath string   `json:"output_path"`
+	ListenAddr     string   `json:"listen_addr"`
+	Backends       []string `json:"backends"`
+	NumClients     uint32   `json:"num_clients"`
+	LbPolicy       string   `json:"lb_policy"`
+	CancelRate     float64  `json:"cancel_rate"`
+	DurationS      float64  `json:"duration_s"`
+	InitialStallMs uint64   `json:"initial_stall_ms"`
+	Seed           uint64   `json:"seed"`
+	OutputPath     string   `json:"output_path"`
 }
 
 // Summary has the field order of the Ingress summary JSON.
@@ -173,7 +174,7 @@ func (ing *Ingress) writeSummary(records []*CancelRecord, runEndS float64) error
 	c := ing.cfg
 	counts, rates, targeted := summarizeCancels(records, c)
 	s := Summary{
-		Config:  summaryConfig{c.ListenAddr, c.Backends, c.NumClients, c.LbPolicy, c.CancelRate, c.DurationS, c.Seed, c.OutputPath},
+		Config:  summaryConfig{c.ListenAddr, c.Backends, c.NumClients, c.LbPolicy, c.CancelRate, c.DurationS, c.InitialStallMs, c.Seed, c.OutputPath},
 		RunEndS: runEndS, Counts: counts, RatesPerS: rates, ClientsTargeted: targeted, Backends: ing.lb.Snapshot(),
 	}
 	b, err := json.MarshalIndent(s, "", "  ")

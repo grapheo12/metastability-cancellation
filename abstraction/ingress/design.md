@@ -113,6 +113,7 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 - `num_clients` is parsed with `strconv.ParseUint(..., 10, 32)`, bounded by `MaxClients`, and passed to `NewInFlightMap` as the exclusive client-id bound rather than a required storage size.
 - `shutdown` is `(*Ingress).Shutdown`: `http.Server.Shutdown` with a 100 ms bound sends GOAWAY on every client connection (as in the server), then it waits on the BackendStats `outstanding` sum, stops the canceller, closes upstream and client connections, and writes both outputs. `cmd/ingress/main.go` calls it on SIGINT/SIGTERM and exits `0`, or `1` if writing fails.
 - The summary JSON is the `Summary` struct, marshalled with `json.MarshalIndent`, in API field order.
+- `initial_stall_ms` is `Config.InitialStallMs` (`--initial_stall_ms`, default 1000), with `InitialStallNs = InitialStallMs * 1e6`. Validation rejects values whose nanoseconds would overflow `int64`. The summary's `config` echoes it after `duration_s`.
 
 ### Traceability
 
@@ -124,7 +125,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 |---|---|
 | [Structure](#structure) | [ingress.go:47](../../implementation/go/internal/ingress/ingress.go#L47) |
 | [Shared state](#shared-state) | [ingress.go:22](../../implementation/go/internal/ingress/ingress.go#L22) |
-| [Configuration validation](#configuration-validation) | [config.go:68](../../implementation/go/internal/ingress/config.go#L68) |
+| [Configuration validation](#configuration-validation) | [config.go:72](../../implementation/go/internal/ingress/config.go#L72) |
 | [Concurrency model](#concurrency-model) | [ingress.go:77](../../implementation/go/internal/ingress/ingress.go#L77) |
 | [Time base](#time-base) | [frontend.go:124](../../implementation/go/internal/ingress/frontend.go#L124) |
 | [Shutdown](#shutdown) | [ingress.go:111](../../implementation/go/internal/ingress/ingress.go#L111), [ingress_test.go:75](../../implementation/go/internal/ingress/ingress_test.go#L75) |

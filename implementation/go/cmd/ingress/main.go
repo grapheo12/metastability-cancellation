@@ -1,7 +1,7 @@
 // Command ingress runs the Ingress: a load-balancing /ping proxy with an
 // in-process LoadCanceller.
 //
-// Source: abstraction/ingress/api.md (ingress v0.1.7)
+// Source: abstraction/ingress/api.md (ingress v0.1.8)
 package main
 
 import (
@@ -25,6 +25,7 @@ func main() {
 	fs.StringVar(&p.CancelRate, "cancel_rate", p.CancelRate, "LoadCanceller rate in cancels/s (0 = off)")
 	fs.StringVar(&p.DurationS, "duration_s", p.DurationS, "LoadCanceller sending phase in s (required if cancel_rate > 0)")
 	fs.StringVar(&p.Seed, "seed", p.Seed, "base seed")
+	fs.StringVar(&p.InitialStallMs, "initial_stall_ms", p.InitialStallMs, "ms after the first /ping before the first cancel (>= 0)")
 	fs.StringVar(&p.OutputPath, "output_path", p.OutputPath, "output path prefix")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)
