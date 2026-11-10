@@ -5,7 +5,7 @@
 ```
 PROGRAM_PARAMS = {
   "server":    ["response_rate", "response_bytes", "cancel_mode", "cancel_check_interval_us", "seed",
-                "n_worker_threads"],
+                "n_worker_threads", "queue_sample_interval_ms"],
   "load_gen":  ["num_clients", "global_rate", "request_bytes", "slo_ms", "duration_s", "seed"],
   "ingress":   ["lb_policy", "cancel_rate", "duration_s", "seed"],
 }
@@ -14,7 +14,7 @@ RUNNER_KEYS = { "server":    ["listen_port", "instances"] + PLACEMENT_KEYS,
                 "load_gen":  PLACEMENT_KEYS,
                 "ingress":   ["machine", "listen_port", "cancel_rate_fraction"] + PLACEMENT_KEYS }
 SWEEPABLE_RUNNER_KEYS = ["ingress.cancel_rate_fraction"]                 # CancelRateFraction
-FORBIDDEN   = { "server": ["listen_addr"], "load_gen": ["target", "output_path"],
+FORBIDDEN   = { "server": ["listen_addr", "queue_log_path"], "load_gen": ["target", "output_path"],
                 "ingress": ["listen_addr", "backends", "num_clients", "output_path"] }
 SECTIONS    = [server, load_gen, ingress]
 
@@ -58,6 +58,7 @@ Error messages for the runner keys added with ProcessPlacement and CancelRateFra
 | `instances` not an integer in `1..=64` | `server.instances must be an integer in 1..=64` |
 | `machine` not `"client"` or `"server"` | `ingress.machine must be "client" or "server"` |
 | a `[canceller]` table (from before the Ingress) | `unknown table [canceller]` |
+| `[server] queue_log_path` | `server.queue_log_path is set by the runner` (the Experiment Executor always sets it, [../experiment_executor/design.md#serverlifecycle](../experiment_executor/design.md#serverlifecycle)) |
 
 ```
 function validate_machine(role, table):

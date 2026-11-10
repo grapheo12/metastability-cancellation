@@ -33,7 +33,7 @@ A key set here overrides the SSH configuration ([../remote_transport/design.md#s
 | `listen_port` | integer `1..=65535` | `8080` | Runner-owned. Server instance `k` gets `--listen_addr 0.0.0.0:<listen_port + k>`. Cannot be swept |
 | `instances` | integer `1..=64`, and `listen_port + instances - 1 <= 65535` | `1` | Runner-owned. Number of server processes on the server machine, all with the same program parameters. They are the Ingress's backends. Cannot be swept |
 | `threads`, `cpu_set` | see [ProcessPlacement keys](#processplacement-keys) | unset | Runner-owned. The server's ProcessPlacement. Cannot be swept |
-| any server parameter except `listen_addr` | scalar or non-empty array | the program's default | See [../../api.md#server-parameters](../../api.md#server-parameters) |
+| any server parameter except `listen_addr`, `queue_log_path` | scalar or non-empty array | the program's default (`queue_sample_interval_ms`: 10) | See [../../api.md#server-parameters](../../api.md#server-parameters) |
 
 ### `[load_gen]`
 
