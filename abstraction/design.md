@@ -17,9 +17,11 @@ flowchart LR
   end
   subgraph SV[Server x instances]
     L[Listener] -->|one per connection| CH[Connection Handler]
-    CH --> PH[Ping Handler]
+    CH -->|POST /ping| WQ[(WorkQueue)]
+    WQ --> WP[WorkerPool: n_worker_threads]
+    WP --> PH[Ping Handler]
     PH --> CB[CPU Burner]
-    CH -->|DELETE /cancel| CT[Cancel Tracker]
+    CH -->|DELETE /cancel, inline| CT[Cancel Tracker]
     PH -->|CancelCheckPoints| CT
   end
   C <-->|"h2c connection i (POST /ping, RST_STREAM)"| FE
@@ -52,7 +54,7 @@ Protocol and Sampling are shared leaves. Server, Load Generator and Ingress all 
 each other's internals. The only coupling between the three programs is the wire contract in
 [api.md](api.md#wire-contract-ping) and [api.md](api.md#wire-contract-cancel). The Ingress speaks the `/ping`
 contract on both sides, so the load generator cannot tell it from a server, and it relies on one more server
-behavior: each connection is bound to one client and served serially
+behavior: each connection is bound to one client
 ([ingress/design.md#why-one-upstream-connection-per-client-and-backend](ingress/design.md#why-one-upstream-connection-per-client-and-backend)).
 
 The Benchmark Runner depends on no other component's internals. It uses only the programs' command-line
@@ -68,10 +70,11 @@ parameters, their output files and the server's `listening on` and CancelCounter
    The Ingress's ForwardTask picks a backend, records the request in the InFlightMap, and forwards it unchanged on
    its connection for client `i` and that backend. Everything below happens on that backend, and the answer (or a
    reset) travels back the same way.
-3. The server's Connection Handler for that connection queues the request. On the connection's
-   first `/ping` it binds the connection to client id `id >> 32`. Its SerialStreamWorker takes
-   requests one at a time, samples a ServiceTime, checks for cancellation, and runs the CPU Burner,
-   checking again during the burn.
+3. The server's Connection Handler for that connection admits the request. On the connection's
+   first `/ping` it binds the connection to client id `id >> 32`. It samples a ServiceTime from the
+   connection's Rng and pushes the request onto the server-wide WorkQueue. One of the `n_worker_threads`
+   workers of the WorkerPool takes it in arrival order, checks for cancellation, and runs the CPU Burner,
+   checking again during the burn. The Connection Handler writes the answer the worker hands back.
 4. Exactly one of these happens:
    - The burn completes. The server answers `202` and the client records `ok` (if within the SLO).
    - A matching `/cancel` is seen at a CancelCheckPoint (`cooperative` mode). The server stops, counts
@@ -86,21 +89,23 @@ parameters, their output files and the server's `listening on` and CancelCounter
 1. The Ingress's Load Canceller reaches a Poisson arrival and takes a snapshot of the InFlightMap. If it is empty,
    the arrival is `skipped`. Otherwise it draws one entry `(c, request_id, server_id)` uniformly.
 2. It sends `DELETE /cancel` with that RequestId on its own connection to backend `server_id` and does not wait.
-3. That server's handler for the canceller's connection pushes the id onto client `c`'s CancelInbox in its
-   CancelRegistry and answers `202`.
-4. At its next CancelCheckPoint, the worker bound to client `c` on that server drains the inbox into its local
-   pending set and applies CancelMatching ([server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelmatching)).
+3. That server's handler for the canceller's connection handles the `/cancel` itself (it is never put on the
+   WorkQueue): it pushes the id onto client `c`'s CancelInbox in its CancelRegistry and answers `202`.
+4. At its next CancelCheckPoint, the worker running client `c`'s request on that server drains the inbox into
+   the client's pending set and applies CancelMatching ([server/cancel_tracker/design.md](server/cancel_tracker/design.md#cancelmatching)).
    If the request already finished in between, it is counted `completed_before_cancel`.
 
-## Why the server is serial per connection
+## Why the server has one shared WorkQueue
 
-The server processes requests on one connection **one at a time, in arrival order**. Clients are
-closed loops, so normally only one request is live per connection. After a cancellation, though,
-the client sends its next request while the server may still be working on the cancelled one. In
-`ignore` mode the new request waits behind the abandoned work, and that wait is the effect this
-testbed measures. Serial processing also makes the request ids seen by one worker increase
-monotonically, which CancelMatching depends on. See
-[server/connection_handler/design.md](server/connection_handler/design.md).
+The server runs `/ping`s from all connections on `n_worker_threads` workers fed by **one FIFO, in arrival
+order**, like a CPU-bound service with a fixed number of cores. Clients are closed loops, so normally only one
+request per client is live. After a cancellation, though, the client sends its next request while the server
+may still be working on the cancelled one. In `ignore` mode the abandoned work keeps a worker busy, and every
+request queued behind it waits, whichever client sent it. That wait is the effect this testbed measures.
+`/cancel` never enters the queue, so it is never stuck behind the work it targets. Requests start in arrival
+order, so the request ids of one client start in increasing order, which CancelMatching depends on. See
+[server/design.md#why-one-shared-workqueue](server/design.md#why-one-shared-workqueue) and
+[server/worker_pool/design.md#ordering](server/worker_pool/design.md#ordering).
 
 ## Time bounds of a run
 
