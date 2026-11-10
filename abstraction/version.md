@@ -59,3 +59,4 @@
 | 0.7.0 | 2026-11-10T00:00:00Z | Server parameters `queue_log_path`, `queue_sample_interval_ms`; server outputs: QueueLengthLog; non-goals and glossary (QueueLengthLog). Child bump: server 0.4.0 (worker_pool 0.2.0) |
 | 0.7.1 | 2026-11-10T00:00:00Z | Child bump: benchmark_runner 0.2.7 (config 0.6.0) |
 | 0.7.2 | 2026-11-10T00:00:00Z | Child bump: benchmark_runner 0.2.8 (experiment_executor 0.5.0) |
+| 0.7.3 | 2026-11-10T00:00:00Z | Glossary: QueueLengthPlot. Child bump: benchmark_runner 0.2.9 (result_plotter 0.6.0) |

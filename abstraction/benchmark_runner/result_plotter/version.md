@@ -7,3 +7,4 @@
 | 0.3.0 | 2026-11-02T00:00:00Z | New figure `server_counters_normalized`: each CancelCounter divided by `cx_sent`, linear 0 to 1 |
 | 0.4.0 | 2026-11-02T00:00:00Z | PointTable column `cx_offered_fraction` (CancelOfferedFraction). New figure `throughput_latency_normalized`: goodput / (1 - cx_offered_fraction) on x |
 | 0.5.0 | 2026-11-02T00:00:00Z | Canceller columns read `ingress.summary.json` (older runs: `canceller.summary.json`); CancelOfferedFraction reads `ingress_args` (cancel_rate 0 if unset). New column `lb_imbalance` (LbImbalance) |
+| 0.6.0 | 2026-11-10T00:00:00Z | QueueLengthPlot (`queue_length.png`): per-point WorkQueue length over time, instances summed by row index, one line per done point, worked example and edge cases |
