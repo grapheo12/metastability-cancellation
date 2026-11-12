@@ -88,3 +88,4 @@
 | 0.9.22 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.16 (result_plotter 0.8.0) |
 | 0.9.23 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.17 (experiment_executor 0.6.1) |
 | 0.9.24 | 2026-11-12T00:00:00Z | Glossary: FigurePage |
+| 0.9.25 | 2026-11-12T00:00:00Z | Child bump: server 0.7.0 (ProcessStart line) |

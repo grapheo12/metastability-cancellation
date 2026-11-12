@@ -49,9 +49,23 @@ shared by all Connection Handlers and workers.
 - Binds each connection to the client id of its first valid `/ping`.
 - Cancels work as `cancel_mode` says ([design.md#cancellation-semantics](design.md#cancellation-semantics)).
 
+## ProcessStart output
+
+The very first line the server prints to standard output, before it validates its parameters:
+
+```
+process_start_unix_ns <u64>
+```
+
+`<u64>` is the wall-clock time (Unix epoch, nanoseconds, decimal) read as early as the program can, so that other
+tools can place the server's own process-relative times, such as a garbage collector's trace
+(**GcTrace**), on a shared clock ([design.md#processstart](design.md#processstart)). It is printed in every run,
+including runs that then fail validation.
+
 ## CancelCounters output
 
-At shutdown the server prints exactly one line to standard output, after `listening on <addr>`:
+At shutdown the server prints exactly one line to standard output, after `listening on <addr>` (and after the
+ProcessStart line):
 
 ```
 {"cancelled_before_processing":<u64>,"cancelled_during_processing":<u64>,"completed_before_cancel":<u64>}
@@ -83,7 +97,7 @@ printed.
 
 ## Lifecycle
 
-- **Start:** validate the config, create the CancelRegistry, the CancelCounters, the WorkQueue and the
+- **Start:** print the ProcessStart line, validate the config, create the CancelRegistry, the CancelCounters, the WorkQueue and the
   WorkerPool, fill the MessageBuffer when `workload = message_buffer`, open `queue_log_path` if set, bind `listen_addr`, print one line `listening on <addr>` to standard
   output, then start the QueueLengthLog sampler if set.
 - **Run:** accept connections until stopped.

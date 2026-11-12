@@ -19,3 +19,4 @@
 | 0.6.0 | 2026-11-12T00:00:00Z | ServerWorkload `workload` (`cpu_burn` \| `message_buffer`); parameters `window_size`, `message_bytes`, `n_messages_per_request`; `response_rate` required only for `cpu_burn`; Listener fills the MessageBuffer before bind; MessageBuffer lock rules. New child message_buffer 0.1.0 |
 | 0.6.1 | 2026-11-12T00:00:00Z | Child bump: worker_pool 0.4.0 |
 | 0.6.2 | 2026-11-12T00:00:00Z | Child bump: ping_handler 0.6.0 |
+| 0.7.0 | 2026-11-12T00:00:00Z | ProcessStart: the first stdout line is `process_start_unix_ns <u64>` (wall clock, before validation), so process-relative GcTrace times can be placed on a shared clock |
