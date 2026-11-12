@@ -85,9 +85,12 @@ all into the MessageBuffer ([../message_buffer/design.md](../message_buffer/desi
 
 ```
 function fill_messages(job, config, buf, cancel_flag, id_check):    # -> COMPLETED | CANCELLED_RST | CANCELLED_ID
+    (seq, client_id) = protocol.split_request_id(job.request_id)
+    rng = sampling.rng_new(sampling.derive_seed(
+              sampling.derive_seed(config.seed, STREAM_SERVER_MESSAGES, client_id), STREAM_SERVER_MESSAGES, seq))
     msgs = []
     for k in 0 ..= config.n_messages_per_request - 1:
-        msgs.append(message_buffer.make_message(job.request_id + k, config.message_bytes))   # u64, wrapping
+        msgs.append(message_buffer.make_tree(rng, config.n_gc_binary_tree_size))     # MessageTree k, in order
         if cancel_flag is not NONE and cancel_flag.load(): return CANCELLED_RST
         if id_check is not NONE and id_check(): return CANCELLED_ID
     message_buffer.push_messages(buf, job.client_id, msgs)      # takes the buffer lock once
@@ -100,16 +103,18 @@ function fill_messages(job, config, buf, cancel_flag, id_check):    # -> COMPLET
   as the burn. A cancelled request drops the messages it created and never writes to the buffer, so cancelled work
   still leaves garbage.
 - **No checks after the push.** Once `push_messages` starts, the request completes.
-- **Message numbers.** Message `k` of request `id` is `make_message(id + k)` (unsigned 64-bit, wrapping), so
-  its bytes are `(id + k) mod 256`.
+- **Per-request stream.** The trees of a request come from its own Rng, derived from the server `seed` and its
+  RequestId ([../../sampling/design.md#seedderivation](../../sampling/design.md#seedderivation)), drawn message by
+  message in order. They are the same whichever worker runs the request, whenever it runs; the connection's Rng is
+  never touched. A cancelled request stops drawing where it stops creating messages.
 - The work takes as long as the allocations take; there is no ServiceTime, and `response_rate` is not used.
 
-Worked example, `n_messages_per_request = 3`, `message_bytes = 4`, request id `0x0000000200000005` (client 2,
-seq 5), `cooperative`:
+Worked example, `n_messages_per_request = 3`, request id `0x0000000200000005` (client 2, seq 5), `cooperative`;
+the stream is `derive_seed(derive_seed(seed, STREAM_SERVER_MESSAGES, 2), STREAM_SERVER_MESSAGES, 5)`:
 
 | Situation | Messages created | Buffer writes | Result |
 |---|---|---|---|
-| No cancel | bytes `05 05 05 05`, `06 06 06 06`, `07 07 07 07` | 3 slots from client 2's cursor | `202` |
+| No cancel | trees 0, 1, 2 of the request's stream, each of `n_gc_binary_tree_size` nodes | 3 slots from client 2's cursor | `202` |
 | `/cancel` registered after check point 1, before the second message's check | 2 | none | `503`, `cancelled_during_processing += 1` |
 | RST set after check point 1, before the first message's check | 1 | none | `Aborted` |
 | `/cancel` registered before the request starts | 0 (caught at check point 1) | none | `503`, `cancelled_before_processing += 1` |

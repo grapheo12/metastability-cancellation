@@ -31,10 +31,10 @@ run any client's job, and two jobs of one client may run at once; the client's s
 
 ## Uses
 
-- [../../protocol/api.md](../../protocol/api.md): `parse_body`, `split_request_id`, `build_body`
-- [../../sampling/api.md](../../sampling/api.md): `exponential_us`
+- [../../protocol/api.md](../../protocol/api.md): `parse_body`, `split_request_id` (also for MessageWork's stream), `build_body`
+- [../../sampling/api.md](../../sampling/api.md): `exponential_us`; for MessageWork `rng_new`, `derive_seed`, `STREAM_SERVER_MESSAGES`
 - [../cpu_burner/api.md](../cpu_burner/api.md): `burn`, `BurnOutcome`
-- [../message_buffer/api.md](../message_buffer/api.md): `make_message`, `push_messages`, `MessageBuffer`
+- [../message_buffer/api.md](../message_buffer/api.md): `make_tree`, `push_messages`, `MessageBuffer`
 - [../cancel_tracker/api.md](../cancel_tracker/api.md): `ConnectionCancelState`, `registry_client`, `registry_start`, `should_cancel`, `registry_publish_finished`, `CancelCounters`
 - [../worker_pool/api.md](../worker_pool/api.md): `PingJob`
 - [../api.md](../api.md#constants): `CHECK_ITER`
