@@ -54,6 +54,8 @@ function bench_run(config_path):
 function check_placement_support(config, pin):
     if any of [server], [load_gen], [ingress] sets threads and pin.manifest.thread_env is none:
         PinError("threads is set, but implementation/<lang>/benchmark_manifest.toml has no thread_env")
+    if config.server.gc_trace and pin.manifest.gc_trace_env is none:                     # GcTraceHook
+        PinError("server.gc_trace is set, but implementation/<lang>/benchmark_manifest.toml has no gc_trace_env")
 
 function warn_unpinned(config, ready_server, ready_client):
     ingress_role = config.ingress.machine                                 # IngressPlacement

@@ -40,6 +40,7 @@ set `[run] output_dir` to that run's directory.
       ingress.log
       server_<k>.out          # stdout + stderr of server instance k
       server_<k>.queue.csv    # QueueLengthLog of instance k (../server/api.md#queuelengthlog-output)
+      server_<k>.gc.csv       # GcEvents of instance k, with [server] gc_trace (experiment_executor/design.md#gcevents)
       server_counters_<k>.json  # parsed CancelCounters line of instance k
       server_counters.json    # the instances' CancelCounters, summed
       done | failed           # exactly one marker; "failed" holds the reason

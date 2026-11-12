@@ -9,3 +9,4 @@
 | 0.5.0 | 2026-11-10T00:00:00Z | QueueLengthLog: every server instance gets `--queue_log_path <RD>/server_<k>.queue.csv`; Point outputs fetch it, warn once if missing, never fail the point |
 | 0.6.0 | 2026-11-12T00:00:00Z | Point outputs fetch `ingress.forwards.csv` (ForwardLog), warn once if missing, never fail the point |
 | 0.6.1 | 2026-11-12T00:00:00Z | The missing QueueLengthLog warning names the `queue_length` figure without a file extension |
+| 0.7.0 | 2026-11-12T00:00:00Z | GcEvents: with `gc_trace`, servers start behind `env <gc_trace_env>`; Point outputs turn GcTrace lines of `server_<k>.out` into `server_<k>.gc.csv` on the wall clock via the ProcessStart line (exact decimal arithmetic); warnings only; worked example |
