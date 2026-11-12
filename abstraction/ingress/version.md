@@ -19,3 +19,4 @@
 | 0.1.14 | 2026-11-11T00:00:00Z | Child bump: frontend 0.2.1 |
 | 0.1.15 | 2026-11-12T00:00:00Z | New output `<output_path>.forwards.csv` (the ForwardLog); shared state and lock note. Child bump: load_balancer 0.3.0 |
 | 0.1.16 | 2026-11-12T00:00:00Z | `run_start_unix_ns` (wall clock of `run_start`) in the summary, for aligning with other processes' times |
+| 0.1.17 | 2026-11-12T00:00:00Z | Child bump: frontend 0.2.2 |
