@@ -115,7 +115,8 @@ time, one row every `queue_sample_interval_ms`. See [server/api.md](server/api.m
 ### Load generator outputs
 - `<output_path>.requests.csv`: one RequestRecord per scheduled arrival. Columns are in
   [load_generator/metrics/api.md](load_generator/metrics/api.md#requests-csv).
-- `<output_path>.summary.json`: outcome counts, rates and latency percentiles. Fields are in
+- `<output_path>.summary.json`: outcome counts, rates, latency percentiles and the wall-clock
+  `run_start_unix_ns`. Fields are in
   [load_generator/metrics/api.md](load_generator/metrics/api.md#summary-json).
 - Both are produced by [load_generator/metrics/design.md#collection](load_generator/metrics/design.md#collection)
   and [load_generator/metrics/design.md#summary](load_generator/metrics/design.md#summary).
