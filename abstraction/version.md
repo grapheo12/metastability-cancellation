@@ -96,3 +96,4 @@
 | 0.9.30 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.20 (remote_setup 0.4.1) |
 | 0.9.31 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.21 (experiment_executor 0.7.0) |
 | 0.9.32 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.22 (result_plotter 0.9.0) |
+| 0.9.33 | 2026-11-12T00:00:00Z | Server and Ingress outputs name `process_start_unix_ns` and `run_start_unix_ns`. Glossary: GcTrace, GcTraceHook, GcEvent, GcOverlay |
