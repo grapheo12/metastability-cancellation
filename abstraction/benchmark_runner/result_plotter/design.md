@@ -36,6 +36,7 @@ function plot(output_dir):
     label(series) = ", ".join(k + "=" + v for k, v in series) or "all"
     for figure in FIGURES:
         if figure.x == "time": draw_queue_length(output_dir, done, swept_keys); continue   # QueueLengthPlot
+        if figure.x == "forward_time": draw_forward_timelines(output_dir, done, swept_keys); continue   # ForwardTimelinePlots
         if figure.x == "x_key": draw as below
         else: draw as in ThroughputLatencyPlot; continue
         one subplot per metric of the figure, sharing the x-axis, title = metric name
@@ -57,6 +58,7 @@ function plot(output_dir):
 | `throughput_latency_normalized` | `lg_goodput / (1 - cx_offered_fraction)` | `e2e_p50_us`, `e2e_p99_us`, `e2e_p999_us` | log |
 | `server_counters_normalized` | `x_key` | `srv_cancelled_before_processing / cx_sent`, `srv_cancelled_during_processing / cx_sent`, `srv_completed_before_cancel / cx_sent` | linear, 0 to 1 |
 | `queue_length` | `time` (s since server start) | one plot: `queue_len` summed over instances, one line per done point ([QueueLengthPlot](#queuelengthplot)) | linear, from 0 |
+| `forward_latency`, `ewma_latency` (one figure each per backend when a point has `B > 1`) | `forward_time` (s since the Ingress's `run_start`) | median and p99 per `FORWARD_BIN_MS` bin, one line per done point ([ForwardTimelinePlots](#forwardtimelineplots)) | log |
 
 A fraction is empty when its denominator (`lg_scheduled` or `cx_sent`) is empty or `0`.
 
@@ -242,6 +244,113 @@ Worked example, one point with 2 instances:
 | No done point has a log | No `queue_length.png`; any earlier one is deleted |
 
 Non-goal: no PointTable column summarizes the queue length in this version.
+
+## ForwardTimelinePlots
+
+The **ForwardTimelinePlots** show what the Ingress's LoadBalancer saw over time, from its ForwardLog
+(`ingress.forwards.csv`, [../../ingress/api.md#output_pathforwardscsv](../../ingress/api.md#output_pathforwardscsv)):
+
+- `forward_latency.png`: the latency of `ok` forwards;
+- `ewma_latency.png`: the backend's EwmaLatency recorded with every forward.
+
+Each figure has two subplots, the median and the p99 of the values in each time bin of `FORWARD_BIN_MS = 20` ms.
+Like the QueueLengthPlot, each figure has **one line per done point**. When some done point has more than one
+backend, each backend gets its own pair of figures, `forward_latency_server_<k>.png` and
+`ewma_latency_server_<k>.png`, holding only that backend's rows.
+
+```
+FORWARD_BIN_MS = 20
+
+function read_forward_log(path):                   # -> list of (t_ns, server_id, outcome, latency_ns, ewma_ns) | none
+    if path does not exist: return none
+    rows = []
+    for each line after the header "t_ns,server_id,outcome,latency_ns,ewma_latency_ns":
+        parse t_ns, server_id, latency_ns as decimal integers, outcome as a word, ewma_ns as a float
+        if any field fails to parse or the line does not have 5 fields: stop    # e.g. a truncated last line
+        rows.append(...)
+    return rows
+
+function percentile(values, q):                    # nearest rank, q in {50, 99}; values not empty
+    v = sort ascending(values)
+    return v[ (q * len(v) + 99) div 100 - 1 ]      # rank = ceil(q * n / 100), exact in integers
+
+function bin_series(rows, value, q):               # -> list of (x_s: float, y_ms: float), bins in increasing order
+    bins = group rows by t_ns div (FORWARD_BIN_MS * 1_000_000)
+    return [ (b * FORWARD_BIN_MS / 1000, percentile([value(r) for r in bins[b]], q) / 1e6)
+             for b in sorted keys of bins ]        # empty bins have no key, so they are skipped
+
+FIGURES_FWD = [ ("forward_latency", rows -> [r for r in rows if r.outcome == ok], r -> r.latency_ns,
+                 "ok forward latency (ms)"),
+                ("ewma_latency",    rows -> rows,                                  r -> r.ewma_ns,
+                 "EwmaLatency (ms)") ]
+
+function draw_forward_timelines(output_dir, done, swept_keys):
+    logs = []
+    for row in done, in point-id order:
+        pdir = output_dir/points/point_<row.point>
+        rows = read_forward_log(pdir/ingress.forwards.csv)
+        if rows is none: continue
+        B = len(backends) of pdir/ingress.summary.json if it exists, else 1 + max server_id in rows, else 1
+        label = ", ".join(k + "=" + row[k] for k in swept_keys) or ("point " + row.point)
+        logs.append((label, B, rows))
+    produced = []
+    B_max = max(B over logs), or 0 if logs is empty
+    for (name, select, value, ylabel) in FIGURES_FWD:
+        targets = [(name, none)] if B_max == 1 else [(name + "_server_" + k, k) for k in 0 ..= B_max-1]
+        for (file, k) in targets:
+            lines = []
+            for (label, B, rows) in logs:
+                r = select(rows if k is none else [x for x in rows if x.server_id == k])
+                if r is empty: continue
+                lines.append((label, bin_series(r, value, 50), bin_series(r, value, 99)))
+            if lines is empty: continue
+            two subplots side by side, titles "median per 20 ms" and "p99 per 20 ms"
+            in each, one line with small markers per (label, series), through its points in x order
+            x-axis linear, label "time since first /ping at the Ingress (s)"
+            y-axis log, label ylabel
+            legend with the labels when there is more than one line
+            save as output_dir/plots/<file>.png, width 6 in per subplot
+            produced.append(file)
+    delete every output_dir/plots/forward_latency*.png and ewma_latency*.png not in produced   # stale ones
+```
+
+- **Time base.** `t_ns` is measured from the Ingress's `run_start`, its first `/ping`, so every point starts at 0
+  with its traffic.
+- **Only `ok` latencies.** Rejected, reset and failed forwards end early or late for reasons other than the
+  backend's speed, as in the load generator's latency statistics. The EwmaLatency figure uses every row, because
+  each one records the value the LoadBalancer held at that moment.
+- **Labels name the point**, as in the QueueLengthPlot.
+- **Bins are left-closed**: a row at exactly `20 ms` is in the second bin.
+
+Worked example, one point, one backend, `ewma_beta = 0.7`:
+
+| `t_ns` | outcome | `latency_ns` | `ewma_latency_ns` | Bin (`t_ns div 20_000_000`) |
+|---|---|---|---|---|
+| 1_000_000 | ok | 2_000_000 | 1_300_000 | 0 |
+| 5_000_000 | ok | 4_000_000 | 2_110_000 | 0 |
+| 19_999_999 | rejected | 1_000_000 | 2_110_000 | 0 |
+| 20_000_000 | ok | 3_000_000 | 2_377_000 | 1 |
+| 65_000_000 | ok | 10_000_000 | 4_663_900 | 3 |
+
+| Figure | Bin (x s) | Values | median (rank) | p99 (rank) |
+|---|---|---|---|---|
+| `forward_latency` | 0 (0.0) | ok: 2, 4 ms | 2 ms (`(50×2+99) div 100 = 1`) | 4 ms (`(99×2+99) div 100 = 2`) |
+| `forward_latency` | 1 (0.02) | 3 ms | 3 ms | 3 ms |
+| `forward_latency` | 3 (0.06) | 10 ms | 10 ms | 10 ms |
+| `ewma_latency` | 0 (0.0) | 1.3, 2.11, 2.11 ms | 2.11 ms (`(150+99) div 100 = 2`) | 2.11 ms (`(297+99) div 100 = 3`) |
+| `ewma_latency` | 1 (0.02) | 2.377 ms | 2.377 ms | 2.377 ms |
+| `ewma_latency` | 3 (0.06) | 4.6639 ms | 4.6639 ms | 4.6639 ms |
+
+Bin 2 has no row, so the lines go straight from x = 0.02 to x = 0.06.
+
+| Situation | Result |
+|---|---|
+| No `ingress.forwards.csv` for a point (e.g. a run made before the ForwardLog) | Point left out |
+| A file with a header only, or no `ok` row for the latency figure | Point left out of that figure |
+| Truncated last line | Rows up to it are used |
+| Every done point has `B = 1` | `forward_latency.png` and `ewma_latency.png` |
+| Some done point has `B = 2` | `forward_latency_server_0.png`, `…_server_1.png`, and the same for `ewma_latency`; a point with `B = 1` appears only in the `_server_0` figures |
+| No done point has a ForwardLog | No forward timeline figure; earlier ones are deleted |
 
 ## Design specific to Python
 

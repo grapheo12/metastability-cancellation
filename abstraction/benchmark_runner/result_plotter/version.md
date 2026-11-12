@@ -8,3 +8,4 @@
 | 0.4.0 | 2026-11-02T00:00:00Z | PointTable column `cx_offered_fraction` (CancelOfferedFraction). New figure `throughput_latency_normalized`: goodput / (1 - cx_offered_fraction) on x |
 | 0.5.0 | 2026-11-02T00:00:00Z | Canceller columns read `ingress.summary.json` (older runs: `canceller.summary.json`); CancelOfferedFraction reads `ingress_args` (cancel_rate 0 if unset). New column `lb_imbalance` (LbImbalance) |
 | 0.6.0 | 2026-11-10T00:00:00Z | QueueLengthPlot (`queue_length.png`): per-point WorkQueue length over time, instances summed by row index, one line per done point, worked example and edge cases |
+| 0.7.0 | 2026-11-12T00:00:00Z | ForwardTimelinePlots (`forward_latency`, `ewma_latency`, per backend when B > 1): median and p99 per 20 ms bin from `ingress.forwards.csv`, one line per done point; worked example and edge cases |
