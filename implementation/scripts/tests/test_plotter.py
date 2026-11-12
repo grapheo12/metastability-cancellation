@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.9.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.10.0)
 import csv
 import json
 import os
@@ -300,13 +300,18 @@ class GcOverlayTest(unittest.TestCase):
                 f.write(plotter.GC_HEADER + "\n1700000000500000000,1,0.01,1,0.02\n"
                         "1700000001000000000,2,0.01,2,0.02\n1700000004507000000,3,0.018,5.1,0.042\n"
                         "1700000031100000000,4,0.01,1,0.02\n17000000")                    # truncated last line
-            self.assertEqual(plotter.gc_events(pdir, 0, 30.02),
+            start = plotter.origin(pdir, "ingress.summary.json")
+            self.assertEqual(plotter.gc_events(pdir, [0], start, 30.02),
                              [(0.0, 2, 0.01, 2.0, 0.02), (3.507, 3, 0.018, 5.1, 0.042)])
-            self.assertIsNone(plotter.gc_events(pdir, 1, 30.02))                          # no file for k = 1
+            self.assertIsNone(plotter.gc_events(pdir, [1], start, 30.02))                 # no file for k = 1
+            with open(os.path.join(pdir, "server_1.gc.csv"), "w") as f:
+                f.write(plotter.GC_HEADER + "\n1700000002000000000,9,0.01,1,0.02\n")
+            self.assertEqual([e[1] for e in plotter.gc_events(pdir, [0, 1], start, 30.02)], [2, 9, 3])  # merged by x
             json.dump({"run_start_unix_ns": 0}, open(os.path.join(pdir, "ingress.summary.json"), "w"))
-            self.assertIsNone(plotter.gc_events(pdir, 0, 30.02))                          # no /ping
+            self.assertIsNone(plotter.origin(pdir, "ingress.summary.json"))               # no /ping
+            self.assertIsNone(plotter.gc_events(pdir, [0], None, 30.02))
             os.remove(os.path.join(pdir, "ingress.summary.json"))
-            self.assertIsNone(plotter.gc_events(pdir, 0, 30.02))                          # older run
+            self.assertIsNone(plotter.origin(pdir, "ingress.summary.json"))               # older run
 
     # Design: abstraction/benchmark_runner/result_plotter/design.md#gcoverlay
     def test_overlay_in_figures(self):
@@ -334,6 +339,79 @@ class GcOverlayTest(unittest.TestCase):
             self.assertIn("GC 7 at 0.030 s: 0.01 + 4 + 0.02 ms", page)
             with open(os.path.join(out, "plots", "ewma_latency.html")) as f:
                 self.assertNotIn("GC 7", f.read())
+
+
+
+REQ_HEADER = "request_id,client_id,seq,outcome,http_status,scheduled_ns,send_ns,end_ns,e2e_latency_ns,service_latency_ns"
+
+
+def write_requests(pdir, rows, slo_ms=5, instances=1, run_start=None):
+    """rows: (outcome, send_ns, end_ns), None for empty."""
+    def cell(v):
+        return "" if v is None else str(v)
+    with open(os.path.join(pdir, "loadgen.requests.csv"), "w") as f:
+        f.write(REQ_HEADER + "\n")
+        for i, (o, s, e) in enumerate(rows):
+            f.write(f"{i},0,{i},{o},,0,{cell(s)},{cell(e)},,\n")
+    params = json.load(open(os.path.join(pdir, "params.json")))
+    params["loadgen_args"] = [["slo_ms", slo_ms]]
+    params["server_instances"] = instances
+    json.dump(params, open(os.path.join(pdir, "params.json"), "w"))
+    if run_start is not None:
+        json.dump({**json.load(open(os.path.join(pdir, "loadgen.summary.json"))), "run_start_unix_ns": run_start},
+                  open(os.path.join(pdir, "loadgen.summary.json"), "w"))
+
+
+# The AvailabilityPlot worked example (result_plotter/design.md).
+AVAIL_EXAMPLE = [("ok", 0, 1_000_000), ("ok", 0, 8_000_000), ("cancelled", 14_000_000, 19_000_000),
+                 ("ok", 21_000_000, 25_000_000), ("ok", 25_000_000, 30_000_000), ("not_sent", None, None),
+                 ("rejected", 66_000_000, 70_000_000)]
+
+
+class AvailabilityPlotTest(unittest.TestCase):
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
+    def test_worked_example(self):
+        with tempfile.TemporaryDirectory() as out:
+            write_point(out, 0, {"load_gen.global_rate": 500})
+            write_requests(os.path.join(out, "points", "point_0000"), AVAIL_EXAMPLE)
+            rows = plotter.read_requests(os.path.join(out, "points", "point_0000", "loadgen.requests.csv"))
+            self.assertEqual(len(rows), 6)  # not_sent ignored
+            self.assertEqual(plotter.availability_series(rows, 5_000_000), [(0.01, 1 / 3), (0.03, 1.0), (0.07, 0.0)])
+            table, keys = plotter.build_table(out)
+            (label, s, gc, color), = plotter.availability_lines(out, table, keys)
+            self.assertEqual((label, gc, color), ("load_gen.global_rate=500", None, 0))   # no run_start: no overlay
+
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#gcoverlay
+    def test_overlay_all_instances_and_edge_cases(self):
+        with tempfile.TemporaryDirectory() as out:
+            for pid in range(3):
+                write_point(out, pid, {"load_gen.global_rate": 500 * (pid + 1)})
+            pd = lambda pid: os.path.join(out, "points", f"point_{pid:04d}")
+            write_requests(pd(0), AVAIL_EXAMPLE, instances=2, run_start=10**18)
+            for k, t in ((0, 10**18 + 15_000_000), (1, 10**18 + 50_000_000)):
+                with open(os.path.join(pd(0), f"server_{k}.gc.csv"), "w") as f:
+                    f.write(plotter.GC_HEADER + f"\n{t},{k + 1},0.01,3,0.02\n{10**18 + 90_000_000},99,1,1,1\n")
+            write_requests(pd(1), [("not_sent", None, None)])                             # nothing finished
+            with open(os.path.join(pd(2), "loadgen.requests.csv"), "w") as f:
+                f.write(REQ_HEADER + "\n0,0,0,ok,202,0,1,2,1,1\n0,0,1,o")                  # truncated, slo missing
+            table, keys = plotter.build_table(out)
+            lines = plotter.availability_lines(out, table, keys)
+            self.assertEqual([l[0] for l in lines], ["load_gen.global_rate=500"])
+            # t_end_s = 0.07 + 0.01 = 0.08: cycles at 0.015 s (instance 0) and 0.05 s (instance 1); 0.09 s dropped
+            self.assertEqual([(round(e[0], 3), e[1]) for e in lines[0][2]], [(0.015, 1), (0.05, 2)])
+            try:
+                import plotly  # noqa: F401
+            except ImportError:
+                self.skipTest("plotly not installed")
+            plotter.plot(out)
+            path = os.path.join(out, "plots", "availability.html")
+            with open(path) as f:
+                self.assertIn("GC 2 at 0.050 s", f.read())
+            for pid in range(3):
+                os.remove(os.path.join(pd(pid), "loadgen.requests.csv"))
+            plotter.plot(out)
+            self.assertFalse(os.path.exists(path))                                         # stale page removed
 
 
 if __name__ == "__main__":

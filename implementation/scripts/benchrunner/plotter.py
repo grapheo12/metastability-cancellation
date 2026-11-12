@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.9.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.10.0)
 """PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot, QueueLengthPlot and ForwardTimelinePlots,
 drawn as interactive HTML FigurePages with plotly."""
 
@@ -69,6 +69,8 @@ FIGURES = [
     ("queue_length", "time", [], "linear", None),
     # Design: abstraction/benchmark_runner/result_plotter/design.md#forwardtimelineplots
     ("forward_latency", "forward_time", [], "log", None),  # also draws ewma_latency
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
+    ("availability", "loadgen_time", [], "linear", (0, 1)),
 ]
 X_LABELS = {"lg_goodput": "lg_goodput (requests/s)",
             "lg_goodput_normalized": "lg_goodput / (1 - cx_offered_fraction) (requests/s)"}
@@ -265,6 +267,9 @@ def plot(output_dir):
         if x == "time":  # QueueLengthPlot
             draw_queue_length(output_dir, done, swept_keys)
             continue
+        if x == "loadgen_time":  # AvailabilityPlot
+            draw_availability(output_dir, done, swept_keys)
+            continue
         if x == "forward_time":  # ForwardTimelinePlots
             draw_forward_timelines(output_dir, done, swept_keys)
             continue
@@ -425,7 +430,8 @@ def forward_timelines(output_dir, done, swept_keys):
                     gc = None
                     if name == "forward_latency":  # GcOverlay
                         t_end_s = max(med[-1][0], p99[-1][0]) + FORWARD_BIN_MS / 1000
-                        gc = gc_events(pdir, 0 if k is None else k, t_end_s)
+                        gc = gc_events(pdir, [0 if k is None else k], origin(pdir, "ingress.summary.json"),
+                                       t_end_s)
                     lines.append((label, med, p99, gc, color))
             if lines:
                 figures.append((file, ylabel, lines))
@@ -488,19 +494,25 @@ def read_gc_log(path):
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#gcoverlay
-def gc_events(pdir, k, t_end_s):
-    """[(x_s, cycle, stw_start_ms, mark_ms, stw_end_ms)] of instance k within [0, t_end_s], or None."""
-    gc = read_gc_log(os.path.join(pdir, f"server_{k}.gc.csv"))
-    summary = _read_json(os.path.join(pdir, "ingress.summary.json")) or {}
-    start = summary.get("run_start_unix_ns")
-    if gc is None or not start:
+def origin(pdir, summary_file):
+    """run_start_unix_ns of pdir/<summary_file>, or None if missing or 0."""
+    return (_read_json(os.path.join(pdir, summary_file)) or {}).get("run_start_unix_ns") or None
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#gcoverlay
+def gc_events(pdir, instances, start, t_end_s):
+    """[(x_s, cycle, stw_start_ms, mark_ms, stw_end_ms)] of the instances within [0, t_end_s] of start, or None."""
+    logs = [read_gc_log(os.path.join(pdir, f"server_{k}.gc.csv")) for k in instances]
+    logs = [log for log in logs if log is not None]
+    if not logs or not start:
         return None
     events = []
-    for t, c, a, m, b in gc:
-        x = (t - start) / 1e9  # integer difference first, then one division
-        if 0 <= x <= t_end_s:
-            events.append((x, c, a, m, b))
-    return events
+    for log in logs:  # instance order, then file order
+        for t, c, a, m, b in log:
+            x = (t - start) / 1e9  # integer difference first, then one division
+            if 0 <= x <= t_end_s:
+                events.append((x, c, a, m, b))
+    return sorted(events, key=lambda e: e[0])  # stable
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#gcoverlay
@@ -526,4 +538,85 @@ def add_gc_overlay(fig, col, events, label, color, ys):
     fig.add_trace(go.Scatter(x=xs, y=yv, mode="lines", name=f"GC ({label})", legendgroup=label, showlegend=False,
                              line=dict(color=color, width=1, dash="dot"), opacity=0.6, text=text,
                              hovertemplate="%{text}<extra></extra>"), row=1, col=col)
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
+def read_requests(path):
+    """[(end_ns, send_ns, ok)] of the finished rows of a Requests CSV, or None if the file is missing."""
+    if not os.path.exists(path):
+        return None
+    rows = []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        header = f.readline().rstrip("\n").split(",")
+        try:
+            i_out, i_send, i_end = header.index("outcome"), header.index("send_ns"), header.index("end_ns")
+        except ValueError:
+            return []
+        for line in f:
+            parts = line.rstrip("\n").split(",")
+            if len(parts) != len(header):
+                break  # e.g. a truncated last line
+            end = parts[i_end]
+            if not end:
+                continue  # not_sent
+            try:
+                rows.append((int(end), int(parts[i_send]), parts[i_out] == "ok"))
+            except ValueError:
+                break
+    return rows
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
+def availability_series(rows, slo_ns):
+    """[(window centre s, available / finished)] for the non-empty 20 ms windows of end_ns, in order."""
+    w = FORWARD_BIN_MS * 1_000_000
+    windows = {}
+    for end, send, ok in rows:
+        n = windows.setdefault(end // w, [0, 0])
+        n[1] += 1
+        if ok and end - send <= slo_ns:
+            n[0] += 1
+    return [((b + 0.5) * FORWARD_BIN_MS / 1000, windows[b][0] / windows[b][1]) for b in sorted(windows)]
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
+def availability_lines(output_dir, done, swept_keys):
+    """[(label, series, GcEvents | None, color index)] for the done points that have finished requests."""
+    lines = []
+    for row in sorted(done, key=lambda r: int(r["point"])):
+        pdir = os.path.join(output_dir, "points", f"point_{int(row['point']):04d}")
+        params = _read_json(os.path.join(pdir, "params.json")) or {}
+        slo_ms = dict((k, v) for k, v in params.get("loadgen_args") or []).get("slo_ms")
+        rows = read_requests(os.path.join(pdir, "loadgen.requests.csv"))
+        if not rows or slo_ms is None:
+            continue
+        s = availability_series(rows, round(slo_ms * 1_000_000))
+        t_end_s = s[-1][0] + FORWARD_BIN_MS / 2000
+        instances = range(params.get("server_instances") or 1)
+        gc = gc_events(pdir, instances, origin(pdir, "loadgen.summary.json"), t_end_s)  # GcOverlay
+        label = ", ".join(f"{k}={_cell(row[k])}" for k in swept_keys) or f"point {row['point']}"
+        lines.append((label, s, gc, len(lines)))
+    return lines
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
+def draw_availability(output_dir, done, swept_keys):
+    path = os.path.join(output_dir, "plots", "availability.html")
+    lines = availability_lines(output_dir, done, swept_keys)
+    if not lines:
+        if os.path.exists(path):
+            os.remove(path)
+        return
+    fig = new_figure([f"availability per {FORWARD_BIN_MS} ms (ok within slo_ms of send / finished)"])
+    for label, s, _, color in lines:
+        add_line(fig, 1, (p[0] for p in s), (p[1] for p in s), label, "lines+markers", True,
+                 color=palette_color(color))
+    fig.update_traces(marker=dict(size=3), line=dict(width=1))
+    for label, _, gc, color in lines:
+        if gc:
+            add_gc_overlay(fig, 1, gc, label, palette_color(color), [0, 1])
+    fig.update_xaxes(title_text="time since the load generator's run start (s)")
+    fig.update_yaxes(title_text="availability", range=[0, 1.02])
+    fig.update_layout(title_text="availability", showlegend=len(lines) > 1)
+    save_page(fig, path)
 
