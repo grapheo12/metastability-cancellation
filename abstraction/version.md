@@ -98,3 +98,4 @@
 | 0.9.32 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.22 (result_plotter 0.9.0) |
 | 0.9.33 | 2026-11-12T00:00:00Z | Server and Ingress outputs name `process_start_unix_ns` and `run_start_unix_ns`. Glossary: GcTrace, GcTraceHook, GcEvent, GcOverlay |
 | 0.9.34 | 2026-11-12T00:00:00Z | Child bump: load_generator 0.2.2 (metrics 0.2.0) |
+| 0.9.35 | 2026-11-12T00:00:00Z | Child bump: load_generator 0.2.3 (run_controller 0.3.0) |
