@@ -71,7 +71,8 @@ downloads each point's results and plots all points together.
 | **CancelBody** | JSON body `{"id":..}` of a `/cancel` request | [protocol/design.md](protocol/design.md#cancelbody) |
 | **ServiceTime** | CPU time per request, `Exp(response_rate)` seconds, in whole microseconds | [sampling/design.md](sampling/design.md#exponentialsampler) |
 | **ServerWorkload** | What a `/ping` costs the server: `cpu_burn` (burn the ServiceTime) or `message_buffer` (MessageWork) | [server/design.md](server/design.md#why-a-messagebuffer-workload) |
-| **MessageBuffer** | Server-wide window of `window_size` messages, filled before the server listens; requests overwrite slots under one lock | [server/message_buffer/design.md](server/message_buffer/design.md#messagebuffer) |
+| **MessageBuffer** | Server-wide window of `window_size` MessageTrees, filled before the server listens; requests overwrite slots under one lock | [server/message_buffer/design.md](server/message_buffer/design.md#messagebuffer) |
+| **MessageTree** | One MessageBuffer message: a random binary tree of exactly `n_gc_binary_tree_size` nodes, each a u64 value and two child references | [server/message_buffer/design.md](server/message_buffer/design.md#messagetree) |
 | **MessageCursor** | Per client, the next MessageBuffer slot its messages overwrite; starts at `(client_id × 7919) mod window_size` | [server/message_buffer/design.md](server/message_buffer/design.md#messagecursor) |
 | **MessageWork** | A `message_buffer` request's work: create `n_messages_per_request` messages with cancel checks after each, then push them | [server/ping_handler/design.md](server/ping_handler/design.md#messagework) |
 | **CooperativeCpuBurn** | Busy loop that checks the RST flag on a time interval and `/cancel` every `CHECK_ITER` spin units | [server/cpu_burner/design.md](server/cpu_burner/design.md#cooperativecpuburn) |
