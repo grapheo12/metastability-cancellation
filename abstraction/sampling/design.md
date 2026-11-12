@@ -35,6 +35,10 @@ function derive_seed(base_seed, kind, index):
 - The load canceller uses `derive_seed(seed, STREAM_CANCELLER, 0)`.
 - An Ingress LoadBalancer uses `derive_seed(seed, STREAM_INGRESS_LB, 0)`. Its stream is separate from the
   canceller's, so the canceller's draws do not depend on how many requests were balanced.
+- A server request with RequestId `(client_id, seq)` draws its MessageTrees from
+  `derive_seed(derive_seed(seed, STREAM_SERVER_MESSAGES, client_id), STREAM_SERVER_MESSAGES, seq)`: one stream per
+  request, the same whichever worker runs it and whenever it runs.
+- The server's MessageBuffer fill at startup uses `derive_seed(seed, STREAM_SERVER_PREFILL, 0)`.
 
 ## Generator
 
