@@ -98,6 +98,7 @@ is written in decimal without an exponent, as the shortest string that reads bac
 {
   "config":      { every IngressConfig parameter, by its parameter name; backends as an array of strings },
   "run_end_s":   float,
+  "run_start_unix_ns": integer,
   "counts":      { "scheduled", "sent", "accepted", "rejected", "bad_request", "error", "timeout", "skipped" },
   "rates_per_s": { "offered", "sent", "accepted" },
   "clients_targeted": integer,
@@ -107,7 +108,8 @@ is written in decimal without an exponent, as the shortest string that reads bac
 
 `counts`, `rates_per_s` and `clients_targeted` describe the LoadCanceller and keep the names they had when it was a
 separate program, so result tools can read them unchanged (all zero when it is disabled). `backends` is in
-`server_id` order and holds the final BackendStats. Written by [design.md#shutdown](design.md#shutdown).
+`server_id` order and holds the final BackendStats. `run_start_unix_ns` is the wall-clock time (Unix epoch, ns) of
+`run_start`, or `0` when no `/ping` was received ([design.md#time-base](design.md#time-base)). Written by [design.md#shutdown](design.md#shutdown).
 
 ## Lifecycle
 
