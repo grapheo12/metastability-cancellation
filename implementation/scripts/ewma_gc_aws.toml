@@ -1,0 +1,37 @@
+# EWMA load balancer in front of 1 server running the message_buffer GC workload (Pusher GC-latency benchmark:
+# 200000 x 1 KiB window, 50 messages per /ping). Same machines, clients and load sweep as
+# results/20261110T202525Z, with no cancellations.
+[repo]
+url = "https://github.com/grapheo12/metastability-cancellation.git"
+
+[machines.server]
+host = "metafail-exp-1"
+data_addr = "172.31.23.63"
+
+[machines.client]
+host = "metafail-exp-2"
+
+[server]
+listen_port = 8080
+instances = 1
+workload = "message_buffer"
+window_size = 200000
+message_bytes = 1024
+n_messages_per_request = 50
+response_bytes = 128
+
+[load_gen]
+num_clients = 8
+global_rate = [500, 1000, 2000, 2500, 4000]
+request_bytes = 128
+slo_ms = 1000
+duration_s = 30
+
+[ingress]
+machine = "server"   # Ingress next to the server on metafail-exp-1
+listen_port = 9090
+lb_policy = "ewma"   # ewma_beta defaults to 0.7; cancel_rate defaults to 0 (no cancellations)
+
+[run]
+sweep_order = ["load_gen.global_rate"]
+cooldown_s = 2
