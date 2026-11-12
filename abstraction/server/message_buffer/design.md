@@ -82,6 +82,14 @@ MessageTree, `n = 4`, with these left-size draws (values `a, b, c, d` are whatev
 The tree is `A(left = B, right = C(left = D))`: 4 nodes, each with one value draw and one left-size draw (here
 none of the `uniform_int` calls rejected). `n = 1`: one node, one value draw, one left-size draw returning `0`.
 
+Concrete trees, `seed = 0`, `n = 4`, nodes in pre-order as (value, left size), computed with the
+[sampling](../../sampling/design.md#generator) generator:
+
+| Stream | Seed of the stream | Nodes (value, left size) | Shape |
+|---|---|---|---|
+| Fill, slot 0: `derive_seed(0, STREAM_SERVER_PREFILL, 0)` | 3061075853855529836 | (3347217672396778586, 2), (11281592653131264720, 0), (9616498591242348923, 0), (1901490388733148195, 0) | `A(left = B(right = C), right = D)` |
+| Request client 2, seq 5, message 0: `derive_seed(derive_seed(0, STREAM_SERVER_MESSAGES, 2), STREAM_SERVER_MESSAGES, 5)` | 7161477469582606741 | (4208604537885474736, 3), (206431563091969346, 2), (2947458949422951496, 1), (15453664076641952497, 0) | a path of left children `A → B → C → D` |
+
 
 `W = 10`. First slot `(client_id × 7919) mod 10`:
 
