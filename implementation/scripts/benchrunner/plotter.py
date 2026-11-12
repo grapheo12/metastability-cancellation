@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.8.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.9.0)
 """PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot, QueueLengthPlot and ForwardTimelinePlots,
 drawn as interactive HTML FigurePages with plotly."""
 
@@ -216,11 +216,12 @@ def new_figure(titles):
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
-def add_line(fig, col, xs, ys, label, mode, first_col):
+def add_line(fig, col, xs, ys, label, mode, first_col, color=None):
     """One line in subplot col; its legend entry (shown once) toggles it in every subplot."""
     import plotly.graph_objects as go
     fig.add_trace(go.Scatter(x=list(xs), y=list(ys), name=label, mode=mode, legendgroup=label,
-                             showlegend=first_col, hovertemplate=HOVER, marker=dict(size=5)), row=1, col=col)
+                             showlegend=first_col, hovertemplate=HOVER,
+                             marker=dict(size=5, color=color), line=dict(color=color)), row=1, col=col)
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
@@ -396,7 +397,8 @@ FIGURES_FWD = [
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#forwardtimelineplots
 def forward_timelines(output_dir, done, swept_keys):
-    """[(file name, y label, [(label, median series, p99 series)])] for every figure that has a line."""
+    """[(file name, y label, [(label, median series, p99 series, GcEvents | None, color index)])] for every
+    figure that has a line."""
     logs = []
     for row in sorted(done, key=lambda r: int(r["point"])):
         pdir = os.path.join(output_dir, "points", f"point_{int(row['point']):04d}")
@@ -409,17 +411,22 @@ def forward_timelines(output_dir, done, swept_keys):
         else:
             b = 1 + max((r[1] for r in rows), default=0)
         label = ", ".join(f"{k}={_cell(row[k])}" for k in swept_keys) or f"point {row['point']}"
-        logs.append((label, b, rows))
-    b_max = max((b for _, b, _ in logs), default=0)
+        logs.append((label, b, rows, pdir, len(logs)))  # len(logs): the point's fixed color index
+    b_max = max((log[1] for log in logs), default=0)
     figures = []
     for name, select, value, ylabel in FIGURES_FWD:
         targets = [(name, None)] if b_max == 1 else [(f"{name}_server_{k}", k) for k in range(b_max)]
         for file, k in targets:
             lines = []
-            for label, _, rows in logs:
+            for label, _, rows, pdir, color in logs:
                 r = select(rows if k is None else [x for x in rows if x[1] == k])
                 if r:
-                    lines.append((label, bin_series(r, value, 50), bin_series(r, value, 99)))
+                    med, p99 = bin_series(r, value, 50), bin_series(r, value, 99)
+                    gc = None
+                    if name == "forward_latency":  # GcOverlay
+                        t_end_s = max(med[-1][0], p99[-1][0]) + FORWARD_BIN_MS / 1000
+                        gc = gc_events(pdir, 0 if k is None else k, t_end_s)
+                    lines.append((label, med, p99, gc, color))
             if lines:
                 figures.append((file, ylabel, lines))
     return figures
@@ -431,16 +438,23 @@ def draw_forward_timelines(output_dir, done, swept_keys):
     produced = set()
     for file, ylabel, lines in forward_timelines(output_dir, done, swept_keys):
         fig = new_figure([f"median per {FORWARD_BIN_MS} ms", f"p99 per {FORWARD_BIN_MS} ms"])
+        ys_by_col = {}
         for col in (1, 2):
             ys = []
             for line in lines:
                 s = line[col]
-                add_line(fig, col, (p[0] for p in s), (p[1] for p in s), line[0], "lines+markers", col == 1)
+                add_line(fig, col, (p[0] for p in s), (p[1] for p in s), line[0], "lines+markers", col == 1,
+                         color=palette_color(line[4]))
                 ys += [p[1] for p in s]
             fig.update_xaxes(title_text="time since first /ping at the Ingress (s)", row=1, col=col)
             fig.update_yaxes(title_text=ylabel, row=1, col=col)
             set_log_y_if_positive(fig, col, ys)
+            ys_by_col[col] = ys
         fig.update_traces(marker=dict(size=3), line=dict(width=1))
+        for col in (1, 2):  # GcOverlay, after the restyle so it keeps its own dotted line
+            for line in lines:
+                if line[3]:
+                    add_gc_overlay(fig, col, line[3], line[0], palette_color(line[4]), ys_by_col[col])
         fig.update_layout(title_text=file, showlegend=len(lines) > 1)
         save_page(fig, os.path.join(plots, f"{file}.html"))
         produced.add(f"{file}.html")
@@ -448,3 +462,68 @@ def draw_forward_timelines(output_dir, done, swept_keys):
             glob.glob(os.path.join(plots, "ewma_latency*.html")):
         if os.path.basename(path) not in produced:
             os.remove(path)  # stale figure
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#gcoverlay
+GC_HEADER = "t_unix_ns,cycle,stw_start_ms,mark_ms,stw_end_ms"
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#gcoverlay
+def read_gc_log(path):
+    """GcEvents rows [(t_unix_ns, cycle, stw_start_ms, mark_ms, stw_end_ms)], or None if the file is missing."""
+    if not os.path.exists(path):
+        return None
+    rows = []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        lines = f.read().split("\n")
+    for line in lines[1:]:  # after the header
+        parts = line.split(",")
+        if len(parts) != 5 or not (parts[0].isdigit() and parts[1].isdigit()):
+            break  # e.g. a truncated last line, or the final empty string
+        try:
+            rows.append((int(parts[0]), int(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])))
+        except ValueError:
+            break
+    return rows
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#gcoverlay
+def gc_events(pdir, k, t_end_s):
+    """[(x_s, cycle, stw_start_ms, mark_ms, stw_end_ms)] of instance k within [0, t_end_s], or None."""
+    gc = read_gc_log(os.path.join(pdir, f"server_{k}.gc.csv"))
+    summary = _read_json(os.path.join(pdir, "ingress.summary.json")) or {}
+    start = summary.get("run_start_unix_ns")
+    if gc is None or not start:
+        return None
+    events = []
+    for t, c, a, m, b in gc:
+        x = (t - start) / 1e9  # integer difference first, then one division
+        if 0 <= x <= t_end_s:
+            events.append((x, c, a, m, b))
+    return events
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#gcoverlay
+def palette_color(i):
+    """The fixed color of the i-th point (point-id order)."""
+    from plotly.colors import qualitative
+    return qualitative.Plotly[i % len(qualitative.Plotly)]
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#gcoverlay
+def add_gc_overlay(fig, col, events, label, color, ys):
+    """One trace: a dotted vertical segment per GcEvent from the subplot's smallest to largest y."""
+    import plotly.graph_objects as go
+    if not ys:
+        return
+    lo, hi = min(ys), max(ys)
+    xs, yv, text = [], [], []
+    for x, c, a, m, b in events:
+        hover = f"GC {c} at {x:.3f} s: {a:g} + {m:g} + {b:g} ms"
+        xs += [x, x, None]
+        yv += [lo, hi, None]
+        text += [hover, hover, None]
+    fig.add_trace(go.Scatter(x=xs, y=yv, mode="lines", name=f"GC ({label})", legendgroup=label, showlegend=False,
+                             line=dict(color=color, width=1, dash="dot"), opacity=0.6, text=text,
+                             hovertemplate="%{text}<extra></extra>"), row=1, col=col)
+

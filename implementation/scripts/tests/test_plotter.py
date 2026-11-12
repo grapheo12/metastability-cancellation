@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.8.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.9.0)
 import csv
 import json
 import os
@@ -225,11 +225,13 @@ class ForwardTimelinePlotsTest(unittest.TestCase):
             rows, _ = plotter.build_table(out)
             figs = plotter.forward_timelines(out, rows, ["load_gen.global_rate"])
             self.assertEqual([f[0] for f in figs], ["forward_latency", "ewma_latency"])
-            (label, med, p99), = figs[0][2]
+            (label, med, p99, gc, color), = figs[0][2]
+            self.assertEqual((gc, color), (None, 0))  # no gc.csv: no overlay
             self.assertEqual(label, "load_gen.global_rate=500")
             self.assertEqual(med, [(0.0, 2.0), (0.02, 3.0), (0.06, 10.0)])
             self.assertEqual(p99, [(0.0, 4.0), (0.02, 3.0), (0.06, 10.0)])
-            _, med, p99 = figs[1][2][0]
+            _, med, p99, gc, _ = figs[1][2][0]
+            self.assertIsNone(gc)  # ewma_latency never has an overlay
             self.assertEqual(med, [(0.0, 2.11), (0.02, 2.377), (0.06, 4.6639)])
             self.assertEqual(p99, med)
 
@@ -284,6 +286,54 @@ class ForwardTimelinePlotsTest(unittest.TestCase):
                 os.remove(os.path.join(out, "points", f"point_{pid:04d}", "ingress.forwards.csv"))
             plotter.plot(out)
             self.assertFalse(os.path.exists(os.path.join(plots, "forward_latency.html")))
+
+
+class GcOverlayTest(unittest.TestCase):
+    # Worked example of result_plotter/design.md#gcoverlay.
+    #
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#gcoverlay
+    def test_worked_example(self):
+        with tempfile.TemporaryDirectory() as pdir:
+            json.dump({"run_start_unix_ns": 1_700_000_001_000_000_000},
+                      open(os.path.join(pdir, "ingress.summary.json"), "w"))
+            with open(os.path.join(pdir, "server_0.gc.csv"), "w") as f:
+                f.write(plotter.GC_HEADER + "\n1700000000500000000,1,0.01,1,0.02\n"
+                        "1700000001000000000,2,0.01,2,0.02\n1700000004507000000,3,0.018,5.1,0.042\n"
+                        "1700000031100000000,4,0.01,1,0.02\n17000000")                    # truncated last line
+            self.assertEqual(plotter.gc_events(pdir, 0, 30.02),
+                             [(0.0, 2, 0.01, 2.0, 0.02), (3.507, 3, 0.018, 5.1, 0.042)])
+            self.assertIsNone(plotter.gc_events(pdir, 1, 30.02))                          # no file for k = 1
+            json.dump({"run_start_unix_ns": 0}, open(os.path.join(pdir, "ingress.summary.json"), "w"))
+            self.assertIsNone(plotter.gc_events(pdir, 0, 30.02))                          # no /ping
+            os.remove(os.path.join(pdir, "ingress.summary.json"))
+            self.assertIsNone(plotter.gc_events(pdir, 0, 30.02))                          # older run
+
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#gcoverlay
+    def test_overlay_in_figures(self):
+        with tempfile.TemporaryDirectory() as out:
+            write_point(out, 0, {"load_gen.global_rate": 500})
+            pdir = os.path.join(out, "points", "point_0000")
+            write_forward_log(pdir, FWD_EXAMPLE, backends=1)
+            summary = json.load(open(os.path.join(pdir, "ingress.summary.json")))
+            summary["run_start_unix_ns"] = 10**18
+            json.dump(summary, open(os.path.join(pdir, "ingress.summary.json"), "w"))
+            with open(os.path.join(pdir, "server_0.gc.csv"), "w") as f:
+                f.write(plotter.GC_HEADER + f"\n{10**18 + 30_000_000},7,0.01,4,0.02\n{10**18 + 90_000_000},8,1,1,1\n")
+            rows, keys = plotter.build_table(out)
+            figs = {f[0]: f[2] for f in plotter.forward_timelines(out, rows, keys)}
+            # last bin starts at 0.06 s, so t_end_s = 0.08: the cycle at 0.09 s is dropped
+            self.assertEqual(figs["forward_latency"][0][3], [(0.03, 7, 0.01, 4.0, 0.02)])
+            self.assertIsNone(figs["ewma_latency"][0][3])
+            try:
+                import plotly  # noqa: F401
+            except ImportError:
+                self.skipTest("plotly not installed")
+            plotter.plot(out)
+            with open(os.path.join(out, "plots", "forward_latency.html")) as f:
+                page = f.read()
+            self.assertIn("GC 7 at 0.030 s: 0.01 + 4 + 0.02 ms", page)
+            with open(os.path.join(out, "plots", "ewma_latency.html")) as f:
+                self.assertNotIn("GC 7", f.read())
 
 
 if __name__ == "__main__":
