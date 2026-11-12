@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/metrics/design.md (metrics v0.1.1)
+// Source: abstraction/load_generator/metrics/design.md (metrics v0.2.0)
 package loadgen
 
 import (
@@ -70,6 +70,7 @@ type summaryRates struct {
 type SummaryReport struct {
 	Config           summaryConfig `json:"config"`
 	RunEndS          float64       `json:"run_end_s"`
+	RunStartUnixNs   uint64        `json:"run_start_unix_ns"` // wall clock of run_start, reported only
 	Counts           summaryCounts `json:"counts"`
 	RatesPerS        summaryRates  `json:"rates_per_s"`
 	E2ELatencyUs     LatencyStats  `json:"e2e_latency_us"`
@@ -80,10 +81,11 @@ type SummaryReport struct {
 //
 // Design: abstraction/load_generator/metrics/design.md#collection
 // Design: abstraction/load_generator/metrics/design.md#summary
-func Aggregate(records []RequestRecord, cfg Config, runEndNs int64) SummaryReport {
+func Aggregate(records []RequestRecord, cfg Config, runEndNs int64, runStartUnixNs uint64) SummaryReport {
 	var r SummaryReport
 	r.Config = summaryConfig{cfg.Target, cfg.NumClients, cfg.GlobalRate, cfg.RequestBytes, cfg.SloMs, cfg.DurationS, cfg.Seed, cfg.NWaitingRequests, cfg.OutputPath}
 	r.RunEndS = float64(runEndNs) / 1e9
+	r.RunStartUnixNs = runStartUnixNs
 	var e2e, service []float64
 	for _, rec := range records {
 		switch rec.Outcome {

@@ -55,6 +55,7 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 ### Go choices
 
 - One Go package `internal/loadgen`: `config.go` (`LoadGenConfig`, time base), `client.go`, `metrics.go`, `runcontroller.go`. Flags are parsed in `cmd/loadgen/main.go`. The package is synced in one commit because its files share types.
+- `run_start_unix_ns` is `runStart.UnixNano()`: the Run Controller's one `time.Now()` holds the monotonic reading (every `*_ns`) and the wall clock (reported only). `Aggregate` takes it and copies it into `SummaryReport.RunStartUnixNs`; `TestAggregate` checks the pass-through.
 - Shared h2c dialing is in `internal/h2client` (also used by the Ingress).
 - Each client is a sender goroutine plus a receiver goroutine, plus one short-lived goroutine per outstanding request. Timestamps are `int64` nanoseconds from `time.Since(runStart)`, which is monotonic.
 - The summary's `config` echoes `n_waiting_requests` after `seed`.

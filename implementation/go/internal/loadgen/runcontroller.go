@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/run_controller/design.md (run_controller v0.2.0)
+// Source: abstraction/load_generator/run_controller/design.md (run_controller v0.3.0)
 package loadgen
 
 import (
@@ -117,7 +117,8 @@ func Run(cfg Config) error {
 	for _, r := range results {
 		all = append(all, r...)
 	}
-	report := Aggregate(all, cfg, runEnd)
+	// Design: abstraction/load_generator/run_controller/design.md#startup
+	report := Aggregate(all, cfg, runEnd, uint64(runStart.UnixNano())) // one time.Now(): monotonic + wall clock
 	if err := WriteRequestsCSV(cfg.OutputPath+".requests.csv", all); err != nil {
 		return err
 	}

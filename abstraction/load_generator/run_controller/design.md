@@ -87,7 +87,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | Design subsection | Implementation (file:line) |
 |---|---|
 | [Configuration validation](#configuration-validation) | [client_test.go:91](../../../implementation/go/internal/loadgen/client_test.go#L91), [runcontroller.go:20](../../../implementation/go/internal/loadgen/runcontroller.go#L20) |
-| [Startup](#startup) | [h2client.go:31](../../../implementation/go/internal/h2client/h2client.go#L31), [runcontroller.go:83](../../../implementation/go/internal/loadgen/runcontroller.go#L83) |
+| [Startup](#startup) | [h2client.go:31](../../../implementation/go/internal/h2client/h2client.go#L31), [runcontroller.go:83](../../../implementation/go/internal/loadgen/runcontroller.go#L83), [runcontroller.go:121](../../../implementation/go/internal/loadgen/runcontroller.go#L121) |
 | [DrainPhase](#drainphase) | [runcontroller.go:109](../../../implementation/go/internal/loadgen/runcontroller.go#L109) |
 | [Shutdown ordering](#shutdown-ordering) | [h2client.go:55](../../../implementation/go/internal/h2client/h2client.go#L55), [runcontroller.go:113](../../../implementation/go/internal/loadgen/runcontroller.go#L113) |
 <!-- trace:end -->

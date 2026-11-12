@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/metrics/design.md (metrics v0.1.1)
+// Source: abstraction/load_generator/metrics/design.md (metrics v0.2.0)
 package loadgen
 
 import (
@@ -27,7 +27,10 @@ func TestAggregateCounts(t *testing.T) {
 		{Outcome: OutcomeCancelled, Sent: true},
 		{Outcome: OutcomeNotSent},
 	}
-	r := Aggregate(recs, Config{DurationS: 2}, 2e9)
+	r := Aggregate(recs, Config{DurationS: 2}, 2e9, 1_700_000_000_000_000_000)
+	if r.RunStartUnixNs != 1_700_000_000_000_000_000 {
+		t.Fatal("run_start_unix_ns is passed through")
+	}
 	if r.Counts.Scheduled != 4 || r.Counts.Sent != 3 || r.Counts.OK != 1 || r.RatesPerS.Offered != 2 || r.RatesPerS.Goodput != 0.5 {
 		t.Fatalf("%+v", r.Counts)
 	}
