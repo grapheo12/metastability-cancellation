@@ -67,8 +67,9 @@ returns. Started by the Listener only when `queue_log_path` is set. See [design.
 Asks the sampler to stop and waits until it has returned and closed its file. Writes no extra row. Called by the
 Listener at shutdown. See [design.md#queuelengthlog](design.md#queuelengthlog).
 
-### `pool_start(n_worker_threads: u32, queue, config: ServerConfig, registry: CancelRegistry, counters: CancelCounters) -> WorkerPool`
-Starts the workers. Called once per process by the Listener after `queue_new`. See
+### `pool_start(n_worker_threads: u32, queue, config: ServerConfig, registry: CancelRegistry, counters: CancelCounters, buf: MessageBuffer | NONE) -> WorkerPool`
+Starts the workers. `buf` is the process's MessageBuffer when `workload = message_buffer`, else `NONE`; workers
+only pass it on to the Ping Handler. Called once per process by the Listener after `queue_new`. See
 [design.md#workerpool](design.md#workerpool).
 
 ### `pool_join(pool) -> nothing`
@@ -87,5 +88,6 @@ Returns once every worker has returned. Workers return only after `queue_close`.
 ## Uses
 
 - [../ping_handler/api.md](../ping_handler/api.md): the function that runs one admitted `/ping` (CancelCheckPoints, burn, response)
+- [../message_buffer/api.md](../message_buffer/api.md): `MessageBuffer` (passed through, never used directly)
 - [../connection_handler/api.md](../connection_handler/api.md): `StreamTask`, `Response`
 - [../cancel_tracker/api.md](../cancel_tracker/api.md): `CancelRegistry`, `CancelCounters`, passed through to the Ping Handler

@@ -102,17 +102,17 @@ Worked example, `initial_stall_ms = 1000`, times in ms since the server started:
 ## WorkerPool
 
 ```
-function pool_start(n_worker_threads, queue, config, registry, counters):
+function pool_start(n_worker_threads, queue, config, registry, counters, buf):
     workers = []
     for w in 0 .. n_worker_threads - 1:           # n_worker_threads >= 1, checked by config validation
-        workers.append(spawn worker_loop(queue, config, registry, counters))
+        workers.append(spawn worker_loop(queue, config, registry, counters, buf))
     return WorkerPool(workers)
 
-procedure worker_loop(queue, config, registry, counters):
+procedure worker_loop(queue, config, registry, counters, buf):    # buf: MessageBuffer or NONE
     loop:
         job = queue_pop(queue)
         if job is None: return
-        result = ping_handler.run_ping(job, config, registry, counters)   # Response or Aborted
+        result = ping_handler.run_ping(job, config, registry, counters, buf)   # Response or Aborted
         job.reply.put(result)
 
 procedure pool_join(pool):
@@ -120,6 +120,8 @@ procedure pool_join(pool):
 ```
 
 Workers have no identity that matters: any worker may run any client's job, and no state is kept per worker.
+All workers share the one MessageBuffer ([../message_buffer/design.md](../message_buffer/design.md#messagebuffer)),
+which does its own locking.
 The client's cancellation state lives in the CancelRegistry
 ([../cancel_tracker/design.md#cancelregistry](../cancel_tracker/design.md#cancelregistry)). The response is
 written by the stream, not by the worker ([../connection_handler/design.md](../connection_handler/design.md)).
