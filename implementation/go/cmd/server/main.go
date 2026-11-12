@@ -1,6 +1,6 @@
 // Command server runs the HTTP/2 /ping + /cancel server.
 //
-// Source: abstraction/server/api.md (server v0.5.3)
+// Source: abstraction/server/api.md (server v0.6.2)
 package main
 
 import (
@@ -18,7 +18,8 @@ func main() {
 	p := server.DefaultParams()
 	fs := flag.NewFlagSet("server", flag.ContinueOnError)
 	fs.StringVar(&p.ListenAddr, "listen_addr", p.ListenAddr, "host:port to accept connections on")
-	fs.StringVar(&p.ResponseRate, "response_rate", p.ResponseRate, "service rate in requests/s (required)")
+	fs.StringVar(&p.Workload, "workload", p.Workload, "cpu_burn | message_buffer")
+	fs.StringVar(&p.ResponseRate, "response_rate", p.ResponseRate, "service rate in requests/s (required for cpu_burn)")
 	fs.StringVar(&p.ResponseBytes, "response_bytes", p.ResponseBytes, "exact /ping response body size (required, >= 42)")
 	fs.StringVar(&p.CancelMode, "cancel_mode", p.CancelMode, "ignore | cooperative")
 	fs.StringVar(&p.CancelCheckIntervalUs, "cancel_check_interval_us", p.CancelCheckIntervalUs, "RST check interval in µs")
@@ -26,6 +27,9 @@ func main() {
 	fs.StringVar(&p.NWorkerThreads, "n_worker_threads", p.NWorkerThreads, "number of WorkerPool workers (>= 1)")
 	fs.StringVar(&p.InitialStallMs, "initial_stall_ms", p.InitialStallMs, "ms after the first /ping before any /ping runs (>= 0)")
 	fs.StringVar(&p.QueueLogPath, "queue_log_path", p.QueueLogPath, "QueueLengthLog CSV path (empty: no log)")
+	fs.StringVar(&p.WindowSize, "window_size", p.WindowSize, "MessageBuffer slots (message_buffer)")
+	fs.StringVar(&p.MessageBytes, "message_bytes", p.MessageBytes, "bytes per message (message_buffer)")
+	fs.StringVar(&p.NMessagesPerRequest, "n_messages_per_request", p.NMessagesPerRequest, "messages per /ping (message_buffer)")
 	fs.StringVar(&p.QueueSampleIntervalMs, "queue_sample_interval_ms", p.QueueSampleIntervalMs, "QueueLengthLog sample interval in ms (>= 1)")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)

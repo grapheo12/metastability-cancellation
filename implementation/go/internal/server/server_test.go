@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.5.3)
+// Source: abstraction/server/design.md (server v0.6.2)
 package server
 
 import (
@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -278,6 +279,104 @@ func TestValidateNWorkerThreads(t *testing.T) {
 	p.NWorkerThreads = "4294967295"
 	if c, err := Validate(p); err != nil || c.NWorkerThreads != 4294967295 {
 		t.Fatalf("max: %+v %v", c, err)
+	}
+}
+
+// workload is validated; response_rate is optional for message_buffer.
+//
+// Design: abstraction/server/design.md#configuration-validation
+func TestValidateWorkload(t *testing.T) {
+	p := DefaultParams()
+	p.ResponseBytes = "64"
+	if _, err := Validate(p); err == nil {
+		t.Fatal("cpu_burn needs response_rate")
+	}
+	p.Workload = "message_buffer"
+	c, err := Validate(p)
+	if err != nil || c.Workload != WorkloadMessageBuffer || c.WindowSize != 200000 || c.MessageBytes != 1024 ||
+		c.NMessagesPerRequest != 50 {
+		t.Fatalf("message_buffer defaults: %+v %v", c, err)
+	}
+	for _, bad := range []func(*Params){
+		func(q *Params) { q.Workload = "gc" },
+		func(q *Params) { q.ResponseRate = "0" }, // validated when given
+		func(q *Params) { q.WindowSize = "0" },
+		func(q *Params) { q.WindowSize = "4294967296" },
+		func(q *Params) { q.MessageBytes = "0" },
+		func(q *Params) { q.NMessagesPerRequest = "0" },
+	} {
+		q := p
+		bad(&q)
+		if _, err := Validate(q); err == nil {
+			t.Fatalf("must be rejected: %+v", q)
+		}
+	}
+}
+
+// End to end with workload = message_buffer: the window is full before the
+// server listens, each /ping writes its messages at its client's cursor, and
+// no ServiceTime is drawn.
+//
+// Design: abstraction/server/ping_handler/design.md#messagework
+// Design: abstraction/server/design.md#listener
+func TestMessageBufferEndToEnd(t *testing.T) {
+	s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseBytes: 64, CancelMode: CancelCooperative,
+		CancelCheckIntervalUs: 50, NWorkerThreads: 2, Workload: WorkloadMessageBuffer, WindowSize: 100,
+		MessageBytes: 16, NMessagesPerRequest: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.buf == nil || len(s.buf.slots) != 100 || s.buf.slots[99][0] != 99 {
+		t.Fatal("window not filled at Listen")
+	}
+	go s.Serve()
+	c := dialTest(t, s.Addr().String())
+	for seq := uint32(0); seq < 3; seq++ {
+		id := protocol.MakeRequestID(seq, 1)
+		if st, b := c.do(t, "POST", "/ping", protocol.BuildBody(id, 64)); st != 202 || len(b) != 64 {
+			t.Fatalf("ping %d: %d", seq, st)
+		}
+	}
+	s.Shutdown()
+	// client 1 starts at 7919 mod 100 = 19; 3 requests x 5 messages fill 19..33
+	for i := 0; i < 15; i++ {
+		id := protocol.MakeRequestID(uint32(i/5), 1)
+		if got, want := s.buf.slots[19+i][0], byte(id+uint64(i%5)); got != want || len(s.buf.slots[19+i]) != 16 {
+			t.Fatalf("slot %d = %d want %d", 19+i, got, want)
+		}
+	}
+	if s.buf.cursors[1] != 34 || s.buf.slots[18][0] != 18 || s.buf.slots[34][0] != 34 {
+		t.Fatalf("cursor %d", s.buf.cursors[1])
+	}
+}
+
+// MessageWork checks after each message; a cancelled request never writes.
+//
+// Design: abstraction/server/ping_handler/design.md#messagework
+// Design: abstraction/server/ping_handler/design.md#cancelcheckpoints
+func TestFillMessagesCancel(t *testing.T) {
+	cfg := Config{MessageBytes: 4, NMessagesPerRequest: 3}
+	job := &PingJob{RequestID: protocol.MakeRequestID(5, 2), ClientID: 2}
+	buf := NewMessageBuffer(10, 4)
+	calls := 0
+	idCheck := func() bool { calls++; return calls == 2 } // registered before the second check
+	var rst atomic.Bool
+	if got := fillMessages(job, cfg, buf, &rst, idCheck); got != BurnCancelledID || calls != 2 {
+		t.Fatalf("cancel: %v after %d checks", got, calls)
+	}
+	rst.Store(true)
+	if got := fillMessages(job, cfg, buf, &rst, func() bool { t.Fatal("RST is checked first"); return false }); got != BurnCancelledRST {
+		t.Fatalf("rst: %v", got)
+	}
+	if len(buf.cursors) != 0 {
+		t.Fatal("a cancelled request wrote the buffer")
+	}
+	if got := fillMessages(job, cfg, buf, nil, nil); got != BurnCompleted {
+		t.Fatalf("ignore mode: %v", got)
+	}
+	// client 2 starts at 2*7919 mod 10 = 8: slots 8, 9, 0 get bytes 05, 06, 07
+	if buf.slots[8][0] != 5 || buf.slots[9][0] != 6 || buf.slots[0][0] != 7 || buf.cursors[2] != 1 {
+		t.Fatalf("slots %v %v %v cursor %d", buf.slots[8], buf.slots[9], buf.slots[0], buf.cursors[2])
 	}
 }
 

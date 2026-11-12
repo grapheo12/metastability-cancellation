@@ -189,14 +189,16 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 
 ### Go choices
 
-- One Go package `internal/server` for the whole subtree. Each subcomponent is one file: `config.go`, `listener.go`, `connhandler.go`, `workerpool.go`, `pinghandler.go`, `cpuburner.go`, `canceltracker.go`. Separate packages would form import cycles (`StreamTask`/`Response`/`PingJob` are shared by the handler, the pool, the ping handler and the tracker). For the same reason the subtree is synced in one commit.
+- One Go package `internal/server` for the whole subtree. Each subcomponent is one file: `config.go`, `listener.go`, `connhandler.go`, `workerpool.go`, `pinghandler.go`, `cpuburner.go`, `messagebuffer.go`, `canceltracker.go`. Separate packages would form import cycles (`StreamTask`/`Response`/`PingJob` are shared by the handler, the pool, the ping handler and the tracker). For the same reason the subtree is synced in one commit.
 - `ServerConfig` is `server.Config`, with `n_worker_threads` as `NWorkerThreads uint32`. The raw flags are `server.Params`, parsed by `cmd/server/main.go` with the standard `flag` package (`--name value`). `Listen` also refuses `NWorkerThreads == 0`, so a `Config` built without `Validate` (as in tests) fails instead of hanging with no workers.
 - HTTP/2: `golang.org/x/net/http2.Server.ServeConn` on connections accepted by our own `net.Listener` loop, so the Listener matches the design exactly. h2c with prior knowledge is ServeConn's default when no TLS is present.
 - The Listener creates the WorkQueue and starts the WorkerPool in `Listen`, right after the bind succeeds. `queue_log_path` is created with `os.Create` before the bind (an error makes `Listen` fail, and `main` exits `1`). The QueueLengthLog sampler starts right after `listening on`, and `Shutdown` stops it before `WorkQueue.Close()`.
 - Tests: `server_test.go` `TestQueueLengthLogEndToEnd` checks that two waiting jobs appear in the log and that an unwritable path fails `Listen`. `TestValidateNWorkerThreads` also covers `queue_sample_interval_ms`. `TestInitialStallEndToEnd` checks that `/cancel` does not arm the StallGate, that the first `/ping` waits out the stall, and that a `/cancel` sent during the stall gives `503`.
 - `initial_stall_ms` is `Config.InitialStallMs` (`--initial_stall_ms`, default 1000). Test fixtures that build a `Config` directly get `0`, meaning no stall.
 - Shutdown: close the listener, `WorkQueue.Close()`, then GOAWAY via a `net/http.Server` configured with `http2.ConfigureServer` and passed as `ServeConnOpts.BaseConfig` (its `Shutdown` hook makes every connection send GOAWAY; best effort, because sockets are then closed), close every handler, `WorkerPool.Join()`, wait for the handlers with a `sync.WaitGroup`, then print the CancelCounters line with `fmt.Printf`.
-- Locks of the Concurrency model: the admission lock is `connectionHandler.mu`, the WorkQueue lock is `WorkQueue.mu`, a client's cancel lock is `clientCancelState.mu`, all `sync.Mutex`.
+- `workload` is `Config.Workload`, an `int` enum (`WorkloadCPUBurn` is the zero value, so test fixtures that build a `Config` directly keep the burn). `window_size` is `WindowSize uint32`, `message_bytes` and `n_messages_per_request` are `int`. `Validate` parses `response_rate` only when it is given or the workload is `cpu_burn`. `Listen` builds the MessageBuffer before `os.Create(queue_log_path)` and `net.Listen`, keeps it as `Server.buf` (nil for `cpu_burn`), and passes it to `StartWorkerPool`.
+- Tests: `TestValidateWorkload` covers the new parameters and the optional `response_rate`. `TestMessageBufferEndToEnd` checks that the window is full after `Listen` and that three `/ping`s of client 1 land at its cursor (`7919 mod 100 = 19`).
+- Locks of the Concurrency model: the admission lock is `connectionHandler.mu`, the WorkQueue lock is `WorkQueue.mu`, a client's cancel lock is `clientCancelState.mu`, all `sync.Mutex`. The MessageBuffer lock is `MessageBuffer.mu`.
 
 ### Traceability
 
@@ -207,10 +209,11 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | Design subsection | Implementation (file:line) |
 |---|---|
 | [Structure](#structure) | [listener.go:24](../../implementation/go/internal/server/listener.go#L24) |
-| [Configuration validation](#configuration-validation) | [config.go:32](../../implementation/go/internal/server/config.go#L32), [config.go:75](../../implementation/go/internal/server/config.go#L75), [server_test.go:260](../../implementation/go/internal/server/server_test.go#L260) |
-| [Listener](#listener) | [listener.go:47](../../implementation/go/internal/server/listener.go#L47), [listener.go:84](../../implementation/go/internal/server/listener.go#L84), [listener.go:99](../../implementation/go/internal/server/listener.go#L99), [server_test.go:289](../../implementation/go/internal/server/server_test.go#L289) |
-| [Concurrency model](#concurrency-model) | [listener.go:80](../../implementation/go/internal/server/listener.go#L80), [server_test.go:215](../../implementation/go/internal/server/server_test.go#L215) |
-| [Cancellation semantics](#cancellation-semantics) | [pinghandler.go:39](../../implementation/go/internal/server/pinghandler.go#L39), [server_test.go:74](../../implementation/go/internal/server/server_test.go#L74) |
-| [Shutdown](#shutdown) | [listener.go:148](../../implementation/go/internal/server/listener.go#L148) |
-| [Why one shared WorkQueue](#why-one-shared-workqueue) | [listener.go:56](../../implementation/go/internal/server/listener.go#L56) |
+| [Configuration validation](#configuration-validation) | [config.go:42](../../implementation/go/internal/server/config.go#L42), [config.go:97](../../implementation/go/internal/server/config.go#L97), [server_test.go:261](../../implementation/go/internal/server/server_test.go#L261), [server_test.go:288](../../implementation/go/internal/server/server_test.go#L288) |
+| [Listener](#listener) | [listener.go:48](../../implementation/go/internal/server/listener.go#L48), [listener.go:67](../../implementation/go/internal/server/listener.go#L67), [listener.go:89](../../implementation/go/internal/server/listener.go#L89), [listener.go:104](../../implementation/go/internal/server/listener.go#L104), [server_test.go:322](../../implementation/go/internal/server/server_test.go#L322), [server_test.go:388](../../implementation/go/internal/server/server_test.go#L388) |
+| [Concurrency model](#concurrency-model) | [listener.go:85](../../implementation/go/internal/server/listener.go#L85), [server_test.go:216](../../implementation/go/internal/server/server_test.go#L216) |
+| [Cancellation semantics](#cancellation-semantics) | [pinghandler.go:44](../../implementation/go/internal/server/pinghandler.go#L44), [server_test.go:75](../../implementation/go/internal/server/server_test.go#L75) |
+| [Shutdown](#shutdown) | [listener.go:153](../../implementation/go/internal/server/listener.go#L153) |
+| [Why one shared WorkQueue](#why-one-shared-workqueue) | [listener.go:57](../../implementation/go/internal/server/listener.go#L57) |
+| [Why a MessageBuffer workload](#why-a-messagebuffer-workload) | [config.go:32](../../implementation/go/internal/server/config.go#L32) |
 <!-- trace:end -->

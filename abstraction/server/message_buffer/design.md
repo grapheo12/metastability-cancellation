@@ -81,3 +81,35 @@ except that it records the client's start slot as its cursor.
   If memory runs out the process fails before it listens, which the runner reports as a server that never became
   ready.
 - `client_id` is the id the connection is bound to, so it is always valid when `push_messages` is called.
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- File `internal/server/messagebuffer.go` in the one `internal/server` package (see the server's Go choices).
+- A message is a `[]byte` from `make`, filled with `byte(n)` (which is `n mod 256`). `[]byte` holds no pointers,
+  so Go's collector allocates it as a no-scan object and never looks inside it, as in Pusher's Go version.
+- `MessageBuffer` is `{mu sync.Mutex; slots [][]byte; cursors map[uint32]uint32}`. `buffer_new` is
+  `NewMessageBuffer(windowSize uint32, messageBytes int)`, and `push_messages` is `(*MessageBuffer).Push(clientID, msgs)`,
+  which locks with `defer Unlock`. Cursor arithmetic is in `uint64`.
+- Tests: `messagebuffer_test.go` checks `makeMessage`, the fill in slot order, the cursor worked example, and
+  `W = 1`.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [make_message](#make_message) | [messagebuffer.go:14](../../../implementation/go/internal/server/messagebuffer.go#L14), [messagebuffer_test.go:11](../../../implementation/go/internal/server/messagebuffer_test.go#L11) |
+| [MessageBuffer](#messagebuffer) | [messagebuffer.go:27](../../../implementation/go/internal/server/messagebuffer.go#L27), [messagebuffer.go:39](../../../implementation/go/internal/server/messagebuffer.go#L39), [messagebuffer_test.go:11](../../../implementation/go/internal/server/messagebuffer_test.go#L11) |
+| [MessageCursor](#messagecursor) | [messagebuffer.go:51](../../../implementation/go/internal/server/messagebuffer.go#L51), [messagebuffer_test.go:25](../../../implementation/go/internal/server/messagebuffer_test.go#L25) |
+| [Worked examples](#worked-examples) | [messagebuffer_test.go:25](../../../implementation/go/internal/server/messagebuffer_test.go#L25) |
+| [Failure and edge cases](#failure-and-edge-cases) | [messagebuffer.go:39](../../../implementation/go/internal/server/messagebuffer.go#L39) |
+<!-- trace:end -->

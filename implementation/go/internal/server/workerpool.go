@@ -1,4 +1,4 @@
-// Source: abstraction/server/worker_pool/design.md (worker_pool v0.3.1)
+// Source: abstraction/server/worker_pool/design.md (worker_pool v0.4.0)
 package server
 
 import (
@@ -149,13 +149,13 @@ type WorkerPool struct {
 //
 // Design: abstraction/server/worker_pool/design.md#workerpool
 // Design: abstraction/server/worker_pool/design.md#concurrency-requirement
-func StartWorkerPool(n uint32, q *WorkQueue, cfg Config, registry *CancelRegistry, counters *CancelCounters) *WorkerPool {
+func StartWorkerPool(n uint32, q *WorkQueue, cfg Config, registry *CancelRegistry, counters *CancelCounters, buf *MessageBuffer) *WorkerPool {
 	p := &WorkerPool{}
 	for w := uint32(0); w < n; w++ {
 		p.wg.Add(1)
 		go func() {
 			defer p.wg.Done()
-			workerLoop(q, cfg, registry, counters)
+			workerLoop(q, cfg, registry, counters, buf)
 		}()
 	}
 	return p
@@ -165,13 +165,13 @@ func StartWorkerPool(n uint32, q *WorkQueue, cfg Config, registry *CancelRegistr
 //
 // Design: abstraction/server/worker_pool/design.md#workerpool
 // Design: abstraction/server/worker_pool/design.md#ordering
-func workerLoop(q *WorkQueue, cfg Config, registry *CancelRegistry, counters *CancelCounters) {
+func workerLoop(q *WorkQueue, cfg Config, registry *CancelRegistry, counters *CancelCounters, buf *MessageBuffer) {
 	for {
 		job := q.Pop()
 		if job == nil {
 			return
 		}
-		job.reply <- runPing(job, cfg, registry, counters)
+		job.reply <- runPing(job, cfg, registry, counters, buf) // buf: nil unless message_buffer
 	}
 }
 

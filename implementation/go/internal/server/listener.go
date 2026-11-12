@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.5.3)
+// Source: abstraction/server/design.md (server v0.6.2)
 package server
 
 import (
@@ -28,8 +28,9 @@ type Server struct {
 	counters *CancelCounters
 	queue    *WorkQueue
 	pool     *WorkerPool
-	queueLog *os.File      // nil: no QueueLengthLog
-	sampler  *QueueSampler // started after "listening on"
+	buf      *MessageBuffer // nil unless workload = message_buffer
+	queueLog *os.File       // nil: no QueueLengthLog
+	sampler  *QueueSampler  // started after "listening on"
 	h2s      *http2.Server
 	base     *http.Server // only carries the shutdown hook that sends GOAWAY
 
@@ -61,6 +62,10 @@ func Listen(cfg Config) (*Server, error) {
 	if err := http2.ConfigureServer(s.base, s.h2s); err != nil {
 		return nil, err
 	}
+	if cfg.Workload == WorkloadMessageBuffer {
+		// Design: abstraction/server/design.md#listener
+		s.buf = NewMessageBuffer(cfg.WindowSize, cfg.MessageBytes) // full before the bind
+	}
 	if cfg.QueueLogPath != "" {
 		f, err := os.Create(cfg.QueueLogPath)
 		if err != nil {
@@ -77,7 +82,7 @@ func Listen(cfg Config) (*Server, error) {
 	}
 	s.ln = ln
 	// Design: abstraction/server/design.md#concurrency-model
-	s.pool = StartWorkerPool(cfg.NWorkerThreads, s.queue, cfg, s.registry, s.counters)
+	s.pool = StartWorkerPool(cfg.NWorkerThreads, s.queue, cfg, s.registry, s.counters, s.buf)
 	fmt.Println("listening on " + cfg.ListenAddr)
 	if s.queueLog != nil {
 		// Design: abstraction/server/design.md#listener

@@ -1,4 +1,4 @@
-// Source: abstraction/server/worker_pool/design.md (worker_pool v0.3.1)
+// Source: abstraction/server/worker_pool/design.md (worker_pool v0.4.0)
 package server
 
 import (
@@ -53,7 +53,7 @@ func TestWorkQueueFIFOAndClose(t *testing.T) {
 // Design: abstraction/server/worker_pool/design.md#failure-and-edge-cases
 func TestWorkerPoolJoinAfterClose(t *testing.T) {
 	q := NewWorkQueue(0)
-	p := StartWorkerPool(4, q, Config{CancelMode: CancelCooperative, ResponseBytes: 64, CancelCheckIntervalUs: 50}, NewCancelRegistry(16), &CancelCounters{})
+	p := StartWorkerPool(4, q, Config{CancelMode: CancelCooperative, ResponseBytes: 64, CancelCheckIntervalUs: 50}, NewCancelRegistry(16), &CancelCounters{}, nil)
 	q.Close()
 	done := make(chan struct{})
 	go func() { p.Join(); close(done) }()
@@ -79,7 +79,7 @@ func TestWorkerPoolOrdering(t *testing.T) {
 		for _, j := range jobs {
 			_ = q.Push(j)
 		}
-		p := StartWorkerPool(c.n, q, cfg, NewCancelRegistry(16), &CancelCounters{})
+		p := StartWorkerPool(c.n, q, cfg, NewCancelRegistry(16), &CancelCounters{}, nil)
 		var mu sync.Mutex
 		var order []uint32
 		var wg sync.WaitGroup
@@ -117,7 +117,7 @@ func TestResetWhileQueued(t *testing.T) {
 	j := testJob(9, 3_600_000_000) // an hour: must not run
 	j.Task.Cancelled.Store(true)
 	_ = q.Push(j)
-	p := StartWorkerPool(1, q, Config{CancelMode: CancelCooperative, ResponseBytes: 64, CancelCheckIntervalUs: 50}, reg, &CancelCounters{})
+	p := StartWorkerPool(1, q, Config{CancelMode: CancelCooperative, ResponseBytes: 64, CancelCheckIntervalUs: 50}, reg, &CancelCounters{}, nil)
 	if r := j.Reply(); !r.Aborted {
 		t.Fatalf("got %+v, want Aborted", r)
 	}
@@ -224,7 +224,7 @@ func TestStallGateCloseDuringStall(t *testing.T) {
 	q := NewWorkQueue(60_000)
 	j := testJob(0, 0)
 	_ = q.Push(j)
-	p := StartWorkerPool(2, q, Config{CancelMode: CancelCooperative, ResponseBytes: 64, CancelCheckIntervalUs: 50}, NewCancelRegistry(16), &CancelCounters{})
+	p := StartWorkerPool(2, q, Config{CancelMode: CancelCooperative, ResponseBytes: 64, CancelCheckIntervalUs: 50}, NewCancelRegistry(16), &CancelCounters{}, nil)
 	time.Sleep(50 * time.Millisecond)
 	start := time.Now()
 	q.Close()

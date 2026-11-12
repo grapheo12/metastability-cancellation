@@ -1,7 +1,7 @@
 // Package server implements the HTTP/2 /ping + /cancel server. Each file maps
 // to one component of abstraction/server.
 //
-// Source: abstraction/server/design.md (server v0.5.3)
+// Source: abstraction/server/design.md (server v0.6.2)
 package server
 
 import (
@@ -26,6 +26,16 @@ const (
 	CancelCooperative
 )
 
+// Workload is the ServerWorkload: what a /ping costs the server.
+//
+// Design: abstraction/server/design.md#why-a-messagebuffer-workload
+type Workload int
+
+const (
+	WorkloadCPUBurn Workload = iota // zero value: the default
+	WorkloadMessageBuffer
+)
+
 // Config is the validated, immutable ServerConfig shared by all connection handlers and workers.
 //
 // Design: abstraction/server/design.md#configuration-validation
@@ -40,6 +50,10 @@ type Config struct {
 	QueueLogPath          string // empty: no QueueLengthLog
 	QueueSampleIntervalMs uint64
 	InitialStallMs        uint64 // StallGate; 0: no stall
+	Workload              Workload
+	WindowSize            uint32 // MessageBuffer slots
+	MessageBytes          int
+	NMessagesPerRequest   int
 }
 
 // Params holds the raw command-line values, named after the API parameters.
@@ -54,6 +68,10 @@ type Params struct {
 	QueueLogPath          string
 	QueueSampleIntervalMs string
 	InitialStallMs        string
+	Workload              string
+	WindowSize            string
+	MessageBytes          string
+	NMessagesPerRequest   string
 }
 
 // DefaultParams returns the defaults from abstraction/server/api.md#program-parameters.
@@ -66,6 +84,10 @@ func DefaultParams() Params {
 		NWorkerThreads:        "1",
 		QueueSampleIntervalMs: "10",
 		InitialStallMs:        "1000",
+		Workload:              "cpu_burn",
+		WindowSize:            "200000",
+		MessageBytes:          "1024",
+		NMessagesPerRequest:   "50",
 	}
 }
 
@@ -75,14 +97,24 @@ func DefaultParams() Params {
 func Validate(p Params) (Config, error) {
 	var c Config
 	c.ListenAddr = p.ListenAddr
-	if p.ResponseRate == "" {
+	switch p.Workload {
+	case "cpu_burn":
+		c.Workload = WorkloadCPUBurn
+	case "message_buffer":
+		c.Workload = WorkloadMessageBuffer
+	default:
+		return c, errors.New("workload must be cpu_burn or message_buffer")
+	}
+	if c.Workload == WorkloadCPUBurn && p.ResponseRate == "" {
 		return c, errors.New("response_rate is required")
 	}
-	rate, err := strconv.ParseFloat(p.ResponseRate, 64)
-	if err != nil || !(rate > 0) || math.IsInf(rate, 0) {
-		return c, errors.New("response_rate must be a finite number > 0")
+	if p.ResponseRate != "" { // validated whenever given
+		rate, err := strconv.ParseFloat(p.ResponseRate, 64)
+		if err != nil || !(rate > 0) || math.IsInf(rate, 0) {
+			return c, errors.New("response_rate must be a finite number > 0")
+		}
+		c.ResponseRate = rate
 	}
-	c.ResponseRate = rate
 	if p.ResponseBytes == "" {
 		return c, errors.New("response_bytes is required")
 	}
@@ -128,5 +160,20 @@ func Validate(p Params) (Config, error) {
 		return c, errors.New("initial_stall_ms must be an integer >= 0")
 	}
 	c.InitialStallMs = st
+	ws, err := strconv.ParseUint(p.WindowSize, 10, 32)
+	if err != nil || ws < 1 {
+		return c, errors.New("window_size must be an integer in 1..=4294967295")
+	}
+	c.WindowSize = uint32(ws)
+	mb, err := strconv.Atoi(p.MessageBytes)
+	if err != nil || mb < 1 {
+		return c, errors.New("message_bytes must be an integer >= 1")
+	}
+	c.MessageBytes = mb
+	nm, err := strconv.Atoi(p.NMessagesPerRequest)
+	if err != nil || nm < 1 {
+		return c, errors.New("n_messages_per_request must be an integer >= 1")
+	}
+	c.NMessagesPerRequest = nm
 	return c, nil
 }
