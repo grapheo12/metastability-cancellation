@@ -1,9 +1,10 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.6.1)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.7.0)
 """run_point: ServerLifecycle, IngressLifecycle, ClientRun and point outputs for one SweepPoint."""
 
 import json
 import os
+import re
 import shutil
 import time
 from dataclasses import dataclass
@@ -79,7 +80,8 @@ def run_point(point, config, server, client, run_id):
                 reason = "ingress did not stop on SIGINT"
             if not stop_servers(server, point.server_instances, config.run.stop_timeout_s) and reason is None:
                 reason = "server did not stop on SIGINT"
-            collect_outputs(point, server, client, rd_server, rd_client, pdir, ingress_host, rd_ingress)
+            collect_outputs(point, server, client, rd_server, rd_client, pdir, ingress_host, rd_ingress,
+                            gc_trace=config.gc_trace)
         except TransportError as e:
             reason = reason or f"while stopping/collecting: {e}"
     if reason is None:
@@ -145,7 +147,7 @@ def _ingress_pid_file(client):
 # Design: abstraction/benchmark_runner/experiment_executor/design.md#serverlifecycle
 def start_servers(point, config, server, rd):
     for k in range(point.server_instances):
-        words = placement_prefix("server", point, server) + \
+        words = placement_prefix("server", point, server) + gc_trace_prefix(config, server) + \
             [server.binaries["server"], "--listen_addr", f"0.0.0.0:{config.listen_port + k}",
              "--queue_log_path", f"{rd}/server_{k}.queue.csv"] + \
             arg_words(point.server_args)
@@ -226,11 +228,62 @@ def write_placement(point, server, client, ingress_host, pdir):
         json.dump(doc, f, indent=2)
 
 
+# Design: abstraction/benchmark_runner/experiment_executor/design.md#gcevents
+def gc_trace_prefix(config, server):
+    """`env NAME=value ...` from the GcTraceHook, after any ProcessPlacement prefix (env commands chain)."""
+    if not config.gc_trace:
+        return []
+    return ["env"] + list(server.gc_trace_env)
+
+
+# Design: abstraction/benchmark_runner/experiment_executor/design.md#gcevents
+def seconds_to_ns(s):
+    """Exact: a decimal string "I" or "I.F" of seconds to integer ns, truncating beyond 9 fraction digits."""
+    i, _, f = s.partition(".")
+    return int(i) * 1_000_000_000 + int((f + "000000000")[:9])
+
+
+GC_HEADER = "t_unix_ns,cycle,stw_start_ms,mark_ms,stw_end_ms"
+_START = re.compile(r"process_start_unix_ns (\d+)")
+
+
+# Design: abstraction/benchmark_runner/experiment_executor/design.md#gcevents
+def write_gc_events(point, k, pdir, regex):
+    """server_<k>.out -> server_<k>.gc.csv on the wall clock; problems only warn."""
+    out = os.path.join(pdir, f"server_{k}.out")
+    if not os.path.exists(out):
+        print(f"point {point.id}: server_{k}.out missing (no GcEvents)")
+        return
+    pattern = re.compile(regex)
+    start, events = None, []
+    with open(out, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            m = _START.fullmatch(line) if start is None else None
+            if m:
+                start = int(m.group(1))  # the server's ProcessStart line
+                continue
+            m = pattern.match(line)
+            if m:
+                events.append(m)
+    if start is None:
+        print(f"point {point.id}: server_{k}.out has no process_start_unix_ns line (no GcEvents)")
+        return
+    if not events:
+        print(f"point {point.id}: server_{k}.out has no GcTrace lines")
+    with open(os.path.join(pdir, f"server_{k}.gc.csv"), "w") as f:
+        f.write(GC_HEADER + "\n")
+        for m in events:
+            f.write(f"{start + seconds_to_ns(m.group('start_s'))},{m.group('cycle')},{m.group('stw_start_ms')},"
+                    f"{m.group('mark_ms')},{m.group('stw_end_ms')}\n")
+
+
 COUNTER_KEYS = ("cancelled_before_processing", "cancelled_during_processing", "completed_before_cancel")
 
 
 # Design: abstraction/benchmark_runner/experiment_executor/design.md#point-outputs
-def collect_outputs(point, server, client, rd_server, rd_client, pdir, ingress_host=None, rd_ingress=None):
+def collect_outputs(point, server, client, rd_server, rd_client, pdir, ingress_host=None, rd_ingress=None,
+                    gc_trace=False):
     for name in ("loadgen.requests.csv", "loadgen.summary.json", "loadgen.log"):
         client.transport.fetch(f"{rd_client}/{name}", os.path.join(pdir, name))
     ingress_host, rd_ingress = ingress_host or client, rd_ingress or rd_client
@@ -248,6 +301,8 @@ def collect_outputs(point, server, client, rd_server, rd_client, pdir, ingress_h
         server.transport.fetch(f"{rd_server}/server_{k}.queue.csv", queue_csv)
         if not os.path.exists(queue_csv):
             print(f"point {point.id}: server_{k}.queue.csv missing (left out of queue_length)")
+        if gc_trace:
+            write_gc_events(point, k, pdir, server.gc_trace_regex)  # GcEvents
         c = _last_counters(out)
         if c is not None:
             with open(os.path.join(pdir, f"server_counters_{k}.json"), "w") as f:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/design.md (benchmark_runner v0.2.17)
+# Source: abstraction/benchmark_runner/design.md (benchmark_runner v0.2.21)
 """bench: the BenchmarkRunner.
 
 Usage (from anywhere inside an impl/<lang> checkout):
@@ -59,6 +59,9 @@ def check_placement_support(config, pin):
     if any(p["threads"] is not None for p in config.placement.values()) and pin.manifest.thread_env is None:
         raise remote_setup.PinError(f"threads is set, but implementation/{pin.lang}/benchmark_manifest.toml "
                                     "has no thread_env")
+    if config.gc_trace and pin.manifest.gc_trace_env is None:  # GcTraceHook
+        raise remote_setup.PinError(f"server.gc_trace is set, but implementation/{pin.lang}/benchmark_manifest.toml "
+                                    "has no gc_trace_env")
 
 
 # Design: abstraction/benchmark_runner/design.md#run-flow

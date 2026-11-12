@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.6.1)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.7.0)
 import contextlib
 import io
 import json
@@ -151,6 +151,68 @@ class PointOutputsTest(unittest.TestCase):
             self.assertIsNone(executor.validate_outputs(point(instances=2), pdir))
 
 
+GO_REGEX = (r"^gc (?P<cycle>\d+) @(?P<start_s>[0-9.]+)s \d+%: (?P<stw_start_ms>[0-9.]+)"
+            r"\+(?P<mark_ms>[0-9.]+)\+(?P<stw_end_ms>[0-9.]+) ms clock")
+
+
+class GcEventsTest(unittest.TestCase):
+    # Design: abstraction/benchmark_runner/experiment_executor/design.md#gcevents
+    def test_seconds_to_ns(self):
+        self.assertEqual(executor.seconds_to_ns("4.507"), 4_507_000_000)
+        self.assertEqual(executor.seconds_to_ns("10"), 10_000_000_000)
+        self.assertEqual(executor.seconds_to_ns("0.0000000019"), 1)  # beyond 9 digits: truncated
+
+    # Worked example of experiment_executor/design.md#gcevents.
+    #
+    # Design: abstraction/benchmark_runner/experiment_executor/design.md#gcevents
+    def test_worked_example(self):
+        with tempfile.TemporaryDirectory() as pdir:
+            with open(os.path.join(pdir, "server_0.out"), "w") as f:
+                f.write("process_start_unix_ns 1700000000000000000\n"
+                        "gc 1 @0.012s 1%: 0.018+5.1+0.042 ms clock, 0.07+1.2/9.8/20+0.17 ms cpu, 4->4->2 MB\n"
+                        "listening on 0.0.0.0:8080\n"
+                        "gc 2 @4.507s 3%: 0.020+12+0.050 ms clock, x\n"
+                        "gc 3 @10s 2%: 0.01+1+0.02 ms clock, x\n")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                executor.write_gc_events(point(instances=1), 0, pdir, GO_REGEX)
+            self.assertEqual(out.getvalue(), "")
+            with open(os.path.join(pdir, "server_0.gc.csv")) as f:
+                self.assertEqual(f.read(), executor.GC_HEADER + "\n"
+                                 "1700000000012000000,1,0.018,5.1,0.042\n"
+                                 "1700000004507000000,2,0.020,12,0.050\n"
+                                 "1700000010000000000,3,0.01,1,0.02\n")
+
+    # Design: abstraction/benchmark_runner/experiment_executor/design.md#gcevents
+    def test_problems_only_warn(self):
+        with tempfile.TemporaryDirectory() as pdir:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                executor.write_gc_events(point(instances=1), 0, pdir, GO_REGEX)              # no .out
+                with open(os.path.join(pdir, "server_0.out"), "w") as f:
+                    f.write("gc 1 @0.012s 1%: 0.018+5.1+0.042 ms clock\n")                # no start line
+                executor.write_gc_events(point(instances=1), 0, pdir, GO_REGEX)
+                self.assertFalse(os.path.exists(os.path.join(pdir, "server_0.gc.csv")))
+                with open(os.path.join(pdir, "server_0.out"), "w") as f:
+                    f.write("process_start_unix_ns 5\nlistening on x\n")                   # no GcTrace
+                executor.write_gc_events(point(instances=1), 0, pdir, GO_REGEX)
+            self.assertEqual(out.getvalue().splitlines(), [
+                "point 0: server_0.out missing (no GcEvents)",
+                "point 0: server_0.out has no process_start_unix_ns line (no GcEvents)",
+                "point 0: server_0.out has no GcTrace lines"])
+            with open(os.path.join(pdir, "server_0.gc.csv")) as f:
+                self.assertEqual(f.read(), executor.GC_HEADER + "\n")                      # header only
+
+    # Design: abstraction/benchmark_runner/experiment_executor/design.md#gcevents
+    def test_server_prefix(self):
+        server = MachineReady(None, "server", "/w", "/w/repo", {"server": "/b/server"}, None, "GOMAXPROCS", True,
+                              gc_trace_env=["GODEBUG=gctrace=1"], gc_trace_regex=GO_REGEX)
+        on = type("C", (), {"gc_trace": True})()
+        off = type("C", (), {"gc_trace": False})()
+        self.assertEqual(executor.gc_trace_prefix(on, server), ["env", "GODEBUG=gctrace=1"])
+        self.assertEqual(executor.gc_trace_prefix(off, server), [])
+
+
 class ServerLifecycleTest(unittest.TestCase):
     # Design: abstraction/benchmark_runner/experiment_executor/design.md#serverlifecycle
     def test_every_instance_gets_its_queue_log_path(self):
@@ -159,15 +221,20 @@ class ServerLifecycleTest(unittest.TestCase):
         executor.start_program = lambda m, name, words, *rest: started.append(words)
         try:
             server = MachineReady(None, "server", "/w", "/w/repo", {"server": "/b/server"}, None, "GOMAXPROCS", True)
-            config = SimpleNamespace(listen_port=8080, run=SimpleNamespace(server_ready_timeout_s=1.0))
+            config = SimpleNamespace(listen_port=8080, gc_trace=False,
+                                     run=SimpleNamespace(server_ready_timeout_s=1.0))
             p = point(instances=2)
             p.server_args = [("response_rate", 10)]
+            executor.start_servers(p, config, server, "/rd")
+            server.gc_trace_env = ["GODEBUG=gctrace=1"]
+            config.gc_trace = True
             executor.start_servers(p, config, server, "/rd")
         finally:
             executor.start_program = orig
         self.assertEqual(started[1][:5], ["/b/server", "--listen_addr", "0.0.0.0:8081",
                                           "--queue_log_path", "/rd/server_1.queue.csv"])
         self.assertIn("--response_rate", started[1])
+        self.assertEqual(started[2][:3], ["env", "GODEBUG=gctrace=1", "/b/server"])  # GcTraceHook prefix
 
 
 if __name__ == "__main__":
