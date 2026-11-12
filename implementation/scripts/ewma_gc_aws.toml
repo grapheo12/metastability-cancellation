@@ -1,5 +1,5 @@
 # EWMA load balancer in front of 1 server running the message_buffer GC workload (Pusher GC-latency benchmark:
-# 200000 x 1 KiB window, 50 messages per /ping). Same machines, clients and load sweep as
+# 200000 x 15-node MessageTrees window, 50 messages per /ping). Same machines, clients and load sweep as
 # results/20261110T202525Z, with no cancellations.
 [repo]
 url = "https://github.com/grapheo12/metastability-cancellation.git"
@@ -16,7 +16,7 @@ listen_port = 8080
 instances = 1
 workload = "message_buffer"
 window_size = 200000
-message_bytes = 1024
+n_gc_binary_tree_size = 15   # MessageTree nodes; earlier runs of this file used 1 KiB byte messages
 n_messages_per_request = 50
 response_bytes = 128
 

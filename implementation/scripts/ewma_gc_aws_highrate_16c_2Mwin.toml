@@ -1,5 +1,5 @@
 # High-rate rerun of ewma_gc_aws_200msg_nostall.toml: 16 clients, global_rate 5k-50k req/s, and a 10x window
-# (2_000_000 x 1 KiB, about 2 GB live). EWMA load balancer, 1 server, message_buffer workload, 200 messages per
+# (2_000_000 x 15-node MessageTrees, about 0.7 GB live with trees). EWMA load balancer, 1 server, message_buffer workload, 200 messages per
 # /ping, no StallGate, no cancellations.
 [repo]
 url = "https://github.com/grapheo12/metastability-cancellation.git"
@@ -16,7 +16,7 @@ listen_port = 8080
 instances = 1
 workload = "message_buffer"
 window_size = 2000000
-message_bytes = 1024
+n_gc_binary_tree_size = 15   # MessageTree nodes; earlier runs of this file used 1 KiB byte messages
 n_messages_per_request = 200
 initial_stall_ms = 0
 response_bytes = 128
