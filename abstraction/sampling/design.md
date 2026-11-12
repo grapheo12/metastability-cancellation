@@ -138,10 +138,10 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [SplitMix64](#splitmix64) | [sampling.go:21](../../implementation/go/internal/sampling/sampling.go#L21), [sampling.go:26](../../implementation/go/internal/sampling/sampling.go#L26), [sampling.go:33](../../implementation/go/internal/sampling/sampling.go#L33) |
-| [SeedDerivation](#seedderivation) | [sampling.go:41](../../implementation/go/internal/sampling/sampling.go#L41), [sampling_test.go:19](../../implementation/go/internal/sampling/sampling_test.go#L19) |
-| [Generator](#generator) | [sampling.go:49](../../implementation/go/internal/sampling/sampling.go#L49), [sampling.go:56](../../implementation/go/internal/sampling/sampling.go#L56), [sampling.go:68](../../implementation/go/internal/sampling/sampling.go#L68), [sampling_test.go:10](../../implementation/go/internal/sampling/sampling_test.go#L10) |
-| [Uniform](#uniform) | [sampling.go:84](../../implementation/go/internal/sampling/sampling.go#L84) |
-| [ExponentialSampler](#exponentialsampler) | [sampling.go:91](../../implementation/go/internal/sampling/sampling.go#L91), [sampling.go:99](../../implementation/go/internal/sampling/sampling.go#L99), [sampling.go:106](../../implementation/go/internal/sampling/sampling.go#L106), [sampling_test.go:57](../../implementation/go/internal/sampling/sampling_test.go#L57) |
-| [UniformIntSampler](#uniformintsampler) | [sampling.go:114](../../implementation/go/internal/sampling/sampling.go#L114), [sampling_test.go:32](../../implementation/go/internal/sampling/sampling_test.go#L32) |
+| [SplitMix64](#splitmix64) | [sampling.go:23](../../implementation/go/internal/sampling/sampling.go#L23), [sampling.go:28](../../implementation/go/internal/sampling/sampling.go#L28), [sampling.go:35](../../implementation/go/internal/sampling/sampling.go#L35) |
+| [SeedDerivation](#seedderivation) | [sampling.go:43](../../implementation/go/internal/sampling/sampling.go#L43), [sampling_test.go:19](../../implementation/go/internal/sampling/sampling_test.go#L19) |
+| [Generator](#generator) | [sampling.go:51](../../implementation/go/internal/sampling/sampling.go#L51), [sampling.go:58](../../implementation/go/internal/sampling/sampling.go#L58), [sampling.go:70](../../implementation/go/internal/sampling/sampling.go#L70), [sampling_test.go:10](../../implementation/go/internal/sampling/sampling_test.go#L10) |
+| [Uniform](#uniform) | [sampling.go:86](../../implementation/go/internal/sampling/sampling.go#L86) |
+| [ExponentialSampler](#exponentialsampler) | [sampling.go:93](../../implementation/go/internal/sampling/sampling.go#L93), [sampling.go:101](../../implementation/go/internal/sampling/sampling.go#L101), [sampling.go:108](../../implementation/go/internal/sampling/sampling.go#L108), [sampling_test.go:57](../../implementation/go/internal/sampling/sampling_test.go#L57) |
+| [UniformIntSampler](#uniformintsampler) | [sampling.go:116](../../implementation/go/internal/sampling/sampling.go#L116), [sampling_test.go:32](../../implementation/go/internal/sampling/sampling_test.go#L32) |
 <!-- trace:end -->

@@ -136,7 +136,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [make_message](#make_message) | [messagebuffer.go:14](../../../implementation/go/internal/server/messagebuffer.go#L14), [messagebuffer_test.go:11](../../../implementation/go/internal/server/messagebuffer_test.go#L11) |
+| [MessageTree](#messagetree) |  |
 | [MessageBuffer](#messagebuffer) | [messagebuffer.go:27](../../../implementation/go/internal/server/messagebuffer.go#L27), [messagebuffer.go:39](../../../implementation/go/internal/server/messagebuffer.go#L39), [messagebuffer_test.go:11](../../../implementation/go/internal/server/messagebuffer_test.go#L11) |
 | [MessageCursor](#messagecursor) | [messagebuffer.go:51](../../../implementation/go/internal/server/messagebuffer.go#L51), [messagebuffer_test.go:25](../../../implementation/go/internal/server/messagebuffer_test.go#L25) |
 | [Worked examples](#worked-examples) | [messagebuffer_test.go:25](../../../implementation/go/internal/server/messagebuffer_test.go#L25) |

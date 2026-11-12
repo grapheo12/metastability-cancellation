@@ -1,4 +1,4 @@
-// Source: abstraction/sampling/design.md (sampling v0.2.2)
+// Source: abstraction/sampling/design.md (sampling v0.3.0)
 package sampling
 
 import (
