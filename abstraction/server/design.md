@@ -52,6 +52,22 @@ function validate(params):
     return ServerConfig(params)
 ```
 
+## ProcessStart
+
+```
+procedure main(argv):
+    print("process_start_unix_ns " + decimal(wall_clock_unix_ns()))     # first line, before anything else
+    params = parse(argv); config = validate(params)                    # errors exit non-zero, as before
+    serve(config)
+```
+
+- **Why.** A runtime's own diagnostics (for example a garbage collector's per-cycle trace, the **GcTrace**) give
+  times relative to the process start. The BenchmarkRunner turns them into wall-clock times with this line.
+- **Accuracy.** The line is read at the start of the program's entry point. A runtime starts its own clock a
+  little earlier, during its initialization; the difference is well under 1 ms and is accepted.
+- This is the server's only wall-clock read; every duration still uses the monotonic clock
+  ([Concurrency model](#concurrency-model)).
+
 ## Listener
 
 ```
@@ -94,7 +110,8 @@ shift. Reproducing the server's random sequence therefore needs the same connect
 
 Rules every subcomponent shares:
 
-- **Time base.** Durations are measured with a monotonic clock in whole microseconds. Nothing depends on wall time.
+- **Time base.** Durations are measured with a monotonic clock in whole microseconds. Nothing depends on wall time; the
+  only wall-clock read is the [ProcessStart](#processstart) line, which is an output, never an input.
 - **No blocking on work.** A Connection Handler never waits for a worker except on the one stream whose reply it
   is writing. `/cancel` never waits for a worker or for a client's lock.
 - **Locks.** The WorkQueue lock is held only to move one job. A client's cancel lock
