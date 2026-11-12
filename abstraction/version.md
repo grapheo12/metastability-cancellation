@@ -108,3 +108,4 @@
 | 0.9.42 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.24 (config 0.12.0) |
 | 0.9.43 | 2026-11-12T00:00:00Z | Child bump: server 0.7.3 (message_buffer 0.2.1) |
 | 0.9.44 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.25 (result_plotter 0.11.0) |
+| 0.9.45 | 2026-11-12T00:00:00Z | Glossary: Availability is over 200 ms windows |
