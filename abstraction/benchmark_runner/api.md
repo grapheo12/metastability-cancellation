@@ -49,6 +49,7 @@ set `[run] output_dir` to that run's directory.
     latency_e2e.html  goodput.html  outcomes.html  server_counters.html  throughput_latency.html
     server_counters_normalized.html  throughput_latency_normalized.html  queue_length.html
     forward_latency.html  ewma_latency.html   # or forward_latency_server_<k>.html ... with more than one backend
+    availability.html
     <shared script file>                      # used by every page, so they open offline
 ```
 

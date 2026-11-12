@@ -30,12 +30,13 @@ Writes `all_points.csv` and `plots/*.html` (interactive FigurePages, [design.md#
 [design.md#pointtable](design.md#pointtable), [design.md#sweepplots](design.md#sweepplots) and
 [design.md#throughputlatencyplot](design.md#throughputlatencyplot) and
 [design.md#throughputlatencynormalizedplot](design.md#throughputlatencynormalizedplot) and
-[design.md#queuelengthplot](design.md#queuelengthplot) and [design.md#forwardtimelineplots](design.md#forwardtimelineplots) and [design.md#gcoverlay](design.md#gcoverlay).
+[design.md#queuelengthplot](design.md#queuelengthplot) and [design.md#forwardtimelineplots](design.md#forwardtimelineplots) and [design.md#gcoverlay](design.md#gcoverlay) and [design.md#availabilityplot](design.md#availabilityplot).
 
 ## Uses
 
 - [../config/api.md](../config/api.md#sweeppoint): the `params.json` format
-- [../../load_generator/metrics/api.md](../../load_generator/metrics/api.md#summary-json): load generator summary fields
+- [../../load_generator/metrics/api.md](../../load_generator/metrics/api.md#summary-json): load generator summary fields (and `run_start_unix_ns`)
+- [../../load_generator/metrics/api.md](../../load_generator/metrics/api.md#requests-csv): the Requests CSV (`loadgen.requests.csv`)
 - [../../ingress/api.md](../../ingress/api.md#output_pathsummaryjson): Ingress summary fields (`counts`, `backends`)
 - [../../server/api.md](../../server/api.md#queuelengthlog-output): the QueueLengthLog CSV (`server_<k>.queue.csv`)
 - [../../ingress/api.md](../../ingress/api.md#output_pathforwardscsv): the ForwardLog CSV (`ingress.forwards.csv`)
