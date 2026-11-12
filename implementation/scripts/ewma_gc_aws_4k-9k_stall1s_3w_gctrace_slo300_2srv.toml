@@ -1,0 +1,39 @@
+# ewma_gc_aws_4k-9k_stall1s_3w_gctrace_slo300.toml with 2 server instances behind the EWMA Ingress
+# (both on the 4-core server machine, each with 3 workers and its own 2_000_000-tree window).
+[repo]
+url = "https://github.com/grapheo12/metastability-cancellation.git"
+
+[machines.server]
+host = "metafail-exp-1"
+data_addr = "172.31.23.63"
+
+[machines.client]
+host = "metafail-exp-2"
+
+[server]
+listen_port = 8080
+instances = 2
+workload = "message_buffer"
+window_size = 2000000
+n_gc_binary_tree_size = 15   # MessageTree nodes; earlier runs of this file used 1 KiB byte messages
+n_messages_per_request = 200
+initial_stall_ms = 1000
+n_worker_threads = 3
+gc_trace = true
+response_bytes = 128
+
+[load_gen]
+num_clients = 16
+global_rate = [4000, 5000, 7000, 8000, 9000]
+request_bytes = 128
+slo_ms = 300
+duration_s = 30
+
+[ingress]
+machine = "server"   # Ingress next to the server on metafail-exp-1
+listen_port = 9090
+lb_policy = "ewma"   # ewma_beta defaults to 0.7; cancel_rate defaults to 0 (no cancellations)
+
+[run]
+sweep_order = ["load_gen.global_rate"]
+cooldown_s = 2
