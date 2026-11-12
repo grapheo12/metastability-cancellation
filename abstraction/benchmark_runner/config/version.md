@@ -12,3 +12,4 @@
 | 0.6.0 | 2026-11-10T00:00:00Z | Server: `queue_log_path` is set by the runner (forbidden in the config); `queue_sample_interval_ms` is a settable, sweepable program parameter |
 | 0.7.0 | 2026-11-10T00:00:00Z | `initial_stall_ms` is a settable, sweepable program parameter of the server and of the Ingress |
 | 0.8.0 | 2026-11-10T00:00:00Z | `n_waiting_requests` is a settable, sweepable load generator parameter |
+| 0.9.0 | 2026-11-11T00:00:00Z | `ewma_beta` is a settable, sweepable program parameter of the Ingress |

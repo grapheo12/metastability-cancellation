@@ -8,7 +8,7 @@ PROGRAM_PARAMS = {
                 "n_worker_threads", "queue_sample_interval_ms", "initial_stall_ms"],
   "load_gen":  ["num_clients", "global_rate", "request_bytes", "slo_ms", "duration_s", "seed",
                 "n_waiting_requests"],
-  "ingress":   ["lb_policy", "cancel_rate", "duration_s", "seed", "initial_stall_ms"],
+  "ingress":   ["lb_policy", "ewma_beta", "cancel_rate", "duration_s", "seed", "initial_stall_ms"],
 }
 PLACEMENT_KEYS = ["threads", "cpu_set"]                                  # ProcessPlacement
 RUNNER_KEYS = { "server":    ["listen_port", "instances"] + PLACEMENT_KEYS,
