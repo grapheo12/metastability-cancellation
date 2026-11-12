@@ -130,7 +130,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [Shared state](#shared-state) | [ingress.go:22](../../implementation/go/internal/ingress/ingress.go#L22) |
 | [Configuration validation](#configuration-validation) | [config.go:75](../../implementation/go/internal/ingress/config.go#L75), [config_test.go:9](../../implementation/go/internal/ingress/config_test.go#L9) |
 | [Concurrency model](#concurrency-model) | [ingress.go:77](../../implementation/go/internal/ingress/ingress.go#L77) |
-| [Time base](#time-base) | [frontend.go:125](../../implementation/go/internal/ingress/frontend.go#L125) |
+| [Time base](#time-base) | [frontend.go:127](../../implementation/go/internal/ingress/frontend.go#L127) |
 | [Shutdown](#shutdown) | [ingress.go:111](../../implementation/go/internal/ingress/ingress.go#L111), [ingress_test.go:75](../../implementation/go/internal/ingress/ingress_test.go#L75) |
 | [Why one upstream connection per client and backend](#why-one-upstream-connection-per-client-and-backend) | [upstream.go:29](../../implementation/go/internal/ingress/upstream.go#L29) |
 <!-- trace:end -->

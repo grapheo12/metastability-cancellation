@@ -135,8 +135,9 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 - `forward` builds the upstream request with that context (`http.NewRequestWithContext`), so a client reset makes `golang.org/x/net/http2` reset the upstream stream with `CANCEL`, and `RoundTrip` or the body read fails. "Reset wins ties" is decided by `ctx.Err() != nil` at the moment the upstream call fails.
 - A connection is "unusable" when `ClientConn.CanTakeNewRequest()` is false after the failure; only then is it discarded.
 - `Aborted` is `fwdResponse{aborted: true}`; nothing is written, and the handler returns.
+- `handlePing` keeps the `ForwardTicket` value returned by `lb.Pick()` in a local variable and passes it to `lb.Finish` after `inflight.Clear`; `ticket.ServerID` is the `s` used for the InFlightEntry and `forward`.
 - `start_once` is an `atomic.Bool` compare-and-swap; `run_start` and the canceller are stored under `startMu` so shutdown reads them safely.
-- Tests: `ingress_test.go` runs two in-process servers behind the Ingress: relay and routing errors (`400`, `404`, `405`), round-robin spread and the written outputs; the Load Canceller cancelling an in-flight request (`503`, counted `cancelled_during_processing` on the right backend); a client reset reaching the backend; and `502` for an unreachable backend. The reset reaches the Ingress a few milliseconds after the client gives up, so that test waits for the forward to end before stopping the backend.
+- Tests: `ingress_test.go` runs two in-process servers behind the Ingress: relay and routing errors (`400`, `404`, `405`), round-robin spread and the written outputs; the Load Canceller cancelling an in-flight request (`503`, counted `cancelled_during_processing` on the right backend); a client reset reaching the backend; `502` for an unreachable backend; and `ewma` steering one sequential client to the fast one of a slow and a fast backend, with the slow one's `ewma_latency_ns` higher in the summary. The reset reaches the Ingress a few milliseconds after the client gives up, so that test waits for the forward to end before stopping the backend.
 
 ### Traceability
 
@@ -147,7 +148,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | Design subsection | Implementation (file:line) |
 |---|---|
 | [Client connections](#client-connections) | [frontend.go:28](../../../implementation/go/internal/ingress/frontend.go#L28), [ingress.go:77](../../../implementation/go/internal/ingress/ingress.go#L77) |
-| [ForwardTask](#forwardtask) | [frontend.go:56](../../../implementation/go/internal/ingress/frontend.go#L56), [frontend.go:82](../../../implementation/go/internal/ingress/frontend.go#L82), [ingress_test.go:75](../../../implementation/go/internal/ingress/ingress_test.go#L75) |
-| [StartOnce](#startonce) | [frontend.go:125](../../../implementation/go/internal/ingress/frontend.go#L125), [ingress_test.go:122](../../../implementation/go/internal/ingress/ingress_test.go#L122) |
+| [ForwardTask](#forwardtask) | [frontend.go:56](../../../implementation/go/internal/ingress/frontend.go#L56), [frontend.go:68](../../../implementation/go/internal/ingress/frontend.go#L68), [frontend.go:84](../../../implementation/go/internal/ingress/frontend.go#L84), [ingress_test.go:75](../../../implementation/go/internal/ingress/ingress_test.go#L75), [ingress_test.go:199](../../../implementation/go/internal/ingress/ingress_test.go#L199) |
+| [StartOnce](#startonce) | [frontend.go:127](../../../implementation/go/internal/ingress/frontend.go#L127), [ingress_test.go:122](../../../implementation/go/internal/ingress/ingress_test.go#L122) |
 | [State machine (per ForwardTask)](#state-machine-per-forwardtask) | [ingress_test.go:156](../../../implementation/go/internal/ingress/ingress_test.go#L156) |
 <!-- trace:end -->

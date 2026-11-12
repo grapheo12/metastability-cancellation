@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.2.0)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.2.1)
 package ingress
 
 import (
@@ -188,6 +188,38 @@ func TestResetAndBadGateway(t *testing.T) {
 	if v := dead.lb.Snapshot()[0]; v.BadGateway != 1 || dead.lb.totalOutstanding() != 0 {
 		t.Fatalf("bad gateway not counted: %+v", v)
 	}
+}
+
+// With ewma, the Frontend's ForwardTicket times each ok forward: the slow
+// backend's EwmaLatency rises above the fast one's and the fast one gets more
+// forwards. One sequential client keeps outstanding at 0, so the choice is by
+// EwmaLatency alone.
+//
+// Design: abstraction/ingress/frontend/design.md#forwardtask
+func TestEwmaPrefersFastBackend(t *testing.T) {
+	slow, fast := startBackend(t, 20), startBackend(t, 100000) // mean burn 50 ms vs 10 us
+	ing := startIngress(t, []string{slow.Addr().String(), fast.Addr().String()}, PolicyEwma, 0)
+	conn := dial(t, ing)
+	for seq := uint32(0); seq < 20; seq++ {
+		if st, _, err := ping(t, context.Background(), conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(seq, 0), 64)); err != nil || st != 202 {
+			t.Fatalf("seq %d: %d %v", seq, st, err)
+		}
+	}
+	if err := ing.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	var s Summary
+	raw, _ := os.ReadFile(ing.cfg.OutputPath + ".summary.json")
+	if err := json.Unmarshal(raw, &s); err != nil {
+		t.Fatal(err)
+	}
+	b0, b1 := s.Backends[0], s.Backends[1]
+	if s.Config.EwmaBeta != 0.7 || b0.OK < 1 || b0.EwmaLatencyNs == EwmaInitialLatencyNs ||
+		!(b0.EwmaLatencyNs > b1.EwmaLatencyNs) || !(b1.Forwarded > b0.Forwarded) {
+		t.Fatalf("summary %+v", s)
+	}
+	slow.Shutdown()
+	fast.Shutdown()
 }
 
 var _ = server.CancelCooperative

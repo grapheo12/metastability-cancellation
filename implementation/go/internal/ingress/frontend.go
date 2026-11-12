@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.2.0)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.2.1)
 package ingress
 
 import (
@@ -64,13 +64,15 @@ func (ing *Ingress) handlePing(ctx context.Context, body []byte) fwdResponse {
 	}
 	ing.startOnce()
 
-	ticket := ing.lb.Pick()
+	// Design: abstraction/ingress/frontend/design.md#forwardtask
+	ticket := ing.lb.Pick() // ForwardTicket: given back to Finish to time the forward
 	s := ticket.ServerID
 	entry := &InFlightEntry{RequestID: id, ServerID: s}
 	ing.inflight.Publish(entry) // keyed by the RequestId
 	resp, outcome := ing.forward(ctx, clientID, s, body)
 	ing.inflight.Clear(entry) // before relaying the answer
-	ing.lb.Finish(ticket, outcome)
+	// Design: abstraction/ingress/load_balancer/design.md#forwardticket
+	ing.lb.Finish(ticket, outcome) // after Clear: an ok latency ends when the answer is in
 	return resp
 }
 
