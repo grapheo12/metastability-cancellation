@@ -16,6 +16,8 @@ Leaf component. It reads every point directory of a run and produces:
   LoadBalancer over time (from its ForwardLog), as the median and p99 of 20 ms bins, one line per done SweepPoint,
   and one pair of figures per backend when there is more than one.
 
+Every figure is an interactive page (**FigurePage**, `plots/<name>.html`) that opens offline.
+
 It needs only the output directory, so it can be re-run at any time, including on a partial run.
 
 Parent: [../design.md](../design.md). API: [api.md](api.md). Design: [design.md](design.md).

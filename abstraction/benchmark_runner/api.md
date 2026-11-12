@@ -45,9 +45,10 @@ set `[run] output_dir` to that run's directory.
       done | failed           # exactly one marker; "failed" holds the reason
   all_points.csv              # the PointTable
   plots/
-    latency_e2e.png  goodput.png  outcomes.png  server_counters.png  throughput_latency.png
-    server_counters_normalized.png  throughput_latency_normalized.png  queue_length.png
-    forward_latency.png  ewma_latency.png     # or forward_latency_server_<k>.png ... with more than one backend
+    latency_e2e.html  goodput.html  outcomes.html  server_counters.html  throughput_latency.html
+    server_counters_normalized.html  throughput_latency_normalized.html  queue_length.html
+    forward_latency.html  ewma_latency.html   # or forward_latency_server_<k>.html ... with more than one backend
+    <shared script file>                      # used by every page, so they open offline
 ```
 
 File meanings are defined in [experiment_executor/design.md](experiment_executor/design.md#point-outputs) and
