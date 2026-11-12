@@ -79,7 +79,7 @@ host with the same `workdir` (e.g. two `local` machines), the two setups would r
 ## Design specific to Python
 
 Shared tool `implementation/scripts/` (tooling language Python 3.11+; see `AGENTS.md` "Shared tooling"). Identical on
-every `impl/<lang>` branch. Plotting needs `matplotlib` (`python3 -m pip install -r implementation/scripts/requirements.txt`).
+every `impl/<lang>` branch. Plotting needs `plotly` (`python3 -m pip install -r implementation/scripts/requirements.txt`).
 Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts`.
 
 ### Python choices
