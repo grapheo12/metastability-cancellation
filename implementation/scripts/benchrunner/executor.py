@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.5.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.6.0)
 """run_point: ServerLifecycle, IngressLifecycle, ClientRun and point outputs for one SweepPoint."""
 
 import json
@@ -234,8 +234,11 @@ def collect_outputs(point, server, client, rd_server, rd_client, pdir, ingress_h
     for name in ("loadgen.requests.csv", "loadgen.summary.json", "loadgen.log"):
         client.transport.fetch(f"{rd_client}/{name}", os.path.join(pdir, name))
     ingress_host, rd_ingress = ingress_host or client, rd_ingress or rd_client
-    for name in ("ingress.cancels.csv", "ingress.summary.json", "ingress.log"):
+    for name in ("ingress.cancels.csv", "ingress.forwards.csv", "ingress.summary.json", "ingress.log"):
         ingress_host.transport.fetch(f"{rd_ingress}/{name}", os.path.join(pdir, name))
+    # ForwardLog: optional, a missing one only warns and never fails the point
+    if not os.path.exists(os.path.join(pdir, "ingress.forwards.csv")):
+        print(f"point {point.id}: ingress.forwards.csv missing (left out of the forward timeline plots)")
     counters = []
     for k in range(point.server_instances):
         out = os.path.join(pdir, f"server_{k}.out")

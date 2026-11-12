@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.5.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.6.0)
 import contextlib
 import io
 import json
@@ -89,9 +89,20 @@ class PointOutputsTest(unittest.TestCase):
             for d, name in ((rc, "loadgen.summary.json"), (rs, "ingress.summary.json")):
                 with open(os.path.join(d, name), "w") as f:
                     f.write("{}")
-            executor.collect_outputs(point(instances=0), server, client, rs, rc, pdir, server, rs)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                executor.collect_outputs(point(instances=0), server, client, rs, rc, pdir, server, rs)
             self.assertTrue(os.path.exists(os.path.join(pdir, "loadgen.summary.json")))
             self.assertTrue(os.path.exists(os.path.join(pdir, "ingress.summary.json")))
+            self.assertEqual(out.getvalue().strip(),
+                             "point 0: ingress.forwards.csv missing (left out of the forward timeline plots)")
+            with open(os.path.join(rs, "ingress.forwards.csv"), "w") as f:
+                f.write("t_ns,server_id,outcome,latency_ns,ewma_latency_ns\n")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                executor.collect_outputs(point(instances=0), server, client, rs, rc, pdir, server, rs)
+            self.assertTrue(os.path.exists(os.path.join(pdir, "ingress.forwards.csv")))
+            self.assertEqual(out.getvalue(), "")
 
     # Design: abstraction/benchmark_runner/experiment_executor/design.md#point-outputs
     def test_counters_summed_over_instances(self):
@@ -124,6 +135,8 @@ class PointOutputsTest(unittest.TestCase):
             m = LocalMachine(remote)
             with open(os.path.join(remote, "server_0.queue.csv"), "w") as f:
                 f.write("t_ms,queue_len\n0,0\n")
+            with open(os.path.join(remote, "ingress.forwards.csv"), "w") as f:
+                f.write("t_ns,server_id,outcome,latency_ns,ewma_latency_ns\n")
             for k in range(2):
                 with open(os.path.join(remote, f"server_{k}.out"), "w") as f:
                     f.write(json.dumps(dict(zip(executor.COUNTER_KEYS, (0, 0, 0)))) + "\n")
