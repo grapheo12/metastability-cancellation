@@ -46,7 +46,7 @@ function validate(params):
     queue_sample_interval_ms is an integer >= 1      else error   # checked even if queue_log_path is empty
     initial_stall_ms is an integer >= 0              else error
     window_size is an integer in 1 ..= 2^32-1        else error   # these three are checked under every workload
-    message_bytes is an integer >= 1                 else error
+    n_gc_binary_tree_size is an integer in 1 ..= 65536   else error
     n_messages_per_request is an integer >= 1        else error
     queue_log_path is any string; empty means no QueueLengthLog
     return ServerConfig(params)
@@ -75,7 +75,8 @@ function serve(config):
     registry = cancel_tracker.registry_new(CANCEL_REGISTRY_CAPACITY)     # one per process
     counters = cancel_tracker.counters_new()                            # one per process
     queue = worker_pool.queue_new(config.initial_stall_ms)              # one per process; StallGate
-    buf = message_buffer.buffer_new(config.window_size, config.message_bytes) if config.workload == message_buffer
+    buf = message_buffer.buffer_new(config.window_size, config.n_gc_binary_tree_size, config.seed)
+          if config.workload == message_buffer
           else none                                                     # MessageBuffer: full before bind
     pool = worker_pool.pool_start(config.n_worker_threads, queue, config, registry, counters, buf)
     log = open_for_write(config.queue_log_path) if config.queue_log_path != "" else none   # error: exit non-zero
@@ -191,7 +192,9 @@ sequence independent of how jobs are spread over the workers.
 `cpu_burn` makes every request cost CPU time and nothing else, so the server allocates almost nothing and its
 garbage collector, if it has one, stays idle. `message_buffer` instead makes every request allocate: a large
 window of messages stays live for the whole run, and each request replaces some of them, so the replaced ones die
-after a medium lifetime. That is the pattern that makes a tracing collector work hardest
+after a medium lifetime. Each message is a MessageTree, a small graph of objects that refer to each other, so a
+tracing collector has to visit every node of every live message on every cycle, not just one reference per
+message. That is the pattern that makes a tracing collector work hardest
 ([message_buffer/description.md](message_buffer/description.md)). Its latency effects then show up in the
 clients' and the Ingress's latencies, under the same WorkQueue and cancellation rules as `cpu_burn`.
 

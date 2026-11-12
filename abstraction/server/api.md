@@ -18,7 +18,7 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 | `queue_log_path` | path, or empty | empty |
 | `queue_sample_interval_ms` | integer, ms, `>= 1` | `10` |
 | `window_size` | integer, `1 ..= 2^32-1` | `200000` |
-| `message_bytes` | integer, bytes, `>= 1` | `1024` |
+| `n_gc_binary_tree_size` | integer, `1 ..= 65536` | `15` |
 | `n_messages_per_request` | integer, `>= 1` | `50` |
 
 ## Constants
