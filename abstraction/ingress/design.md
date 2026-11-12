@@ -45,7 +45,8 @@ function validate(params):
     1 <= len(backends) <= MAX_BACKENDS                      else error
     every backend parses as host:port                       else error "backend <i> must be host:port"
     1 <= num_clients <= MAX_CLIENTS                         else error
-    lb_policy in {round_robin, least_outstanding, power_of_two}  else error
+    lb_policy in {round_robin, least_outstanding, power_of_two, ewma}  else error
+    0 <= ewma_beta <= 1 and finite                          else error "ewma_beta must be a number in [0, 1]"
     cancel_rate >= 0 and finite                             else error
     if cancel_rate > 0: duration_s > 0 and finite           else error "duration_s is required with cancel_rate > 0"
     seed parses as u64                                      else error
@@ -63,8 +64,9 @@ Duplicate backends are allowed: they are separate `server_id`s that happen to sh
   `RST_STREAM` is seen at once and passed upstream.
 - **Load Canceller:** one sender activity. Its `/cancel` responses are collected by the reader of its own
   connections, never by the sender.
-- **Lock-free paths:** the In-Flight Map and the BackendStats counters use only atomic operations. The Upstream
-  Pool may lock while it creates a connection, but never while a request is in progress on one.
+- **Lock-free paths:** the In-Flight Map, the BackendStats counters and each EwmaLatency (a compare-and-swap loop)
+  use only atomic operations. The Upstream Pool may lock while it creates a connection, but never while a request
+  is in progress on one.
 - If the implementation uses cooperative coroutines on one thread, nothing in the Ingress may busy-wait: every
   wait is on network I/O, a timer, or a lock held only briefly.
 

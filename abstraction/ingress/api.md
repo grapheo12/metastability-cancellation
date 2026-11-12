@@ -11,7 +11,8 @@ or missing required parameters make the program exit non-zero with a one-line er
 | `listen_addr` | `host:port` | `0.0.0.0:9090` | Address the Frontend accepts client connections on |
 | `backends` | comma-separated list of `host:port`, at least 1, at most `MAX_BACKENDS` | required | The server instances. A backend's `server_id` is its 0-based position in this list |
 | `num_clients` (`N`) | integer, `1 ..= MAX_CLIENTS` | required | Number of load-generator clients. Client ids must be `< N`. Bounds the InFlightMap key space |
-| `lb_policy` | `round_robin` \| `least_outstanding` \| `power_of_two` | `least_outstanding` | The LoadBalancer policy |
+| `lb_policy` | `round_robin` \| `least_outstanding` \| `power_of_two` \| `ewma` | `least_outstanding` | The LoadBalancer policy |
+| `ewma_beta` | float, `0 <= ewma_beta <= 1` | `0.7` | Weight of the old value in each EwmaLatency update; used by `lb_policy = ewma`, validated always ([load_balancer/design.md](load_balancer/design.md#ewmalatency)) |
 | `cancel_rate` | float, cancels/s, `>= 0` | `0` | Rate of the LoadCanceller's Poisson process. `0` disables the LoadCanceller |
 | `duration_s` | float, s, `> 0` | required if `cancel_rate > 0`, else ignored | Length of the LoadCanceller's sending phase |
 | `initial_stall_ms` | integer, ms, `>= 0` | `1000` | The LoadCanceller schedules no cancel earlier than this after the Ingress's first `/ping`; sending still ends at `duration_s`. `0`: no stall ([load_canceller/design.md](load_canceller/design.md#cancelschedule)) |
@@ -36,7 +37,8 @@ and `duration_ns = round(duration_s * 1e9)` when the LoadCanceller is enabled
 
 ### `BackendStats`
 
-One record per backend, all fields atomic u64 starting at 0, kept by the LoadBalancer.
+One record per backend, kept by the LoadBalancer. The counters are atomic u64 starting at 0; `ewma_latency_ns` is
+an atomic binary64 starting at `EWMA_INITIAL_LATENCY_NS` ([load_balancer/api.md](load_balancer/api.md#constants)).
 
 | Field | Meaning |
 |---|---|
@@ -47,6 +49,7 @@ One record per backend, all fields atomic u64 starting at 0, kept by the LoadBal
 | `bad_request` | Relayed `400` |
 | `bad_gateway` | Answered `502` (upstream failure) |
 | `reset` | Ended because the client reset its stream |
+| `ewma_latency_ns` | EwmaLatency: moving average of the latency of `ok` forwards, in ns (float), under every policy ([load_balancer/design.md](load_balancer/design.md#ewmalatency)) |
 
 ## Behavior visible on the wire
 
@@ -76,7 +79,7 @@ disabled (header only).
   "counts":      { "scheduled", "sent", "accepted", "rejected", "bad_request", "error", "timeout", "skipped" },
   "rates_per_s": { "offered", "sent", "accepted" },
   "clients_targeted": integer,
-  "backends": [ { "server_id", "addr", "forwarded", "ok", "rejected", "bad_request", "bad_gateway", "reset" }, ... ]
+  "backends": [ { "server_id", "addr", "forwarded", "ok", "rejected", "bad_request", "bad_gateway", "reset", "ewma_latency_ns" }, ... ]
 }
 ```
 
