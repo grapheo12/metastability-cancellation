@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/design.md (benchmark_runner v0.2.15)
+# Source: abstraction/benchmark_runner/design.md (benchmark_runner v0.2.17)
 """bench: the BenchmarkRunner.
 
 Usage (from anywhere inside an impl/<lang> checkout):
@@ -9,7 +9,7 @@ Usage (from anywhere inside an impl/<lang> checkout):
     python3 implementation/scripts/bench.py plot  <output_dir>    # rebuild table and plots
 
 Exit status: 0 all good, 1 some SweepPoint failed, 2 config/pin/setup/usage error.
-Plotting needs matplotlib: python3 -m pip install -r implementation/scripts/requirements.txt
+Plotting needs plotly: python3 -m pip install -r implementation/scripts/requirements.txt
 """
 
 import argparse
@@ -70,11 +70,11 @@ def warn_unpinned(config, server, client):
             print(f"warning: cpu_set ignored on {role}: taskset not found", file=sys.stderr, flush=True)
 
 
-def require_matplotlib():
+def require_plotly():
     try:
-        import matplotlib  # noqa: F401
+        import plotly  # noqa: F401
     except ImportError:
-        raise cfgmod.ConfigError("matplotlib is missing: python3 -m pip install -r "
+        raise cfgmod.ConfigError("plotly is missing: python3 -m pip install -r "
                                  "implementation/scripts/requirements.txt") from None
 
 
@@ -85,7 +85,7 @@ def bench_run(config_path, setup_only):
         config = cfgmod.load_config(config_path, RUNNER_DIR)
         points = cfgmod.expand_sweep(config)
         if not setup_only:
-            require_matplotlib()
+            require_plotly()
         pin = remote_setup.source_pin(config.repo_url, repo_root())
         log(f"pinned {pin.branch} @ {pin.commit[:12]} ({len(points)} sweep points)")
         check_placement_support(config, pin)
@@ -134,7 +134,7 @@ def bench_plot(output_dir):
         log(f"table written, no plots: {e}")
         return 1
     except ImportError:
-        print("error: matplotlib is missing: python3 -m pip install -r implementation/scripts/requirements.txt",
+        print("error: plotly is missing: python3 -m pip install -r implementation/scripts/requirements.txt",
               file=sys.stderr)
         return 2
     return 0
