@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/remote_setup/design.md (remote_setup v0.3.0)
+# Source: abstraction/benchmark_runner/remote_setup/design.md (remote_setup v0.4.1)
 """SourcePin, BuildManifest, and per-machine clone/checkout/tool check/build."""
 
 import os
@@ -16,7 +16,9 @@ MANIFEST_PATH = "implementation/{lang}/benchmark_manifest.toml"
 BRANCH_PREFIX = "impl/"
 PROGRAMS = ("server", "loadgen", "ingress")
 MANIFEST_KEYS = {"lang", "required_tools", "build", "binaries"}
-OPTIONAL_MANIFEST_KEYS = {"thread_env"}
+OPTIONAL_MANIFEST_KEYS = {"thread_env", "gc_trace_env", "gc_trace_regex"}
+# GcTraceHook: the named groups gc_trace_regex must have
+GC_TRACE_GROUPS = ("cycle", "start_s", "stw_start_ms", "mark_ms", "stw_end_ms")
 
 
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -38,6 +40,8 @@ class BuildManifest:
     build: str
     binaries: dict
     thread_env: str | None = None
+    gc_trace_env: list | None = None  # GcTraceHook
+    gc_trace_regex: str | None = None
 
 
 @dataclass
@@ -59,6 +63,8 @@ class MachineReady:
     data_addr: str | None
     thread_env: str | None = None
     cpu_pinning: bool = False
+    gc_trace_env: list | None = None  # GcTraceHook, from the BuildManifest
+    gc_trace_regex: str | None = None
 
 
 def _git(repo_root, *args):
@@ -99,7 +105,8 @@ def read_manifest(path, lang):
     except (OSError, tomllib.TOMLDecodeError) as e:
         raise PinError(f"cannot read BuildManifest {path}: {e}") from None
     if not MANIFEST_KEYS <= set(doc) or not set(doc) <= MANIFEST_KEYS | OPTIONAL_MANIFEST_KEYS:
-        raise PinError(f"{path}: keys must be lang, required_tools, build, binaries and optionally thread_env")
+        raise PinError(f"{path}: keys must be lang, required_tools, build, binaries and optionally thread_env, "
+                       "gc_trace_env, gc_trace_regex")
     if doc["lang"] != lang:
         raise PinError(f"{path}: lang is {doc['lang']!r}, branch says {lang!r}")
     tools = doc["required_tools"]
@@ -117,7 +124,29 @@ def read_manifest(path, lang):
     thread_env = doc.get("thread_env")
     if thread_env is not None and not (isinstance(thread_env, str) and _ENV_NAME.fullmatch(thread_env)):
         raise PinError(f"{path}: thread_env must be an environment variable name")
-    return BuildManifest(lang, tools, doc["build"], binaries, thread_env)
+    gc_env, gc_regex = _gc_trace_hook(path, doc)
+    return BuildManifest(lang, tools, doc["build"], binaries, thread_env, gc_env, gc_regex)
+
+
+# Design: abstraction/benchmark_runner/remote_setup/design.md#buildmanifest
+def _gc_trace_hook(path, doc):
+    """The optional GcTraceHook: (gc_trace_env, gc_trace_regex), both None when absent."""
+    env, regex = doc.get("gc_trace_env"), doc.get("gc_trace_regex")
+    if env is None and regex is None:
+        return None, None
+    if env is None or regex is None:
+        raise PinError(f"{path}: gc_trace_env and gc_trace_regex must be given together")
+    if not isinstance(env, list) or not env or not all(
+            isinstance(w, str) and "=" in w and _ENV_NAME.fullmatch(w.split("=", 1)[0])
+            and not any(c.isspace() for c in w) for w in env):
+        raise PinError(f"{path}: gc_trace_env must be a non-empty array of NAME=value strings")
+    try:
+        groups = set(re.compile(regex).groupindex) if isinstance(regex, str) else set()
+    except re.error as e:
+        raise PinError(f"{path}: gc_trace_regex does not compile: {e}") from None
+    if not set(GC_TRACE_GROUPS) <= groups:
+        raise PinError(f"{path}: gc_trace_regex must have the named groups " + ", ".join(GC_TRACE_GROUPS))
+    return env, regex
 
 
 def _tail(r, n=20):
@@ -158,7 +187,8 @@ def setup_machine(t, role, machine, pin, timeout_s):
         binaries[program] = path
     cpu_pinning = t.run("command -v taskset", 30).exit_status == 0  # absent is not an error
     return MachineReady(t, role, workdir, repo_dir, binaries, machine.data_addr if role == "server" else None,
-                        pin.manifest.thread_env, cpu_pinning)
+                        pin.manifest.thread_env, cpu_pinning,
+                        gc_trace_env=pin.manifest.gc_trace_env, gc_trace_regex=pin.manifest.gc_trace_regex)
 
 
 # Design: abstraction/benchmark_runner/remote_setup/design.md#machine-setup
@@ -170,7 +200,8 @@ def setup_machines(server_t, client_t, config, pin):
     if same:
         ready = setup_machine(server_t, "server", s, pin, timeout)
         return ready, MachineReady(client_t, "client", ready.workdir, ready.repo_dir, ready.binaries, None,
-                                   ready.thread_env, ready.cpu_pinning)
+                                   ready.thread_env, ready.cpu_pinning,
+                                   gc_trace_env=ready.gc_trace_env, gc_trace_regex=ready.gc_trace_regex)
     with ThreadPoolExecutor(max_workers=2) as pool:
         fs = pool.submit(setup_machine, server_t, "server", s, pin, timeout)
         fc = pool.submit(setup_machine, client_t, "client", c, pin, timeout)

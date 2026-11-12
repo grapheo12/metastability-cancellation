@@ -1,6 +1,7 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/remote_setup/design.md (remote_setup v0.3.0)
+# Source: abstraction/benchmark_runner/remote_setup/design.md (remote_setup v0.4.1)
 import os
+import re
 import tempfile
 import unittest
 
@@ -41,6 +42,33 @@ class ManifestTest(unittest.TestCase):
             with self.assertRaises(remote_setup.PinError) as cm:
                 self.read(bad, lang)
             self.assertIn(fragment, str(cm.exception))
+
+    # Design: abstraction/benchmark_runner/remote_setup/design.md#buildmanifest
+    def test_gc_trace_hook(self):
+        m = self.read(GOOD)
+        self.assertEqual((m.gc_trace_env, m.gc_trace_regex), (None, None))
+        regex = (r"^gc (?P<cycle>\d+) @(?P<start_s>[0-9.]+)s \d+%: (?P<stw_start_ms>[0-9.]+)"
+                 r"\+(?P<mark_ms>[0-9.]+)\+(?P<stw_end_ms>[0-9.]+) ms clock")
+        good = f"gc_trace_env = [\"GODEBUG=gctrace=1\"]\ngc_trace_regex = '{regex}'\n" + GOOD
+        m = self.read(good)
+        self.assertEqual((m.gc_trace_env, m.gc_trace_regex), (["GODEBUG=gctrace=1"], regex))
+        for bad, why in (('gc_trace_env = ["GODEBUG=gctrace=1"]\n' + GOOD, "together"),
+                         ("gc_trace_regex = '^gc'\n" + GOOD, "together"),
+                         ('gc_trace_env = ["GODEBUG"]\ngc_trace_regex = \'x\'\n' + GOOD, "NAME=value"),
+                         ('gc_trace_env = []\ngc_trace_regex = \'x\'\n' + GOOD, "NAME=value"),
+                         ('gc_trace_env = ["A=1"]\ngc_trace_regex = \'(\'\n' + GOOD, "does not compile"),
+                         ('gc_trace_env = ["A=1"]\ngc_trace_regex = \'(?P<cycle>x)\'\n' + GOOD, "named groups")):
+            with self.assertRaises(remote_setup.PinError) as cm:
+                self.read(bad)
+            self.assertIn(why, str(cm.exception))
+        # the real Go manifest, when this shared tool sits on the impl/go branch
+        go_path = os.path.join(os.path.dirname(__file__), "..", "..", "go", "benchmark_manifest.toml")
+        if not os.path.exists(go_path):
+            return
+        go = remote_setup.read_manifest(go_path, "go")
+        line = "gc 12 @4.507s 3%: 0.018+5.1+0.042 ms clock, 0.07+1.2/9.8/20+0.17 ms cpu, 3->3->2 MB, 4 MB goal, 0 P"
+        mt = re.match(go.gc_trace_regex, line)
+        self.assertEqual([mt.group(g) for g in remote_setup.GC_TRACE_GROUPS], ["12", "4.507", "0.018", "5.1", "0.042"])
 
     # Design: abstraction/benchmark_runner/remote_setup/design.md#buildmanifest
     def test_thread_env(self):
