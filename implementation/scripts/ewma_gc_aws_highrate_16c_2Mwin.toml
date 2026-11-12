@@ -1,0 +1,38 @@
+# High-rate rerun of ewma_gc_aws_200msg_nostall.toml: 16 clients, global_rate 5k-50k req/s, and a 10x window
+# (2_000_000 x 1 KiB, about 2 GB live). EWMA load balancer, 1 server, message_buffer workload, 200 messages per
+# /ping, no StallGate, no cancellations.
+[repo]
+url = "https://github.com/grapheo12/metastability-cancellation.git"
+
+[machines.server]
+host = "metafail-exp-1"
+data_addr = "172.31.23.63"
+
+[machines.client]
+host = "metafail-exp-2"
+
+[server]
+listen_port = 8080
+instances = 1
+workload = "message_buffer"
+window_size = 2000000
+message_bytes = 1024
+n_messages_per_request = 200
+initial_stall_ms = 0
+response_bytes = 128
+
+[load_gen]
+num_clients = 16
+global_rate = [5000, 10000, 20000, 30000, 50000]
+request_bytes = 128
+slo_ms = 1000
+duration_s = 30
+
+[ingress]
+machine = "server"   # Ingress next to the server on metafail-exp-1
+listen_port = 9090
+lb_policy = "ewma"   # ewma_beta defaults to 0.7; cancel_rate defaults to 0 (no cancellations)
+
+[run]
+sweep_order = ["load_gen.global_rate"]
+cooldown_s = 2
