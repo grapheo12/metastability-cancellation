@@ -37,6 +37,7 @@ function plot(output_dir):
     for figure in FIGURES:
         if figure.x == "time": draw_queue_length(output_dir, done, swept_keys); continue   # QueueLengthPlot
         if figure.x == "forward_time": draw_forward_timelines(output_dir, done, swept_keys); continue   # ForwardTimelinePlots
+        if figure.x == "loadgen_time": draw_availability(output_dir, done, swept_keys); continue      # AvailabilityPlot
         if figure.x == "x_key": draw as below
         else: draw as in ThroughputLatencyPlot; continue
         one subplot per metric of the figure, sharing the x-axis, title = metric name
@@ -58,6 +59,7 @@ function plot(output_dir):
 | `throughput_latency_normalized` | `lg_goodput / (1 - cx_offered_fraction)` | `e2e_p50_us`, `e2e_p99_us`, `e2e_p999_us` | log |
 | `server_counters_normalized` | `x_key` | `srv_cancelled_before_processing / cx_sent`, `srv_cancelled_during_processing / cx_sent`, `srv_completed_before_cancel / cx_sent` | linear, 0 to 1 |
 | `queue_length` | `time` (s since server start) | one plot: `queue_len` summed over instances, one line per done point ([QueueLengthPlot](#queuelengthplot)) | linear, from 0 |
+| `availability` | `loadgen_time` (s since the load generator's `run_start`) | one plot: Availability per 20 ms window, one line per done point ([AvailabilityPlot](#availabilityplot)) | linear, 0 to 1 |
 | `forward_latency`, `ewma_latency` (one figure each per backend when a point has `B > 1`) | `forward_time` (s since the Ingress's `run_start`) | median and p99 per `FORWARD_BIN_MS` bin, one line per done point ([ForwardTimelinePlots](#forwardtimelineplots)) | log |
 
 A fraction is empty when its denominator (`lg_scheduled` or `cx_sent`) is empty or `0`.
@@ -320,7 +322,8 @@ function draw_forward_timelines(output_dir, done, swept_keys):
             x-axis linear, label "time since first /ping at the Ingress (s)"
             y-axis log, label ylabel
             legend with the labels when there is more than one line
-            if name == "forward_latency": overlay GcEvents on both subplots ([GcOverlay](#gcoverlay))
+            if name == "forward_latency": overlay gc_events(pdir, [k or 0], origin(pdir, "ingress.summary.json"),
+                                                         t_end_s) on both subplots ([GcOverlay](#gcoverlay))
             save as output_dir/plots/<file>.html, about 600 px wide per subplot
             produced.append(file)
     delete every output_dir/plots/forward_latency*.html and ewma_latency*.html not in produced   # stale ones
@@ -364,12 +367,101 @@ Bin 2 has no row, so the lines go straight from x = 0.02 to x = 0.06.
 | Some done point has `B = 2` | `forward_latency_server_0.html`, `…_server_1.html`, and the same for `ewma_latency`; a point with `B = 1` appears only in the `_server_0` figures |
 | No done point has a ForwardLog | No forward timeline figure; earlier ones are deleted |
 
+## AvailabilityPlot
+
+The **AvailabilityPlot** (`availability.html`) shows, for each done point, the share of the client's requests that
+finished in time, over time, from the load generator's Requests CSV
+([../../load_generator/metrics/api.md#requests-csv](../../load_generator/metrics/api.md#requests-csv)).
+
+**Availability** at time `t` is the number of requests that finished under the SLO divided by the number of
+requests that finished, among the requests whose `end_ns` lies in the 20 ms window centred on `t`:
+
+- **Finished:** the row has an `end_ns` (`ok`, `rejected`, `cancelled`, `error`); `not_sent` rows are ignored.
+- **Under the SLO:** `outcome == ok` and `end_ns - send_ns <= slo_ms × 1_000_000`, the clock the client's SLO
+  cancellation uses. A cancelled, rejected or failed request is finished but never under the SLO.
+
+```
+function read_requests(path):                      # -> list of (end_ns, send_ns, ok) | none
+    if path does not exist: return none
+    rows = []
+    for each line after the header:
+        split into the Requests CSV columns; stop at a line without all of them (e.g. a truncated last line)
+        if end_ns is empty: continue                # not_sent
+        rows.append((end_ns, send_ns, outcome == "ok"))
+    return rows
+
+function availability_series(rows, slo_ns):        # -> list of (x_s, availability), windows in increasing order
+    W = FORWARD_BIN_MS * 1_000_000                  # 20 ms
+    windows = group rows by end_ns div W            # window b is [b W, (b+1) W), centred on (b + 1/2) W
+    return [ ((b + 0.5) * FORWARD_BIN_MS / 1000,
+              count of r in windows[b] with r.ok and r.end_ns - r.send_ns <= slo_ns) / len(windows[b]))
+             for b in sorted keys of windows ]      # empty windows have no key, so they are skipped
+
+function draw_availability(output_dir, done, swept_keys):
+    lines = []
+    for row in done, in point-id order:
+        pdir = output_dir/points/point_<row.point>
+        rows = read_requests(pdir/loadgen.requests.csv)
+        slo_ms = value of slo_ms in loadgen_args of pdir/params.json
+        if rows is none or rows is empty or slo_ms is none: continue
+        s = availability_series(rows, round(slo_ms * 1_000_000))
+        t_end_s = s[last].x + FORWARD_BIN_MS / 2000
+        gc = gc_events(pdir, [0 ..= I-1], origin(pdir, "loadgen.summary.json"), t_end_s)   # GcOverlay
+        lines.append((label as in the QueueLengthPlot, s, gc, the point's color index))
+    if lines is empty: delete output_dir/plots/availability.html if it exists; return
+    one plot; for each line: a line with small markers through s, in the point's color
+    overlay each line's gc as in [GcOverlay](#gcoverlay), from y 0 to 1
+    x-axis linear, label "time since the load generator's run start (s)"; y-axis linear 0 to 1, label "availability"
+    legend with the labels when there is more than one line
+    save as output_dir/plots/availability.html, about 600 px wide
+```
+
+- **Window and x.** The window centred on `t` is `[t - 10 ms, t + 10 ms)`. Evaluating it at the centres
+  `t = 10, 30, 50, … ms` gives disjoint windows that are exactly the 20 ms bins of the ForwardTimelinePlots, on the
+  load generator's time base instead of the Ingress's.
+- **Integer test.** `slo_ns = round(slo_ms × 1_000_000)` once per point; the per-row comparison is in integers.
+- **Color.** The color index is the point's position among the done points with a Requests CSV, as in the
+  ForwardTimelinePlots.
+
+Worked example, `slo_ms = 5` (`slo_ns = 5_000_000`):
+
+| `end_ns` | `send_ns` | outcome | Window (`end_ns div 20_000_000`) | Under SLO | Why |
+|---|---|---|---|---|---|
+| 1_000_000 | 0 | ok | 0 | yes | 1 ms |
+| 8_000_000 | 0 | ok | 0 | no | 8 ms > 5 ms |
+| 19_000_000 | 14_000_000 | cancelled | 0 | no | not ok |
+| 25_000_000 | 21_000_000 | ok | 1 | yes | 4 ms |
+| 30_000_000 | 25_000_000 | ok | 1 | yes | exactly 5 ms: `<=` |
+| (empty) | (empty) | not_sent | — | — | not finished |
+| 70_000_000 | 66_000_000 | rejected | 3 | no | not ok |
+
+| Window | x (s) | Availability | Check |
+|---|---|---|---|
+| 0 | 0.01 | 1/3 | one of three |
+| 1 | 0.03 | 1 | two of two |
+| 2 | — | skipped | no row ends in it |
+| 3 | 0.07 | 0 | zero of one |
+
+| Situation | Result |
+|---|---|
+| No `loadgen.requests.csv`, or no finished row | Point left out |
+| No `loadgen.summary.json` `run_start_unix_ns` (a run made before it) | Line drawn, no GC overlay |
+| No `server_<k>.gc.csv` for any instance | Line drawn, no GC overlay |
+| No done point drawable | No `availability.html`; an earlier one is deleted |
+
 ## GcOverlay
 
 When a point has the servers' GcEvents (`server_<k>.gc.csv`, written with `[server] gc_trace`,
 [../experiment_executor/design.md#gcevents](../experiment_executor/design.md#gcevents)), the `forward_latency`
-figures show each garbage-collection cycle of the backend they plot as a vertical line at the cycle's start, on the
-same time axis as the latency.
+figures and the [AvailabilityPlot](#availabilityplot) show each garbage-collection cycle as a vertical line at the
+cycle's start, on the figure's own time axis. Each figure gives the instances whose cycles it shows and the
+wall-clock origin of its time axis:
+
+| Figure | Instances | Origin (`origin_unix_ns`) |
+|---|---|---|
+| `forward_latency` (every point has `B = 1`) | 0 | `run_start_unix_ns` of `ingress.summary.json` |
+| `forward_latency_server_<k>` | `k` | `run_start_unix_ns` of `ingress.summary.json` |
+| `availability` | `0 ..= I-1`, all of the point's instances together | `run_start_unix_ns` of `loadgen.summary.json` |
 
 ```
 function read_gc_log(path):                        # -> list of (t_unix_ns, cycle, stw_start_ms, mark_ms, stw_end_ms) | none
@@ -380,31 +472,39 @@ function read_gc_log(path):                        # -> list of (t_unix_ns, cycl
         rows.append(...)
     return rows
 
-function gc_events(pdir, k, t_end_s):              # -> list of (x_s, cycle, stw_start_ms, mark_ms, stw_end_ms) | none
-    gc = read_gc_log(pdir/server_<k>.gc.csv)
-    start = run_start_unix_ns of pdir/ingress.summary.json, or none if the file or the key is missing, or it is 0
-    if gc is none or start is none: return none
+function origin(pdir, summary_file):               # -> u64 | none
+    return run_start_unix_ns of pdir/<summary_file>, or none if the file or the key is missing, or it is 0
+
+function gc_events(pdir, instances, start, t_end_s):  # -> list of (x_s, cycle, stw_start_ms, mark_ms, stw_end_ms) | none
+    logs = [read_gc_log(pdir/server_<k>.gc.csv) for k in instances]
+    logs = [l for l in logs if l is not none]
+    if logs is empty or start is none: return none
     events = []
-    for (t, c, a, m, b) in gc:
+    for (t, c, a, m, b) in every row of logs, in instance order then file order:
         x = (t - start) / 1e9                       # integer difference first, then one division
         if 0 <= x <= t_end_s: events.append((x, c, a, m, b))
-    return events
+    return events sorted by x (stable)
 ```
 
-- **Which backend.** Figure `forward_latency_server_<k>` uses instance `k`'s events; the single `forward_latency`
-  figure (every point has `B = 1`) uses instance 0's.
-- **Range.** `t_end_s` is the end of the point's last bin in that figure (its last x plus `FORWARD_BIN_MS / 1000`).
-  Cycles before the Ingress's first `/ping` (the server starts earlier, and fills its MessageBuffer) or after the
-  last forward are left out.
+- **Which instances.** As in the table: one backend per `forward_latency` figure, every instance for
+  `availability` (the client's requests may go to any of them). With several instances, the hover text tells their
+  cycles apart only by cycle number; the instance is not shown.
+- **Range.** `t_end_s` is the end of the point's last window in that figure (its last window start plus
+  `FORWARD_BIN_MS / 1000`). Cycles before the figure's origin (the server starts earlier, and fills its
+  MessageBuffer) or after its last window are left out.
+- **Clock offset.** The Ingress usually runs on the servers' machine, so its origin and the GcEvents share one clock.
+  The load generator runs on the client machine; the `availability` overlay then also contains the offset between
+  the two machines' clocks, which is accepted (on synchronized cloud machines it is usually well below one
+  window).
 - **Drawing.** For each point with events, one extra line per subplot: a vertical segment at every event's `x`, from
-  the smallest to the largest y plotted in that subplot, thin and dotted, in the point's color, in the point's legend
+  the smallest to the largest y plotted in that subplot (`0` to `1` in the AvailabilityPlot), thin and dotted, in the point's color, in the point's legend
   group (hiding the point hides its GC lines too) and without its own legend entry. Hovering over a segment shows
   `GC <cycle> at <x> s: <stw_start_ms> + <mark_ms> + <stw_end_ms> ms`.
 - **Colors.** Points get fixed colors in point-id order from one palette, so a point's GC lines match its latency
   line.
 - A point without GcEvents, or without `run_start_unix_ns` (a run made before it), is drawn without an overlay.
 
-Worked example: `run_start_unix_ns = 1_700_000_001_000_000_000`, `t_end_s = 30.02`:
+Worked example: origin `start = 1_700_000_001_000_000_000`, one instance, `t_end_s = 30.02`:
 
 | `t_unix_ns` | `x` (s) | Kept | Check |
 |---|---|---|---|
