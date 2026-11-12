@@ -101,3 +101,4 @@
 | 0.9.35 | 2026-11-12T00:00:00Z | Child bump: load_generator 0.2.3 (run_controller 0.3.0) |
 | 0.9.36 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.23 (result_plotter 0.10.0) |
 | 0.9.37 | 2026-11-12T00:00:00Z | Load generator outputs name `run_start_unix_ns`. Glossary: Availability, AvailabilityPlot |
+| 0.9.38 | 2026-11-12T00:00:00Z | Child bump: sampling 0.3.0 (server message streams) |
