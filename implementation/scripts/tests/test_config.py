@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.9.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.10.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -180,6 +180,17 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(len(points), 8)
         self.assertEqual([dict(p.ingress_args)["lb_policy"] for p in points[:2]], ["round_robin", "power_of_two"])
         self.assertConfigError(BASE.replace("cancel_rate = 100", "incr_rand_max = 4"), "unknown key ingress.incr_rand_max")
+
+    # Design: abstraction/benchmark_runner/config/design.md#benchconfig
+    def test_server_workload_params(self):
+        points = cfg.expand_sweep(self.load(BASE.replace("[server]",
+            '[server]\nworkload = "message_buffer"\nwindow_size = 1000\nmessage_bytes = 64\n'
+            'n_messages_per_request = [10, 50]', 1)))
+        self.assertEqual(len(points), 8)
+        args = [dict(p.server_args) for p in points]
+        self.assertEqual(sorted({a["n_messages_per_request"] for a in args}), [10, 50])
+        self.assertEqual((args[0]["workload"], args[0]["window_size"], args[0]["message_bytes"]),
+                         ("message_buffer", 1000, 64))
 
     # Design: abstraction/benchmark_runner/config/design.md#benchconfig
     def test_ewma_beta_is_an_ingress_param(self):
