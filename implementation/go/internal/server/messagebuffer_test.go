@@ -1,4 +1,4 @@
-// Source: abstraction/server/message_buffer/design.md (message_buffer v0.2.0)
+// Source: abstraction/server/message_buffer/design.md (message_buffer v0.2.1)
 package server
 
 import (
@@ -114,5 +114,31 @@ func TestMessageCursorWorkedExample(t *testing.T) {
 	one.Push(5, []*TreeNode{msg('x'), msg('y')})
 	if one.slots[0].Value != 'y' || one.cursors[5] != 0 {
 		t.Fatalf("W = 1: %v %d", one.slots[0].Value, one.cursors[5])
+	}
+}
+
+// The concrete worked example (seed 0, n = 4) of the spec.
+//
+// Design: abstraction/server/message_buffer/design.md#worked-examples
+func TestMessageTreeConcreteExample(t *testing.T) {
+	for _, c := range []struct {
+		seed uint64
+		want [][2]uint64
+	}{
+		{sampling.DeriveSeed(0, sampling.StreamServerPrefill, 0), [][2]uint64{
+			{3347217672396778586, 2}, {11281592653131264720, 0}, {9616498591242348923, 0}, {1901490388733148195, 0}}},
+		{sampling.DeriveSeed(sampling.DeriveSeed(0, sampling.StreamServerMessages, 2), sampling.StreamServerMessages, 5),
+			[][2]uint64{{4208604537885474736, 3}, {206431563091969346, 2}, {2947458949422951496, 1}, {15453664076641952497, 0}}},
+	} {
+		var got [][2]uint64
+		shape(makeTree(sampling.NewRng(c.seed), 4), &got)
+		for i := range c.want {
+			if got[i] != c.want[i] {
+				t.Fatalf("seed %d node %d: %v want %v", c.seed, i, got[i], c.want[i])
+			}
+		}
+	}
+	if sampling.DeriveSeed(0, sampling.StreamServerPrefill, 0) != 3061075853855529836 {
+		t.Fatal("prefill stream seed")
 	}
 }

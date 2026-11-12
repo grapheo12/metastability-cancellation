@@ -1,4 +1,4 @@
-// Source: abstraction/server/message_buffer/design.md (message_buffer v0.2.0)
+// Source: abstraction/server/message_buffer/design.md (message_buffer v0.2.1)
 package server
 
 import (

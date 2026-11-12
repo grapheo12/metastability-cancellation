@@ -1,7 +1,7 @@
 // Package server implements the HTTP/2 /ping + /cancel server. Each file maps
 // to one component of abstraction/server.
 //
-// Source: abstraction/server/design.md (server v0.7.2)
+// Source: abstraction/server/design.md (server v0.7.3)
 package server
 
 import (

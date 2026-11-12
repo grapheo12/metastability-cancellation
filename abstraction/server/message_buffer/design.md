@@ -149,6 +149,6 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [MessageTree](#messagetree) | [messagebuffer.go:28](../../../implementation/go/internal/server/messagebuffer.go#L28), [messagebuffer_test.go:32](../../../implementation/go/internal/server/messagebuffer_test.go#L32) |
 | [MessageBuffer](#messagebuffer) | [messagebuffer.go:43](../../../implementation/go/internal/server/messagebuffer.go#L43), [messagebuffer.go:55](../../../implementation/go/internal/server/messagebuffer.go#L55), [messagebuffer_test.go:74](../../../implementation/go/internal/server/messagebuffer_test.go#L74) |
 | [MessageCursor](#messagecursor) | [messagebuffer.go:68](../../../implementation/go/internal/server/messagebuffer.go#L68), [messagebuffer_test.go:90](../../../implementation/go/internal/server/messagebuffer_test.go#L90) |
-| [Worked examples](#worked-examples) | [messagebuffer_test.go:32](../../../implementation/go/internal/server/messagebuffer_test.go#L32), [messagebuffer_test.go:90](../../../implementation/go/internal/server/messagebuffer_test.go#L90) |
+| [Worked examples](#worked-examples) | [messagebuffer_test.go:32](../../../implementation/go/internal/server/messagebuffer_test.go#L32), [messagebuffer_test.go:90](../../../implementation/go/internal/server/messagebuffer_test.go#L90), [messagebuffer_test.go:123](../../../implementation/go/internal/server/messagebuffer_test.go#L123) |
 | [Failure and edge cases](#failure-and-edge-cases) | [messagebuffer.go:55](../../../implementation/go/internal/server/messagebuffer.go#L55) |
 <!-- trace:end -->
