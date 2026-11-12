@@ -12,6 +12,9 @@ Leaf component. It reads every point directory of a run and produces:
   Every combination of the other swept keys is one line.
 - the **QueueLengthPlot**: the eighth figure, the servers' WorkQueue length over time (from their QueueLengthLogs),
   one line per done SweepPoint.
+- the **ForwardTimelinePlots**: the latency of `ok` forwards and the EwmaLatency seen by the Ingress's
+  LoadBalancer over time (from its ForwardLog), as the median and p99 of 20 ms bins, one line per done SweepPoint,
+  and one pair of figures per backend when there is more than one.
 
 It needs only the output directory, so it can be re-run at any time, including on a partial run.
 

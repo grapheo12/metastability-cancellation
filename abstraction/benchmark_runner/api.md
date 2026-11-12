@@ -47,6 +47,7 @@ set `[run] output_dir` to that run's directory.
   plots/
     latency_e2e.png  goodput.png  outcomes.png  server_counters.png  throughput_latency.png
     server_counters_normalized.png  throughput_latency_normalized.png  queue_length.png
+    forward_latency.png  ewma_latency.png     # or forward_latency_server_<k>.png ... with more than one backend
 ```
 
 File meanings are defined in [experiment_executor/design.md](experiment_executor/design.md#point-outputs) and
