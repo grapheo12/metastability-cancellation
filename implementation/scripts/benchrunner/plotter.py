@@ -1,6 +1,6 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.6.0)
-"""PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot and QueueLengthPlot (plots/*.png)."""
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.7.0)
+"""PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot, QueueLengthPlot and ForwardTimelinePlots."""
 
 import csv
 import glob
@@ -66,6 +66,8 @@ FIGURES = [
                                                        "srv_completed_before_cancel")], "linear", (0, 1)),
     # Design: abstraction/benchmark_runner/result_plotter/design.md#queuelengthplot
     ("queue_length", "time", [], "linear", None),
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#forwardtimelineplots
+    ("forward_latency", "forward_time", [], "log", None),  # also draws ewma_latency
 ]
 X_LABELS = {"lg_goodput": "lg_goodput (requests/s)",
             "lg_goodput_normalized": "lg_goodput / (1 - cx_offered_fraction) (requests/s)"}
@@ -229,6 +231,9 @@ def plot(output_dir):
         if x == "time":  # QueueLengthPlot
             draw_queue_length(plt, output_dir, done, swept_keys)
             continue
+        if x == "forward_time":  # ForwardTimelinePlots
+            draw_forward_timelines(plt, output_dir, done, swept_keys)
+            continue
         fig, axes = plt.subplots(1, len(metrics), figsize=(6 * len(metrics), 4.5), squeeze=False)
         for ax, (title, value) in zip(axes[0], metrics):
             for combo, members in series.items():
@@ -311,3 +316,114 @@ def draw_queue_length(plt, output_dir, done, swept_keys):
     fig.tight_layout()
     fig.savefig(path, dpi=120)
     plt.close(fig)
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#forwardtimelineplots
+FORWARD_BIN_MS = 20
+FORWARD_HEADER = "t_ns,server_id,outcome,latency_ns,ewma_latency_ns"
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#forwardtimelineplots
+def read_forward_log(path):
+    """ForwardLog rows [(t_ns, server_id, outcome, latency_ns, ewma_ns)], or None if the file is missing."""
+    if not os.path.exists(path):
+        return None
+    rows = []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        lines = f.read().split("\n")
+    for line in lines[1:]:  # after the header
+        parts = line.split(",")
+        if len(parts) != 5 or not (parts[0].isdigit() and parts[1].isdigit() and parts[3].isdigit()) \
+                or not parts[2]:
+            break  # e.g. a truncated last line, or the final empty string
+        try:
+            ewma = float(parts[4])
+        except ValueError:
+            break
+        rows.append((int(parts[0]), int(parts[1]), parts[2], int(parts[3]), ewma))
+    return rows
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#forwardtimelineplots
+def percentile(values, q):
+    """Nearest rank: rank = ceil(q * n / 100), in integers; values not empty."""
+    v = sorted(values)
+    return v[(q * len(v) + 99) // 100 - 1]
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#forwardtimelineplots
+def bin_series(rows, value, q):
+    """[(bin start s, percentile q of value(row) in ms)] for the non-empty bins, in increasing order."""
+    bins = {}
+    for r in rows:
+        bins.setdefault(r[0] // (FORWARD_BIN_MS * 1_000_000), []).append(value(r))
+    return [(b * FORWARD_BIN_MS / 1000, percentile(bins[b], q) / 1e6) for b in sorted(bins)]
+
+
+# (figure name, rows kept, value of a row, y label)
+FIGURES_FWD = [
+    ("forward_latency", lambda rows: [r for r in rows if r[2] == "ok"], lambda r: r[3], "ok forward latency (ms)"),
+    ("ewma_latency", lambda rows: rows, lambda r: r[4], "EwmaLatency (ms)"),
+]
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#forwardtimelineplots
+def forward_timelines(output_dir, done, swept_keys):
+    """[(file name, y label, [(label, median series, p99 series)])] for every figure that has a line."""
+    logs = []
+    for row in sorted(done, key=lambda r: int(r["point"])):
+        pdir = os.path.join(output_dir, "points", f"point_{int(row['point']):04d}")
+        rows = read_forward_log(os.path.join(pdir, "ingress.forwards.csv"))
+        if rows is None:
+            continue
+        summary = _read_json(os.path.join(pdir, "ingress.summary.json"))
+        if summary is not None and summary.get("backends"):
+            b = len(summary["backends"])
+        else:
+            b = 1 + max((r[1] for r in rows), default=0)
+        label = ", ".join(f"{k}={_cell(row[k])}" for k in swept_keys) or f"point {row['point']}"
+        logs.append((label, b, rows))
+    b_max = max((b for _, b, _ in logs), default=0)
+    figures = []
+    for name, select, value, ylabel in FIGURES_FWD:
+        targets = [(name, None)] if b_max == 1 else [(f"{name}_server_{k}", k) for k in range(b_max)]
+        for file, k in targets:
+            lines = []
+            for label, _, rows in logs:
+                r = select(rows if k is None else [x for x in rows if x[1] == k])
+                if r:
+                    lines.append((label, bin_series(r, value, 50), bin_series(r, value, 99)))
+            if lines:
+                figures.append((file, ylabel, lines))
+    return figures
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#forwardtimelineplots
+def draw_forward_timelines(plt, output_dir, done, swept_keys):
+    plots = os.path.join(output_dir, "plots")
+    produced = set()
+    for file, ylabel, lines in forward_timelines(output_dir, done, swept_keys):
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), squeeze=False)
+        for ax, idx, title in ((axes[0][0], 1, f"median per {FORWARD_BIN_MS} ms"),
+                               (axes[0][1], 2, f"p99 per {FORWARD_BIN_MS} ms")):
+            for line in lines:
+                s = line[idx]
+                ax.plot([p[0] for p in s], [p[1] for p in s], marker=".", markersize=2, linewidth=0.8,
+                        label=line[0])
+            ax.set_title(title)
+            ax.set_xlabel("time since first /ping at the Ingress (s)")
+            ax.set_ylabel(ylabel)
+            if any(line.get_ydata().min() > 0 for line in ax.get_lines()):
+                ax.set_yscale("log")
+            if len(lines) > 1 and idx == 1:
+                ax.legend(fontsize="small")
+        fig.suptitle(file)
+        fig.tight_layout()
+        fig.savefig(os.path.join(plots, f"{file}.png"), dpi=120)
+        plt.close(fig)
+        produced.add(f"{file}.png")
+    for path in glob.glob(os.path.join(plots, "forward_latency*.png")) + \
+            glob.glob(os.path.join(plots, "ewma_latency*.png")):
+        if os.path.basename(path) not in produced:
+            os.remove(path)  # stale figure
+

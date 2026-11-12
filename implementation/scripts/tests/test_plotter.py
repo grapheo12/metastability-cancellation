@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.6.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.7.0)
 import csv
 import json
 import os
@@ -195,6 +195,91 @@ class QueueLengthPlotTest(unittest.TestCase):
                 os.remove(os.path.join(out, "points", f"point_{pid:04d}", "server_0.queue.csv"))
             plotter.plot(out)
             self.assertFalse(os.path.exists(path))  # no logs left: stale figure removed
+
+
+
+def write_forward_log(pdir, rows, backends=None):
+    with open(os.path.join(pdir, "ingress.forwards.csv"), "w") as f:
+        f.write(plotter.FORWARD_HEADER + "\n" + "".join(",".join(str(x) for x in r) + "\n" for r in rows))
+    if backends is not None:
+        json.dump({"backends": [{"server_id": k} for k in range(backends)]},
+                  open(os.path.join(pdir, "ingress.summary.json"), "w"))
+
+
+# The ForwardTimelinePlots worked example (result_plotter/design.md).
+FWD_EXAMPLE = [(1_000_000, 0, "ok", 2_000_000, 1300000), (5_000_000, 0, "ok", 4_000_000, 2110000),
+               (19_999_999, 0, "rejected", 1_000_000, 2110000), (20_000_000, 0, "ok", 3_000_000, 2377000),
+               (65_000_000, 0, "ok", 10_000_000, 4663900)]
+
+
+class ForwardTimelinePlotsTest(unittest.TestCase):
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#forwardtimelineplots
+    def test_worked_example(self):
+        with tempfile.TemporaryDirectory() as out:
+            write_point(out, 0, {"load_gen.global_rate": 500})
+            write_forward_log(os.path.join(out, "points", "point_0000"), FWD_EXAMPLE, backends=1)
+            rows, _ = plotter.build_table(out)
+            figs = plotter.forward_timelines(out, rows, ["load_gen.global_rate"])
+            self.assertEqual([f[0] for f in figs], ["forward_latency", "ewma_latency"])
+            (label, med, p99), = figs[0][2]
+            self.assertEqual(label, "load_gen.global_rate=500")
+            self.assertEqual(med, [(0.0, 2.0), (0.02, 3.0), (0.06, 10.0)])
+            self.assertEqual(p99, [(0.0, 4.0), (0.02, 3.0), (0.06, 10.0)])
+            _, med, p99 = figs[1][2][0]
+            self.assertEqual(med, [(0.0, 2.11), (0.02, 2.377), (0.06, 4.6639)])
+            self.assertEqual(p99, med)
+
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#forwardtimelineplots
+    def test_edge_cases(self):
+        self.assertEqual(plotter.percentile([5, 1, 3, 2, 4, 6, 7, 8, 9, 10], 50), 5)
+        self.assertEqual(plotter.percentile([5, 1, 3, 2, 4, 6, 7, 8, 9, 10], 99), 10)
+        with tempfile.TemporaryDirectory() as out:
+            for pid in range(4):
+                write_point(out, pid, {"ingress.lb_policy": f"p{pid}"})
+            pd = lambda pid: os.path.join(out, "points", f"point_{pid:04d}")
+            write_forward_log(pd(0), FWD_EXAMPLE, backends=1)                         # B = 1
+            write_forward_log(pd(1), [(1, 0, "ok", 5, 5.0), (2, 1, "ok", 7, 7.0)], backends=2)
+            write_forward_log(pd(2), [(1, 0, "reset", 5, 5.0)])                       # no ok row
+            # point 3: no ForwardLog
+            with open(os.path.join(pd(0), "ingress.forwards.csv"), "a") as f:
+                f.write("70000000,0,o")                                               # truncated last line
+            self.assertEqual(len(plotter.read_forward_log(os.path.join(pd(0), "ingress.forwards.csv"))), 5)
+            rows, keys = plotter.build_table(out)
+            figs = {f[0]: f[2] for f in plotter.forward_timelines(out, rows, keys)}
+            self.assertEqual(sorted(figs), ["ewma_latency_server_0", "ewma_latency_server_1",
+                                            "forward_latency_server_0", "forward_latency_server_1"])
+            self.assertEqual([l[0] for l in figs["forward_latency_server_0"]],
+                             ["ingress.lb_policy=p0", "ingress.lb_policy=p1"])        # p2 has no ok row
+            self.assertEqual([l[0] for l in figs["forward_latency_server_1"]], ["ingress.lb_policy=p1"])
+            self.assertEqual([l[0] for l in figs["ewma_latency_server_0"]],
+                             ["ingress.lb_policy=p0", "ingress.lb_policy=p1", "ingress.lb_policy=p2"])
+            self.assertEqual(figs["forward_latency_server_1"][0][1], [(0.0, 7e-6)])
+            self.assertEqual(plotter.forward_timelines(out, [r for r in rows if r["point"] == 3], keys), [])
+
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#forwardtimelineplots
+    def test_plot_files(self):
+        try:
+            import matplotlib  # noqa: F401
+        except ImportError:
+            self.skipTest("matplotlib not installed")
+        with tempfile.TemporaryDirectory() as out:
+            write_point(out, 0, {"load_gen.global_rate": 500})
+            write_point(out, 1, {"load_gen.global_rate": 1000})
+            write_forward_log(os.path.join(out, "points", "point_0000"), FWD_EXAMPLE, backends=2)
+            write_forward_log(os.path.join(out, "points", "point_0001"), FWD_EXAMPLE, backends=1)
+            plotter.plot(out)
+            plots = os.path.join(out, "plots")
+            self.assertTrue(os.path.getsize(os.path.join(plots, "forward_latency_server_0.png")) > 0)
+            self.assertTrue(os.path.exists(os.path.join(plots, "ewma_latency_server_0.png")))
+            self.assertFalse(os.path.exists(os.path.join(plots, "forward_latency_server_1.png")))  # no rows
+            write_forward_log(os.path.join(out, "points", "point_0000"), FWD_EXAMPLE, backends=1)
+            plotter.plot(out)
+            self.assertTrue(os.path.exists(os.path.join(plots, "forward_latency.png")))
+            self.assertFalse(os.path.exists(os.path.join(plots, "ewma_latency_server_0.png")))  # stale, removed
+            for pid in (0, 1):
+                os.remove(os.path.join(out, "points", f"point_{pid:04d}", "ingress.forwards.csv"))
+            plotter.plot(out)
+            self.assertFalse(os.path.exists(os.path.join(plots, "forward_latency.png")))
 
 
 if __name__ == "__main__":
