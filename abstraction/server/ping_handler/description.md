@@ -11,7 +11,8 @@ On the Connection Handler, when the request is fully received (**admit**):
 On a worker of the WorkerPool (**run**):
 
 - Do the request's work: burn the ServiceTime (`cpu_burn`), or **MessageWork** (`message_buffer`): create
-  `n_messages_per_request` messages, then write them into the MessageBuffer under its lock.
+  `n_messages_per_request` MessageTrees from the request's own random stream, then write them into the MessageBuffer
+  under its lock.
 - In `cooperative` mode, run the **CancelCheckPoints**: once before the work, and inside it (for a burn, RST
   every `cancel_check_interval_us` and `/cancel` every `CHECK_ITER` spin units; for MessageWork, both after each
   message).
