@@ -37,9 +37,22 @@ name ([../api.md#backendstats](../api.md#backendstats)).
 
 Returned by `pick`, given back unchanged to `finish`. See [design.md#forwardticket](design.md#forwardticket).
 
+### `ForwardRecord`
+
+| Field | Type | Meaning |
+|---|---|---|
+| `end_ns` | u64, ns | Monotonic time at which `finish` ran |
+| `server_id` | u32 | The backend |
+| `outcome` | ForwardOutcome | How the forward ended |
+| `latency_ns` | u64, ns | `end_ns - start_ns` of the ForwardTicket, for every outcome |
+| `ewma_latency_ns` | float (binary64), ns | The backend's EwmaLatency right after this `finish` |
+
+One per `finish`, kept in the **ForwardLog**. See [design.md#forwardlog](design.md#forwardlog).
+
 ### `LoadBalancer`
 
-The policy, `ewma_beta`, the BackendStats array, the round-robin counter and the policy's random stream. Safe for
+The policy, `ewma_beta`, the BackendStats array, the round-robin counter, the policy's random stream and the
+ForwardLog. Safe for
 concurrent callers. See [design.md#loadbalancer](design.md#loadbalancer).
 
 ## Functions
@@ -56,12 +69,16 @@ See [design.md#lbpolicy](design.md#lbpolicy) and [design.md#forwardticket](desig
 
 ### `finish(lb, ticket: ForwardTicket, outcome: ForwardOutcome) -> nothing`
 Decrements `outstanding` and increments the outcome's counter. If `outcome == ok`, also folds the forward's latency
-into the backend's EwmaLatency, under every policy. See [design.md#loadbalancer](design.md#loadbalancer) and
+into the backend's EwmaLatency, under every policy. Then appends one ForwardRecord to the ForwardLog. See [design.md#loadbalancer](design.md#loadbalancer) and
 [design.md#ewmalatency](design.md#ewmalatency).
 
 ### `stats_snapshot(lb) -> list of BackendStats values`
 Reads every counter and `ewma_latency_ns` (acquire), in `server_id` order, for the summary.
 See [design.md#loadbalancer](design.md#loadbalancer).
+
+### `forward_log(lb) -> list of ForwardRecord`
+A copy of the ForwardLog in append order, for the Ingress's `<output_path>.forwards.csv`. See
+[design.md#forwardlog](design.md#forwardlog).
 
 ## Uses
 

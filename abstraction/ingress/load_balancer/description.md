@@ -11,6 +11,7 @@ the **LbPolicy** named in `lb_policy`, and keeps the **BackendStats** of every b
 
 It counts each backend's forwards in progress (`outstanding`) and how each forward ended, for the policies and for
 the Ingress summary. Each `pick` hands out a **ForwardTicket** that its `finish` gives back, so the LoadBalancer
-measures every forward's latency itself.
+measures every forward's latency itself. Every `finish` appends a **ForwardRecord** (time, backend, outcome,
+latency, EwmaLatency after it) to the **ForwardLog**, which the Ingress writes out at shutdown.
 
 Parent: [../design.md](../design.md). API: [api.md](api.md). Design: [design.md](design.md).

@@ -11,7 +11,8 @@ are final. `monotonic_now_ns()` is the Ingress's monotonic clock ([../design.md#
 lb = { policy, beta: ewma_beta,
        stats: array[B] of BackendStats (counters 0, ewma_latency_ns = EWMA_INITIAL_LATENCY_NS),
        rr: atomic u64 = 0,
-       rng: rng_new(derive_seed(seed, STREAM_INGRESS_LB, 0)), rng_lock: mutex }
+       rng: rng_new(derive_seed(seed, STREAM_INGRESS_LB, 0)), rng_lock: mutex,
+       log: list of ForwardRecord (empty), log_lock: mutex }                    # ForwardLog
 
 function pick(lb):
     s = choose(lb)                                   # LbPolicy
@@ -23,8 +24,14 @@ function finish(lb, ticket, outcome):
     s = ticket.server_id
     lb.stats[s].outstanding.fetch_sub(1)
     lb.stats[s][outcome].fetch_add(1)                # ok | rejected | bad_request | bad_gateway | reset
+    end_ns = monotonic_now_ns()
+    latency_ns = end_ns - ticket.start_ns
     if outcome == ok:
-        ewma_update(lb, s, monotonic_now_ns() - ticket.start_ns)       # EwmaLatency
+        e = ewma_update(lb, s, latency_ns)           # EwmaLatency after this sample
+    else:
+        e = binary64_from_bits(lb.stats[s].ewma_latency_ns.load())
+    with lb.log_lock:
+        lb.log.append(ForwardRecord(end_ns, s, outcome, latency_ns, e))      # ForwardLog
 ```
 
 `outstanding` is incremented in `pick`, not when the forward actually starts, so the next `pick` already sees the
@@ -47,7 +54,7 @@ function ewma_update(lb, s, sample_ns):              # sample_ns: u64
         old_bits = lb.stats[s].ewma_latency_ns.load()
         old = binary64_from_bits(old_bits)
         new = old * lb.beta + x * (1 - lb.beta)      # binary64, evaluated left to right, round to nearest
-        if lb.stats[s].ewma_latency_ns.compare_and_swap(old_bits, bits_of(new)): return
+        if lb.stats[s].ewma_latency_ns.compare_and_swap(old_bits, bits_of(new)): return new
 ```
 
 - **Which samples.** Only forwards that end `ok` (a `202` relayed) are samples. `rejected`, `bad_request`,
@@ -61,6 +68,8 @@ function ewma_update(lb, s, sample_ns):              # sample_ns: u64
   which makes `ewma` compare `outstanding` alone on the power_of_two pair.
 - **Concurrent updates.** The compare-and-swap loop applies each sample exactly once. When several finish at once,
   they apply in the order the compare-and-swaps succeed, which depends on timing. No lock is taken.
+- **Returned value.** `ewma_update` returns the value it stored, which is the EwmaLatency right after this sample
+  even if another sample lands a moment later. `finish` puts it in the ForwardRecord.
 
 ## EwmaScore
 
@@ -113,6 +122,26 @@ function random_pair(lb):                            # two different backends, a
 - `least_outstanding` reads each counter once per comparison; the counters may change during the scan. The
   result is the minimum among the values seen.
 
+## ForwardLog
+
+```
+function forward_log(lb):                            # -> list of ForwardRecord, in append order
+    with lb.log_lock:
+        return copy of lb.log
+```
+
+- **One record per `finish`**, for every outcome and every policy, appended in the order the appends take the
+  lock. A forward abandoned at shutdown never calls `finish` and has no record.
+- **Fields.** `end_ns` is the monotonic time `finish` read, `latency_ns = end_ns - start_ns`, and
+  `ewma_latency_ns` is the backend's EwmaLatency after this finish: the value `ewma_update` stored for `ok`, or the
+  value read for the other outcomes, which do not change it.
+- **Lock.** `log_lock` is held only for one append or one copy, and never nests with another lock. The Ingress's
+  concurrency model allows it ([../design.md#concurrency-model](../design.md#concurrency-model)).
+- **Memory.** The log grows by one record per forward for the whole run, and is kept in memory until shutdown. A
+  30 s run at 4000 forwards/s is 120000 records.
+- `forward_log` is called by the Ingress's shutdown after it waited for the forwards in progress. The copy makes
+  it safe even if an abandoned forward finishes during the write.
+
 ## Worked examples
 
 `round_robin`, `B = 2`: picks return `0, 1, 0, 1, …` (rr = 0, 1, 2, 3, …).
@@ -160,6 +189,14 @@ EwmaScores are `(3 × 1_000_000, 1 × 4_000_000, 2 × 1_500_000) = (3_000_000, 4
 `ewma` at start, `B = 3`, `outstanding = (0, 0, 0)`, every `ewma_latency_ns = 1_000_000`: every score is
 `1 × 1_000_000`, so every pair is a tie and the choice is its lower id. With `outstanding = (0, 1, 0)` and draws
 `(0, 0)`: pair `(0, 1)`, scores `1_000_000 < 2_000_000`, choice 0.
+
+ForwardLog, `ewma_beta = 0.7`, one backend starting at `1_000_000`, three forwards:
+
+| `start_ns` | `end_ns` | outcome | `latency_ns` | `ewma_latency_ns` in the record | Check |
+|---|---|---|---|---|---|
+| 100 | 2_000_100 | `ok` | 2_000_000 | 1_300_000 | 1_000_000 × 0.7 + 2_000_000 × 0.3 |
+| 200 | 300_200 | `rejected` | 300_000 | 1_300_000 | not a sample: unchanged |
+| 300 | 500_300 | `ok` | 500_000 | 1_060_000 | 1_300_000 × 0.7 + 500_000 × 0.3 = 910_000 + 150_000 |
 
 `B = 1`: every policy returns 0 and draws nothing.
 

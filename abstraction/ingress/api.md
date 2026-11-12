@@ -17,7 +17,7 @@ or missing required parameters make the program exit non-zero with a one-line er
 | `duration_s` | float, s, `> 0` | required if `cancel_rate > 0`, else ignored | Length of the LoadCanceller's sending phase |
 | `initial_stall_ms` | integer, ms, `>= 0` | `1000` | The LoadCanceller schedules no cancel earlier than this after the Ingress's first `/ping`; sending still ends at `duration_s`. `0`: no stall ([load_canceller/design.md](load_canceller/design.md#cancelschedule)) |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for the LoadBalancer's and the LoadCanceller's random choices |
-| `output_path` | path prefix | `ingress` | Outputs go to `<output_path>.cancels.csv` and `<output_path>.summary.json` |
+| `output_path` | path prefix | `ingress` | Outputs go to `<output_path>.cancels.csv`, `<output_path>.forwards.csv` and `<output_path>.summary.json` |
 
 ## Constants
 
@@ -69,6 +69,28 @@ an atomic binary64 starting at `EWMA_INITIAL_LATENCY_NS` ([load_balancer/api.md]
 The LoadCanceller's CancelRecords, one per arrival. The format is in
 [load_canceller/api.md](load_canceller/api.md#output_pathcancelscsv). It is written even when the LoadCanceller is
 disabled (header only).
+
+### `<output_path>.forwards.csv`
+
+The LoadBalancer's ForwardLog ([load_balancer/api.md#forwardrecord](load_balancer/api.md#forwardrecord)), one row
+per finished forward. UTF-8, comma-separated, `\n` line endings, one header line:
+
+```
+t_ns,server_id,outcome,latency_ns,ewma_latency_ns
+```
+
+| Column | Type / unit | Meaning |
+|---|---|---|
+| `t_ns` | u64, ns | `end_ns - run_start`: when the forward finished, on the Ingress's time base ([design.md#time-base](design.md#time-base)) |
+| `server_id` | u32 | The backend |
+| `outcome` | `ok` \| `rejected` \| `bad_request` \| `bad_gateway` \| `reset` | How the forward ended |
+| `latency_ns` | u64, ns | From `pick` to `finish` |
+| `ewma_latency_ns` | float, ns | The backend's EwmaLatency right after this forward |
+
+Rows are sorted by `t_ns`; rows with equal `t_ns` keep their ForwardLog order. Integers are decimal. `ewma_latency_ns`
+is written in decimal without an exponent, as the shortest string that reads back as the same binary64 (for example
+`1300000` or `850000.5`). The file is written at shutdown, header only when no `/ping` was ever forwarded
+([design.md#shutdown](design.md#shutdown)).
 
 ### `<output_path>.summary.json`
 
