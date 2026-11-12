@@ -38,3 +38,4 @@
 | 0.2.22 | 2026-11-12T00:00:00Z | Child bump: result_plotter 0.9.0 (GcOverlay) |
 | 0.2.23 | 2026-11-12T00:00:00Z | Output directory lists `availability.html`. Child bump: result_plotter 0.10.0 |
 | 0.2.24 | 2026-11-12T00:00:00Z | Child bump: config 0.12.0 |
+| 0.2.25 | 2026-11-12T00:00:00Z | Child bump: result_plotter 0.11.0 |
