@@ -120,6 +120,7 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 - `backends` is split on `,` and each element trimmed with `strings.TrimSpace`; host:port is checked with `net.SplitHostPort`.
 - `num_clients` is parsed with `strconv.ParseUint(..., 10, 32)`, bounded by `MaxClients`, and passed to `NewInFlightMap` as the exclusive client-id bound rather than a required storage size.
 - `shutdown` is `(*Ingress).Shutdown`: `http.Server.Shutdown` with a 100 ms bound sends GOAWAY on every client connection (as in the server), then it waits on the BackendStats `outstanding` sum, stops the canceller, closes upstream and client connections, and writes both outputs. `cmd/ingress/main.go` calls it on SIGINT/SIGTERM and exits `0`, or `1` if writing fails.
+- `forwards.csv` is written by `writeForwardsCSV` in `ingress.go`, right after `cancels.csv`. `t_ns` is `End.Sub(runStart)`, the rows are ordered with `sort.SliceStable` on an index slice, and `ewma_latency_ns` uses `strconv.FormatFloat(v, 'f', -1, 64)` (shortest round-trip, no exponent). `outputs_test.go` checks the order, the formats and the header-only file.
 - The summary JSON is the `Summary` struct, marshalled with `json.MarshalIndent`, in API field order.
 - `initial_stall_ms` is `Config.InitialStallMs` (`--initial_stall_ms`, default 1000), with `InitialStallNs = InitialStallMs * 1e6`. Validation rejects values whose nanoseconds would overflow `int64`. The summary's `config` echoes it after `duration_s`.
 - `ewma_beta` is `Config.EwmaBeta` (`--ewma_beta`, default `0.7`), parsed with `strconv.ParseFloat(..., 64)` and rejected when NaN or outside `[0, 1]` (which also rejects infinities). The summary's `config` echoes it after `lb_policy`.
@@ -132,11 +133,11 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [Structure](#structure) | [ingress.go:47](../../implementation/go/internal/ingress/ingress.go#L47) |
-| [Shared state](#shared-state) | [ingress.go:22](../../implementation/go/internal/ingress/ingress.go#L22) |
+| [Structure](#structure) | [ingress.go:50](../../implementation/go/internal/ingress/ingress.go#L50) |
+| [Shared state](#shared-state) | [ingress.go:25](../../implementation/go/internal/ingress/ingress.go#L25) |
 | [Configuration validation](#configuration-validation) | [config.go:75](../../implementation/go/internal/ingress/config.go#L75), [config_test.go:9](../../implementation/go/internal/ingress/config_test.go#L9) |
-| [Concurrency model](#concurrency-model) | [ingress.go:77](../../implementation/go/internal/ingress/ingress.go#L77) |
+| [Concurrency model](#concurrency-model) | [ingress.go:80](../../implementation/go/internal/ingress/ingress.go#L80) |
 | [Time base](#time-base) | [frontend.go:127](../../implementation/go/internal/ingress/frontend.go#L127) |
-| [Shutdown](#shutdown) | [ingress.go:111](../../implementation/go/internal/ingress/ingress.go#L111), [ingress_test.go:75](../../implementation/go/internal/ingress/ingress_test.go#L75) |
+| [Shutdown](#shutdown) | [ingress.go:114](../../implementation/go/internal/ingress/ingress.go#L114), [ingress.go:199](../../implementation/go/internal/ingress/ingress.go#L199), [ingress_test.go:75](../../implementation/go/internal/ingress/ingress_test.go#L75), [outputs_test.go:15](../../implementation/go/internal/ingress/outputs_test.go#L15) |
 | [Why one upstream connection per client and backend](#why-one-upstream-connection-per-client-and-backend) | [upstream.go:29](../../implementation/go/internal/ingress/upstream.go#L29) |
 <!-- trace:end -->

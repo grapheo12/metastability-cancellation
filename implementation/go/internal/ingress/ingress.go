@@ -1,7 +1,8 @@
-// Source: abstraction/ingress/design.md (ingress v0.1.14)
+// Source: abstraction/ingress/design.md (ingress v0.1.15)
 package ingress
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -143,6 +146,9 @@ func (ing *Ingress) Shutdown() error {
 	if err := writeCancelsCSV(ing.cfg.OutputPath+".cancels.csv", records); err != nil {
 		return err
 	}
+	if err := writeForwardsCSV(ing.cfg.OutputPath+".forwards.csv", ing.lb.ForwardLog(), runStart); err != nil {
+		return err
+	}
 	return ing.writeSummary(records, runEnd)
 }
 
@@ -183,4 +189,36 @@ func (ing *Ingress) writeSummary(records []*CancelRecord, runEndS float64) error
 		return err
 	}
 	return os.WriteFile(c.OutputPath+".summary.json", append(b, '\n'), 0o644)
+}
+
+// writeForwardsCSV writes the ForwardLog with t_ns = end - run_start, sorted
+// stably by t_ns (header only if no /ping was forwarded).
+//
+// API: abstraction/ingress/api.md#output_pathforwardscsv
+// Design: abstraction/ingress/design.md#shutdown
+func writeForwardsCSV(path string, recs []ForwardRecord, runStart time.Time) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	tNs := make([]int64, len(recs))
+	order := make([]int, len(recs))
+	for k, r := range recs {
+		tNs[k] = r.End.Sub(runStart).Nanoseconds() // run_start is set before the first pick
+		order[k] = k
+	}
+	sort.SliceStable(order, func(a, b int) bool { return tNs[order[a]] < tNs[order[b]] })
+	w := bufio.NewWriter(f)
+	w.WriteString("t_ns,server_id,outcome,latency_ns,ewma_latency_ns\n")
+	for _, k := range order {
+		r := recs[k]
+		w.WriteString(strconv.FormatInt(tNs[k], 10) + "," + strconv.FormatUint(uint64(r.ServerID), 10) + "," +
+			outcomeNames[r.Outcome] + "," + strconv.FormatUint(r.LatencyNs, 10) + "," +
+			strconv.FormatFloat(r.EwmaLatencyNs, 'f', -1, 64) + "\n") // shortest round-trip, no exponent
+	}
+	if err := w.Flush(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.2.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.3.0)
 package ingress
 
 import (
@@ -67,6 +67,20 @@ type BackendStatsValue struct {
 	EwmaLatencyNs float64 `json:"ewma_latency_ns"`
 }
 
+// outcomeNames are the ForwardOutcome words of forwards.csv, by enum value.
+var outcomeNames = [...]string{"ok", "rejected", "bad_request", "bad_gateway", "reset"}
+
+// ForwardRecord is one finished forward, kept in the ForwardLog.
+//
+// API: abstraction/ingress/load_balancer/api.md#forwardrecord
+type ForwardRecord struct {
+	End           time.Time // carries the monotonic reading
+	ServerID      uint32
+	Outcome       ForwardOutcome
+	LatencyNs     uint64
+	EwmaLatencyNs float64 // the backend's EwmaLatency right after this finish
+}
+
 // LoadBalancer picks a backend per forward and keeps BackendStats.
 //
 // Design: abstraction/ingress/load_balancer/design.md#loadbalancer
@@ -78,6 +92,8 @@ type LoadBalancer struct {
 	rr       atomic.Uint64
 	rngMu    sync.Mutex
 	rng      *sampling.Rng
+	logMu    sync.Mutex // ForwardLog: held for one append or one copy
+	log      []ForwardRecord
 }
 
 // NewLoadBalancer builds the stats array and the policy's random stream.
@@ -109,7 +125,8 @@ func (lb *LoadBalancer) Pick() ForwardTicket {
 	return ForwardTicket{ServerID: s, Start: time.Now()}
 }
 
-// Finish ends a forward started by Pick; an ok forward is an EwmaLatency sample.
+// Finish ends a forward started by Pick: counters, then one clock read; an ok
+// forward is an EwmaLatency sample; every forward gets a ForwardRecord.
 //
 // Design: abstraction/ingress/load_balancer/design.md#loadbalancer
 func (lb *LoadBalancer) Finish(t ForwardTicket, outcome ForwardOutcome) {
@@ -118,8 +135,6 @@ func (lb *LoadBalancer) Finish(t ForwardTicket, outcome ForwardOutcome) {
 	switch outcome {
 	case OutcomeOK:
 		st.OK.Add(1)
-		// Design: abstraction/ingress/load_balancer/design.md#forwardticket
-		lb.ewmaUpdate(t.ServerID, uint64(time.Since(t.Start).Nanoseconds()))
 	case OutcomeRejected:
 		st.Rejected.Add(1)
 	case OutcomeBadRequest:
@@ -129,18 +144,40 @@ func (lb *LoadBalancer) Finish(t ForwardTicket, outcome ForwardOutcome) {
 	case OutcomeReset:
 		st.Reset.Add(1)
 	}
+	// Design: abstraction/ingress/load_balancer/design.md#forwardticket
+	end := time.Now()
+	latencyNs := uint64(end.Sub(t.Start).Nanoseconds()) // monotonic: never negative
+	var e float64
+	if outcome == OutcomeOK {
+		e = lb.ewmaUpdate(t.ServerID, latencyNs)
+	} else {
+		e = math.Float64frombits(st.EwmaBits.Load())
+	}
+	// Design: abstraction/ingress/load_balancer/design.md#forwardlog
+	lb.logMu.Lock()
+	lb.log = append(lb.log, ForwardRecord{End: end, ServerID: t.ServerID, Outcome: outcome, LatencyNs: latencyNs, EwmaLatencyNs: e})
+	lb.logMu.Unlock()
+}
+
+// ForwardLog returns a copy of the ForwardLog in append order.
+//
+// Design: abstraction/ingress/load_balancer/design.md#forwardlog
+func (lb *LoadBalancer) ForwardLog() []ForwardRecord {
+	lb.logMu.Lock()
+	defer lb.logMu.Unlock()
+	return append([]ForwardRecord(nil), lb.log...)
 }
 
 // ewmaUpdate folds one sample into the backend's EwmaLatency with a CAS loop.
 //
 // Design: abstraction/ingress/load_balancer/design.md#ewmalatency
-func (lb *LoadBalancer) ewmaUpdate(s uint32, sampleNs uint64) {
+func (lb *LoadBalancer) ewmaUpdate(s uint32, sampleNs uint64) float64 {
 	e := &lb.stats[s].EwmaBits
 	for {
 		oldBits := e.Load()
 		next := ewmaNext(math.Float64frombits(oldBits), sampleNs, lb.beta)
 		if e.CompareAndSwap(oldBits, math.Float64bits(next)) {
-			return
+			return next // the value stored by this sample
 		}
 	}
 }

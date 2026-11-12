@@ -213,6 +213,9 @@ func TestEwmaPrefersFastBackend(t *testing.T) {
 	if err := json.Unmarshal(raw, &s); err != nil {
 		t.Fatal(err)
 	}
+	if raw, err := os.ReadFile(ing.cfg.OutputPath + ".forwards.csv"); err != nil || bytes.Count(raw, []byte("\n")) != 21 {
+		t.Fatalf("forwards.csv: want header + 20 rows, %v", err)
+	}
 	b0, b1 := s.Backends[0], s.Backends[1]
 	if s.Config.EwmaBeta != 0.7 || b0.OK < 1 || b0.EwmaLatencyNs == EwmaInitialLatencyNs ||
 		!(b0.EwmaLatencyNs > b1.EwmaLatencyNs) || !(b1.Forwarded > b0.Forwarded) {

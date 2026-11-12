@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.2.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.3.0)
 package ingress
 
 import (
@@ -190,5 +190,41 @@ func TestEwmaWorkedExample(t *testing.T) {
 		if s := lb.Pick().ServerID; s > 2 {
 			t.Fatalf("out of range %d", s)
 		}
+	}
+}
+
+// Every Finish appends one ForwardRecord; ewma_latency_ns is the value after
+// it (the stored sample for ok, unchanged otherwise). ewmaUpdate returns the
+// stored value (worked example: 1_300_000, then 1_060_000).
+//
+// Design: abstraction/ingress/load_balancer/design.md#forwardlog
+// Design: abstraction/ingress/load_balancer/design.md#worked-examples
+func TestForwardLog(t *testing.T) {
+	lb := newLB(PolicyEwma, 1)
+	if v := lb.ewmaUpdate(0, 2_000_000); v != 1_300_000 {
+		t.Fatalf("first: %v", v)
+	}
+	if v := lb.ewmaUpdate(0, 500_000); v != 1_060_000 {
+		t.Fatalf("second: %v", v)
+	}
+	lb = newLB(PolicyEwma, 1)
+	tk := lb.Pick()
+	tk.Start = tk.Start.Add(-2 * time.Millisecond)
+	lb.Finish(tk, OutcomeOK)
+	tk = lb.Pick()
+	lb.Finish(tk, OutcomeRejected)
+	log := lb.ForwardLog()
+	if len(log) != 2 || log[0].Outcome != OutcomeOK || log[1].Outcome != OutcomeRejected || log[0].ServerID != 0 {
+		t.Fatalf("log %+v", log)
+	}
+	if log[0].LatencyNs < 2_000_000 || log[0].EwmaLatencyNs != ewmaNext(EwmaInitialLatencyNs, log[0].LatencyNs, 0.7) {
+		t.Fatalf("ok record %+v", log[0])
+	}
+	if log[1].EwmaLatencyNs != log[0].EwmaLatencyNs || log[1].End.Before(log[0].End) {
+		t.Fatalf("rejected record %+v", log[1])
+	}
+	log[0].ServerID = 9 // a copy
+	if lb.ForwardLog()[0].ServerID != 0 {
+		t.Fatal("ForwardLog must return a copy")
 	}
 }
