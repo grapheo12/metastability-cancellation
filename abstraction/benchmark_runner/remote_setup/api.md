@@ -50,6 +50,7 @@ See [design.md#buildmanifest](design.md#buildmanifest).
 | `repo_dir` | absolute path | `<workdir>/repo` |
 | `binaries` | map program → absolute path | The three executables |
 | `thread_env` | string or none | The BuildManifest's `thread_env` |
+| `gc_trace_env`, `gc_trace_regex` | as in the BuildManifest, or none | The BuildManifest's GcTraceHook |
 | `cpu_pinning` | boolean | Whether the machine can pin a process to CPUs: `taskset` is on its `PATH` |
 
 See [design.md#machine-setup](design.md#machine-setup).

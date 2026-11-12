@@ -33,3 +33,4 @@
 | 0.2.17 | 2026-11-12T00:00:00Z | Child bump: experiment_executor 0.6.1 |
 | 0.2.18 | 2026-11-12T00:00:00Z | Child bump: remote_setup 0.4.0 (GcTraceHook) |
 | 0.2.19 | 2026-11-12T00:00:00Z | Child bump: config 0.11.0 (`gc_trace`) |
+| 0.2.20 | 2026-11-12T00:00:00Z | Child bump: remote_setup 0.4.1 (MachineReady carries the GcTraceHook) |

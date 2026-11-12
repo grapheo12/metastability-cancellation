@@ -93,3 +93,4 @@
 | 0.9.27 | 2026-11-12T00:00:00Z | Child bump: ingress 0.1.17 (frontend 0.2.2) |
 | 0.9.28 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.18 (remote_setup 0.4.0) |
 | 0.9.29 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.19 (config 0.11.0) |
+| 0.9.30 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.20 (remote_setup 0.4.1) |

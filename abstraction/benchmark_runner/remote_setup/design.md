@@ -68,7 +68,8 @@ function setup_machine(t, role, machine, pin, timeout_s):
         check(t, "test -x " + quote(path), "<program> binary missing after build on <role>")
     cpu_pinning = (run(t, "command -v taskset").exit_status == 0)    # absent is not an error
     return MachineReady(t, role, workdir, repo_dir, binaries, machine.data_addr if role == "server",
-                        pin.manifest.thread_env, cpu_pinning)
+                        pin.manifest.thread_env, pin.manifest.gc_trace_env, pin.manifest.gc_trace_regex,
+                        cpu_pinning)
 
 function check(t, command, message_or_timeout):
     r = run(t, command, timeout)                  # default timeout 120 s
