@@ -23,7 +23,7 @@ three on remote machines. Its interface is in [Benchmark runner](#benchmark-runn
 | `queue_log_path` | path, or empty | empty | Where to write the QueueLengthLog CSV. Empty: no log ([server/api.md#queuelengthlog-output](server/api.md#queuelengthlog-output)) |
 | `queue_sample_interval_ms` | integer, ms, `>= 1` | `10` | Time between two QueueLengthLog samples. Ignored when `queue_log_path` is empty |
 | `window_size` | integer, `1 ..= 2^32-1` | `200000` | Number of messages in the MessageBuffer, all created before the server listens. Used only by `message_buffer` ([server/message_buffer/design.md](server/message_buffer/design.md#messagebuffer)) |
-| `message_bytes` | integer, bytes, `>= 1` | `1024` | Length of every message. Used only by `message_buffer` |
+| `n_gc_binary_tree_size` | integer, `1 ..= 65536` | `15` | Nodes in every message's MessageTree (a random binary tree). Used only by `message_buffer` ([server/message_buffer/design.md](server/message_buffer/design.md#messagetree)) |
 | `n_messages_per_request` | integer, `>= 1` | `50` | Messages each `/ping` creates and writes. Used only by `message_buffer` ([server/ping_handler/design.md](server/ping_handler/design.md#messagework)) |
 
 The server runs until it receives an interrupt or termination signal. On shutdown it prints its

@@ -104,3 +104,4 @@
 | 0.9.38 | 2026-11-12T00:00:00Z | Child bump: sampling 0.3.0 (server message streams) |
 | 0.9.39 | 2026-11-12T00:00:00Z | Child bump: server 0.7.1 (message_buffer 0.2.0) |
 | 0.9.40 | 2026-11-12T00:00:00Z | Child bump: server 0.7.2 (ping_handler 0.7.0) |
+| 0.9.41 | 2026-11-12T00:00:00Z | Server parameters: `n_gc_binary_tree_size` replaces `message_bytes`. Glossary: MessageTree; MessageBuffer holds MessageTrees |
