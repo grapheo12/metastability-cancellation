@@ -24,7 +24,9 @@ flowchart TD
 
 Every timestamp is in **integer nanoseconds since `run_start`**, a single monotonic-clock reading
 taken by the Run Controller after all connections are open and just before the clients start. All
-clients share this origin.
+clients share this origin. Its wall-clock time, `run_start_unix_ns`, is read at the same moment and only reported
+in the summary, so the run's times can be compared with other machines' wall-clock times (their clock offset then
+adds to the comparison).
 
 ## Concurrency
 

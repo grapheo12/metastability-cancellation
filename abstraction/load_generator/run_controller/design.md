@@ -29,6 +29,7 @@ function main(params):
         if c failed: close all in conns; exit non-zero
         conns.append(c)
     run_start = monotonic_now_ns()
+    run_start_unix_ns = wall_clock_unix_ns()  # reported only, in the summary; never used for timing
     tasks = []
     for i in 0 .. N-1:
         rng_i = sampling.rng_new(sampling.derive_seed(config.seed, STREAM_CLIENT_ARRIVALS, i))
@@ -38,7 +39,7 @@ function main(params):
         all_records.extend(join(tasks[i]))     # see DrainPhase
     run_end = monotonic_now_ns() - run_start
     shutdown(conns)
-    report = metrics.aggregate(all_records, config, run_end)
+    report = metrics.aggregate(all_records, config, run_end, run_start_unix_ns)
     metrics.write_requests_csv(config.output_path + ".requests.csv", all_records)
     metrics.write_summary_json(config.output_path + ".summary.json", report)
     exit 0
