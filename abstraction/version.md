@@ -83,3 +83,4 @@
 | 0.9.17 | 2026-11-12T00:00:00Z | Child bump: ingress 0.1.15 (load_balancer 0.3.0) |
 | 0.9.18 | 2026-11-12T00:00:00Z | Server parameters: `workload`, `window_size`, `message_bytes`, `n_messages_per_request`; `response_rate` required only for `cpu_burn`. Ingress `output_path` names `forwards.csv`. Glossary: ServerWorkload, MessageBuffer, MessageCursor, MessageWork, ForwardRecord, ForwardLog |
 | 0.9.19 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.13 (config 0.10.0) |
+| 0.9.20 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.14 (experiment_executor 0.6.0) |

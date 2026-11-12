@@ -188,8 +188,10 @@ rest of the line. So the pid of a backgrounded or `exec`ed line is the pid of th
 function collect_outputs(point, config, server, client, ingress_host, pdir):
     for name in [loadgen.requests.csv, loadgen.summary.json, loadgen.log]:
         fetch(client.transport, RD_client/name, pdir/name)
-    for name in [ingress.cancels.csv, ingress.summary.json, ingress.log]:
+    for name in [ingress.cancels.csv, ingress.forwards.csv, ingress.summary.json, ingress.log]:
         fetch(ingress_host.transport, RD_ingress_host/name, pdir/name)
+    if pdir/ingress.forwards.csv does not exist:                 # ForwardLog
+        print("point <id>: ingress.forwards.csv missing (left out of the forward timeline plots)")
     counters = []
     for k in 0 ..= I-1:
         fetch(server.transport, RD/server_<k>.out, pdir/server_<k>.out)
@@ -212,7 +214,8 @@ function validate_outputs(point, pdir):
 
 `server_counters.json` keeps its meaning (the system's CancelCounters) by summing the instances; per-instance files
 remain for inspection. The QueueLengthLog files are not required: a missing one prints one warning line and
-never fails the point; the Result Plotter leaves that point out of `queue_length.png`. Every fetch is best effort (`missing` is fine), so a failed point still keeps whatever
+never fails the point; the Result Plotter leaves that point out of `queue_length.png`. The same holds for
+`ingress.forwards.csv` and the forward timeline plots. Every fetch is best effort (`missing` is fine), so a failed point still keeps whatever
 evidence exists.
 
 | Instances | Counters (before, during, completed) | `server_counters.json` |

@@ -27,3 +27,4 @@
 | 0.2.11 | 2026-11-10T00:00:00Z | Child bump: config 0.8.0 (`n_waiting_requests`) |
 | 0.2.12 | 2026-11-11T00:00:00Z | Child bump: config 0.9.0 (`ewma_beta`) |
 | 0.2.13 | 2026-11-12T00:00:00Z | Child bump: config 0.10.0 (server workload parameters) |
+| 0.2.14 | 2026-11-12T00:00:00Z | Output directory lists `ingress.forwards.csv`. Child bump: experiment_executor 0.6.0 |
