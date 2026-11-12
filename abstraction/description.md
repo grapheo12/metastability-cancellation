@@ -126,6 +126,10 @@ downloads each point's results and plots all points together.
 | **CancelOfferedFraction** | A point's canceller `cancel_rate` divided by its `global_rate` (PointTable column `cx_offered_fraction`) | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#cancelofferedfraction) |
 | **ThroughputLatencyNormalizedPlot** | ThroughputLatencyPlot with goodput scaled by `1 / (1 - CancelOfferedFraction)` | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#throughputlatencynormalizedplot) |
 | **FigurePage** | One interactive figure of a run, `plots/<name>.html`, that opens offline | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#sweepplots) |
+| **GcTrace** | A runtime's own one-line-per-cycle garbage-collection trace, with times relative to the process start | [server/design.md](server/design.md#processstart) |
+| **GcTraceHook** | The BuildManifest keys `gc_trace_env` and `gc_trace_regex`: how to switch a language's GcTrace on and read its lines | [benchmark_runner/remote_setup/design.md](benchmark_runner/remote_setup/design.md#buildmanifest) |
+| **GcEvent** | One GC cycle of a server on the wall clock (`server_<k>.gc.csv`): start time and the three phase durations | [benchmark_runner/experiment_executor/design.md](benchmark_runner/experiment_executor/design.md#gcevents) |
+| **GcOverlay** | GcEvents drawn as vertical lines on the forward latency figures | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#gcoverlay) |
 | **LbImbalance** | Largest over smallest per-backend `forwarded` count of a point (PointTable column `lb_imbalance`) | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#lbimbalance) |
 | **IngressPlacement** | Which experiment machine runs the Ingress: `client` (default) or `server` | [benchmark_runner/config/design.md](benchmark_runner/config/design.md#ingressplacement) |
 

@@ -102,7 +102,8 @@ details are in [protocol/api.md](protocol/api.md).
 ## Outputs
 
 ### Server outputs
-On shutdown, the server prints one line to standard output:
+At start, before anything else, the server prints `process_start_unix_ns <u64>`, its wall-clock start
+([server/api.md](server/api.md#processstart-output)). On shutdown, it prints one line to standard output:
 `{"cancelled_before_processing":<u64>,"cancelled_during_processing":<u64>,"completed_before_cancel":<u64>}`.
 See [server/api.md](server/api.md#cancelcounters-output). Counter semantics are in
 [server/cancel_tracker/design.md#cancelcounters](server/cancel_tracker/design.md#cancelcounters).
@@ -124,7 +125,8 @@ time, one row every `queue_sample_interval_ms`. See [server/api.md](server/api.m
   [ingress/load_canceller/api.md](ingress/load_canceller/api.md#output_pathcancelscsv).
 - `<output_path>.forwards.csv`: one ForwardRecord per finished forward (time, backend, outcome, latency,
   EwmaLatency). Columns are in [ingress/api.md](ingress/api.md#output_pathforwardscsv).
-- `<output_path>.summary.json`: LoadCanceller counts and rates, plus BackendStats per backend. Fields are in
+- `<output_path>.summary.json`: LoadCanceller counts and rates, BackendStats per backend, and the wall-clock
+  `run_start_unix_ns`. Fields are in
   [ingress/api.md](ingress/api.md#output_pathsummaryjson). Written at shutdown by
   [ingress/design.md#shutdown](ingress/design.md#shutdown).
 
