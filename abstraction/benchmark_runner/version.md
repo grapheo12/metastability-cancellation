@@ -35,3 +35,4 @@
 | 0.2.19 | 2026-11-12T00:00:00Z | Child bump: config 0.11.0 (`gc_trace`) |
 | 0.2.20 | 2026-11-12T00:00:00Z | Child bump: remote_setup 0.4.1 (MachineReady carries the GcTraceHook) |
 | 0.2.21 | 2026-11-12T00:00:00Z | Run flow refuses `gc_trace` without a GcTraceHook (exit 2); output directory lists `server_<k>.gc.csv`. Child bump: experiment_executor 0.7.0 |
+| 0.2.22 | 2026-11-12T00:00:00Z | Child bump: result_plotter 0.9.0 (GcOverlay) |

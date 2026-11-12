@@ -14,7 +14,8 @@ Leaf component. It reads every point directory of a run and produces:
   one line per done SweepPoint.
 - the **ForwardTimelinePlots**: the latency of `ok` forwards and the EwmaLatency seen by the Ingress's
   LoadBalancer over time (from its ForwardLog), as the median and p99 of 20 ms bins, one line per done SweepPoint,
-  and one pair of figures per backend when there is more than one.
+  and one pair of figures per backend when there is more than one. With GcEvents, the latency figures also mark
+  every garbage-collection cycle of the server (the **GcOverlay**).
 
 Every figure is an interactive page (**FigurePage**, `plots/<name>.html`) that opens offline.
 
