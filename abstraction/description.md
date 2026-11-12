@@ -92,9 +92,12 @@ downloads each point's results and plots all points together.
 | **CancelReplyBody** | JSON body `{"finished":..}` of a `202` answer to `/cancel` | [protocol/design.md](protocol/design.md#cancelreplybody) |
 | **InFlightVictimChoice** | The LoadCanceller's choice: one in-flight request drawn uniformly from an InFlightMap snapshot | [ingress/load_canceller/design.md](ingress/load_canceller/design.md#inflightvictimchoice) |
 | **Ingress** | Program in front of several servers: LoadBalancer, UpstreamPool, InFlightMap and LoadCanceller | [ingress/design.md](ingress/design.md#structure) |
-| **LbPolicy** | `round_robin`, `least_outstanding` or `power_of_two` | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#lbpolicy) |
+| **LbPolicy** | `round_robin`, `least_outstanding`, `power_of_two` or `ewma` | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#lbpolicy) |
 | **LoadBalancer** | Picks a backend per `/ping` by LbPolicy and keeps BackendStats | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#loadbalancer) |
-| **BackendStats** | Per-backend atomic counters: outstanding, forwarded and outcomes | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#loadbalancer) |
+| **BackendStats** | Per-backend atomic counters: outstanding, forwarded and outcomes; plus the EwmaLatency | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#loadbalancer) |
+| **EwmaLatency** | Per backend, exponentially weighted moving average of the latency of `ok` forwards (ns, starts at 1 ms, weight `ewma_beta` on the old value) | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#ewmalatency) |
+| **EwmaScore** | `(outstanding + 1) × EwmaLatency` of a backend; the `ewma` LbPolicy picks the lower of a random pair | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#ewmascore) |
+| **ForwardTicket** | `(server_id, start_ns)` returned by the LoadBalancer's `pick` and given back to `finish`, to time the forward | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#forwardticket) |
 | **UpstreamPool** | One h2c connection per (client, backend), dialed once | [ingress/upstream_pool/design.md](ingress/upstream_pool/design.md#upstreampool) |
 | **InFlightMap** | Lock-free `request_id → InFlightEntry` of the requests the Ingress is waiting on | [ingress/inflight_map/design.md](ingress/inflight_map/design.md#inflightmap) |
 | **InFlightEntry** | `(request_id, server_id)` of one forward in progress | [ingress/inflight_map/design.md](ingress/inflight_map/design.md#inflightmap) |
