@@ -73,7 +73,7 @@ server machine with `[ingress] machine = "server"`.
 On your machine:
 - A checkout of this repository on branch `impl/go`, committed and pushed: the runner deploys exactly your
   `HEAD`, and refuses to run if `origin` has a different commit for `impl/go`.
-- Python 3.11 or newer, and matplotlib:
+- Python 3.11 or newer, and plotly:
   `python3 -m pip install -r implementation/scripts/requirements.txt`.
 - SSH access to both machines with a private key, without a passphrase prompt (e.g. via `ssh-agent`).
 
@@ -134,8 +134,9 @@ config.toml, run.json            # the config used, branch and commit
 points/point_NNNN/               # per point: params.json, loadgen and ingress CSVs and summaries,
                                  # server_<k>.out, server_counters.json (summed), and a done or failed marker
 all_points.csv                   # one row per point: swept values and key metrics
-plots/latency_e2e.png  goodput.png  outcomes.png  server_counters.png  server_counters_normalized.png
-      throughput_latency.png  throughput_latency_normalized.png
+plots/latency_e2e.html  goodput.html  outcomes.html  server_counters.html  server_counters_normalized.html
+      throughput_latency.html  throughput_latency_normalized.html  queue_length.html
+      forward_latency.html  ewma_latency.html  (+ the script file they share; open them in a browser)
 ```
 
 Runs can be resumed. Set `[run] output_dir` to an existing run directory and run again: points already marked
