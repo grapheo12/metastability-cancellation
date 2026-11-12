@@ -6,6 +6,11 @@ build = "CGO_ENABLED=0 go build -o bin/ ./cmd/server ./cmd/loadgen ./cmd/ingress
 # ProcessPlacement threads: the Go runtime reads its worker-thread count from GOMAXPROCS.
 thread_env = "GOMAXPROCS"
 
+# GcTraceHook: the Go runtime prints one line per GC cycle to stderr, e.g.
+#   gc 12 @4.507s 3%: 0.018+5.1+0.042 ms clock, ...   (@ = seconds since process start; clock = STW+mark+STW)
+gc_trace_env = ["GODEBUG=gctrace=1"]
+gc_trace_regex = '^gc (?P<cycle>\d+) @(?P<start_s>[0-9.]+)s \d+%: (?P<stw_start_ms>[0-9.]+)\+(?P<mark_ms>[0-9.]+)\+(?P<stw_end_ms>[0-9.]+) ms clock'
+
 [binaries]
 server = "bin/server"
 loadgen = "bin/loadgen"
