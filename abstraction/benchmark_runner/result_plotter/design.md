@@ -59,7 +59,7 @@ function plot(output_dir):
 | `throughput_latency_normalized` | `lg_goodput / (1 - cx_offered_fraction)` | `e2e_p50_us`, `e2e_p99_us`, `e2e_p999_us` | log |
 | `server_counters_normalized` | `x_key` | `srv_cancelled_before_processing / cx_sent`, `srv_cancelled_during_processing / cx_sent`, `srv_completed_before_cancel / cx_sent` | linear, 0 to 1 |
 | `queue_length` | `time` (s since server start) | one plot: `queue_len` summed over instances, one line per done point ([QueueLengthPlot](#queuelengthplot)) | linear, from 0 |
-| `availability` | `loadgen_time` (s since the load generator's `run_start`) | one plot: Availability per 20 ms window, one line per done point ([AvailabilityPlot](#availabilityplot)) | linear, 0 to 1 |
+| `availability` | `loadgen_time` (s since the load generator's `run_start`) | one plot: Availability per `AVAILABILITY_WINDOW_MS` (200 ms) window, one line per done point ([AvailabilityPlot](#availabilityplot)) | linear, 0 to 1 |
 | `forward_latency`, `ewma_latency` (one figure each per backend when a point has `B > 1`) | `forward_time` (s since the Ingress's `run_start`) | median and p99 per `FORWARD_BIN_MS` bin, one line per done point ([ForwardTimelinePlots](#forwardtimelineplots)) | log |
 
 A fraction is empty when its denominator (`lg_scheduled` or `cx_sent`) is empty or `0`.
@@ -374,7 +374,8 @@ finished in time, over time, from the load generator's Requests CSV
 ([../../load_generator/metrics/api.md#requests-csv](../../load_generator/metrics/api.md#requests-csv)).
 
 **Availability** at time `t` is the number of requests that finished under the SLO divided by the number of
-requests that finished, among the requests whose `end_ns` lies in the 20 ms window centred on `t`:
+requests that finished, among the requests whose `end_ns` lies in the `AVAILABILITY_WINDOW_MS = 200` ms window
+centred on `t`:
 
 - **Finished:** the row has an `end_ns` (`ok`, `rejected`, `cancelled`, `error`); `not_sent` rows are ignored.
 - **Under the SLO:** `outcome == ok` and `end_ns - send_ns <= slo_ms × 1_000_000`, the clock the client's SLO
@@ -390,10 +391,12 @@ function read_requests(path):                      # -> list of (end_ns, send_ns
         rows.append((end_ns, send_ns, outcome == "ok"))
     return rows
 
+AVAILABILITY_WINDOW_MS = 200
+
 function availability_series(rows, slo_ns):        # -> list of (x_s, availability), windows in increasing order
-    W = FORWARD_BIN_MS * 1_000_000                  # 20 ms
+    W = AVAILABILITY_WINDOW_MS * 1_000_000          # 200 ms
     windows = group rows by end_ns div W            # window b is [b W, (b+1) W), centred on (b + 1/2) W
-    return [ ((b + 0.5) * FORWARD_BIN_MS / 1000,
+    return [ ((b + 0.5) * AVAILABILITY_WINDOW_MS / 1000,
               count of r in windows[b] with r.ok and r.end_ns - r.send_ns <= slo_ns) / len(windows[b]))
              for b in sorted keys of windows ]      # empty windows have no key, so they are skipped
 
@@ -405,7 +408,7 @@ function draw_availability(output_dir, done, swept_keys):
         slo_ms = value of slo_ms in loadgen_args of pdir/params.json
         if rows is none or rows is empty or slo_ms is none: continue
         s = availability_series(rows, round(slo_ms * 1_000_000))
-        t_end_s = s[last].x + FORWARD_BIN_MS / 2000
+        t_end_s = s[last].x + AVAILABILITY_WINDOW_MS / 2000
         gc = gc_events(pdir, [0 ..= I-1], origin(pdir, "loadgen.summary.json"), t_end_s)   # GcOverlay
         lines.append((label as in the QueueLengthPlot, s, gc, the point's color index))
     if lines is empty: delete output_dir/plots/availability.html if it exists; return
@@ -416,31 +419,32 @@ function draw_availability(output_dir, done, swept_keys):
     save as output_dir/plots/availability.html, about 600 px wide
 ```
 
-- **Window and x.** The window centred on `t` is `[t - 10 ms, t + 10 ms)`. Evaluating it at the centres
-  `t = 10, 30, 50, … ms` gives disjoint windows that are exactly the 20 ms bins of the ForwardTimelinePlots, on the
-  load generator's time base instead of the Ingress's.
+- **Window and x.** The window centred on `t` is `[t - 100 ms, t + 100 ms)`. Evaluating it at the centres
+  `t = 100, 300, 500, … ms` gives disjoint windows. They are 10 times as wide as the 20 ms bins of the
+  ForwardTimelinePlots, so each window holds enough requests for a stable ratio (about 800 at 4000 req/s) while
+  GC cycles of a second or more still span several windows.
 - **Integer test.** `slo_ns = round(slo_ms × 1_000_000)` once per point; the per-row comparison is in integers.
 - **Color.** The color index is the point's position among the done points with a Requests CSV, as in the
   ForwardTimelinePlots.
 
-Worked example, `slo_ms = 5` (`slo_ns = 5_000_000`):
+Worked example, `slo_ms = 50` (`slo_ns = 50_000_000`):
 
-| `end_ns` | `send_ns` | outcome | Window (`end_ns div 20_000_000`) | Under SLO | Why |
+| `end_ns` | `send_ns` | outcome | Window (`end_ns div 200_000_000`) | Under SLO | Why |
 |---|---|---|---|---|---|
-| 1_000_000 | 0 | ok | 0 | yes | 1 ms |
-| 8_000_000 | 0 | ok | 0 | no | 8 ms > 5 ms |
-| 19_000_000 | 14_000_000 | cancelled | 0 | no | not ok |
-| 25_000_000 | 21_000_000 | ok | 1 | yes | 4 ms |
-| 30_000_000 | 25_000_000 | ok | 1 | yes | exactly 5 ms: `<=` |
+| 10_000_000 | 0 | ok | 0 | yes | 10 ms |
+| 80_000_000 | 0 | ok | 0 | no | 80 ms > 50 ms |
+| 190_000_000 | 140_000_000 | cancelled | 0 | no | not ok |
+| 250_000_000 | 210_000_000 | ok | 1 | yes | 40 ms |
+| 300_000_000 | 250_000_000 | ok | 1 | yes | exactly 50 ms: `<=` |
 | (empty) | (empty) | not_sent | — | — | not finished |
-| 70_000_000 | 66_000_000 | rejected | 3 | no | not ok |
+| 700_000_000 | 660_000_000 | rejected | 3 | no | not ok |
 
 | Window | x (s) | Availability | Check |
 |---|---|---|---|
-| 0 | 0.01 | 1/3 | one of three |
-| 1 | 0.03 | 1 | two of two |
+| 0 | 0.1 | 1/3 | one of three |
+| 1 | 0.3 | 1 | two of two |
 | 2 | — | skipped | no row ends in it |
-| 3 | 0.07 | 0 | zero of one |
+| 3 | 0.7 | 0 | zero of one |
 
 | Situation | Result |
 |---|---|
