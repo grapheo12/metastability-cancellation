@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.10.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.11.0)
 """PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot, QueueLengthPlot and ForwardTimelinePlots,
 drawn as interactive HTML FigurePages with plotly."""
 
@@ -567,16 +567,20 @@ def read_requests(path):
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
+AVAILABILITY_WINDOW_MS = 200
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
 def availability_series(rows, slo_ns):
-    """[(window centre s, available / finished)] for the non-empty 20 ms windows of end_ns, in order."""
-    w = FORWARD_BIN_MS * 1_000_000
+    """[(window centre s, available / finished)] for the non-empty 200 ms windows of end_ns, in order."""
+    w = AVAILABILITY_WINDOW_MS * 1_000_000
     windows = {}
     for end, send, ok in rows:
         n = windows.setdefault(end // w, [0, 0])
         n[1] += 1
         if ok and end - send <= slo_ns:
             n[0] += 1
-    return [((b + 0.5) * FORWARD_BIN_MS / 1000, windows[b][0] / windows[b][1]) for b in sorted(windows)]
+    return [((b + 0.5) * AVAILABILITY_WINDOW_MS / 1000, windows[b][0] / windows[b][1]) for b in sorted(windows)]
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
@@ -591,7 +595,7 @@ def availability_lines(output_dir, done, swept_keys):
         if not rows or slo_ms is None:
             continue
         s = availability_series(rows, round(slo_ms * 1_000_000))
-        t_end_s = s[-1][0] + FORWARD_BIN_MS / 2000
+        t_end_s = s[-1][0] + AVAILABILITY_WINDOW_MS / 2000
         instances = range(params.get("server_instances") or 1)
         gc = gc_events(pdir, instances, origin(pdir, "loadgen.summary.json"), t_end_s)  # GcOverlay
         label = ", ".join(f"{k}={_cell(row[k])}" for k in swept_keys) or f"point {row['point']}"
@@ -607,7 +611,7 @@ def draw_availability(output_dir, done, swept_keys):
         if os.path.exists(path):
             os.remove(path)
         return
-    fig = new_figure([f"availability per {FORWARD_BIN_MS} ms (ok within slo_ms of send / finished)"])
+    fig = new_figure([f"availability per {AVAILABILITY_WINDOW_MS} ms (ok within slo_ms of send / finished)"])
     for label, s, _, color in lines:
         add_line(fig, 1, (p[0] for p in s), (p[1] for p in s), label, "lines+markers", True,
                  color=palette_color(color))
