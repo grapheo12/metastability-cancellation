@@ -32,3 +32,4 @@
 | 0.2.16 | 2026-11-12T00:00:00Z | Output directory lists `.html` figures and their shared script file. Child bump: result_plotter 0.8.0 |
 | 0.2.17 | 2026-11-12T00:00:00Z | Child bump: experiment_executor 0.6.1 |
 | 0.2.18 | 2026-11-12T00:00:00Z | Child bump: remote_setup 0.4.0 (GcTraceHook) |
+| 0.2.19 | 2026-11-12T00:00:00Z | Child bump: config 0.11.0 (`gc_trace`) |

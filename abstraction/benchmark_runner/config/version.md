@@ -14,3 +14,4 @@
 | 0.8.0 | 2026-11-10T00:00:00Z | `n_waiting_requests` is a settable, sweepable load generator parameter |
 | 0.9.0 | 2026-11-11T00:00:00Z | `ewma_beta` is a settable, sweepable program parameter of the Ingress |
 | 0.10.0 | 2026-11-12T00:00:00Z | Server program parameters `workload`, `window_size`, `message_bytes`, `n_messages_per_request` are settable and sweepable |
+| 0.11.0 | 2026-11-12T00:00:00Z | Runner key `[server] gc_trace` (boolean, default false, not sweepable) |
