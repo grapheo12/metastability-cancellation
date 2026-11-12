@@ -16,3 +16,4 @@
 | 0.1.11 | 2026-11-10T00:00:00Z | Child bump: load_canceller 0.5.0 |
 | 0.1.12 | 2026-11-10T00:00:00Z | Child bump: upstream_pool 0.1.2 |
 | 0.1.13 | 2026-11-11T00:00:00Z | LbPolicy `ewma` and parameter `ewma_beta`; BackendStats and summary `backends` gain `ewma_latency_ns`. Child bump: load_balancer 0.2.0 |
+| 0.1.14 | 2026-11-11T00:00:00Z | Child bump: frontend 0.2.1 |
