@@ -6,7 +6,7 @@
 PROGRAM_PARAMS = {
   "server":    ["response_rate", "response_bytes", "cancel_mode", "cancel_check_interval_us", "seed",
                 "n_worker_threads", "queue_sample_interval_ms", "initial_stall_ms",
-                "workload", "window_size", "message_bytes", "n_messages_per_request"],
+                "workload", "window_size", "n_gc_binary_tree_size", "n_messages_per_request"],
   "load_gen":  ["num_clients", "global_rate", "request_bytes", "slo_ms", "duration_s", "seed",
                 "n_waiting_requests"],
   "ingress":   ["lb_policy", "ewma_beta", "cancel_rate", "duration_s", "seed", "initial_stall_ms"],
