@@ -90,3 +90,4 @@
 | 0.9.24 | 2026-11-12T00:00:00Z | Glossary: FigurePage |
 | 0.9.25 | 2026-11-12T00:00:00Z | Child bump: server 0.7.0 (ProcessStart line) |
 | 0.9.26 | 2026-11-12T00:00:00Z | Child bump: ingress 0.1.16 (`run_start_unix_ns`) |
+| 0.9.27 | 2026-11-12T00:00:00Z | Child bump: ingress 0.1.17 (frontend 0.2.2) |

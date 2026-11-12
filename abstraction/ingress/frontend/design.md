@@ -90,6 +90,7 @@ function forward(ctx, c, s, stream):
 function start_once(ctx):
     if ctx.started.compare_and_swap(false, true):            # exactly one caller wins
         ctx.run_start = monotonic_now_ns()
+        ctx.run_start_unix_ns = wall_clock_unix_ns()                 # reported only (../design.md#time-base)
         if config.cancel_rate > 0:
             ctx.canceller = load_canceller.canceller_start(config, ctx.inflight, ctx.run_start)
 ```
