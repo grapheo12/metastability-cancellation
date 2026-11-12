@@ -32,6 +32,7 @@ One of each per process, created at startup and never replaced:
 | `config: IngressConfig` | Startup | everyone, read only |
 | `inflight: InFlightMap`, with client ids bounded by `num_clients` | In-Flight Map | Frontend (publish, clear), Load Canceller (snapshot) |
 | `stats: array[B] of BackendStats` | Load Balancer | Frontend (outcomes), Shutdown (summary) |
+| ForwardLog | Load Balancer | Frontend (one append per `finish`), Shutdown (`forwards.csv`) |
 | `run_start` | set once, by the first `/ping` | Load Canceller (time base) |
 
 `B` is the number of backends.
@@ -66,7 +67,8 @@ Duplicate backends are allowed: they are separate `server_id`s that happen to sh
   connections, never by the sender.
 - **Lock-free paths:** the In-Flight Map, the BackendStats counters and each EwmaLatency (a compare-and-swap loop)
   use only atomic operations. The Upstream Pool may lock while it creates a connection, but never while a request
-  is in progress on one.
+  is in progress on one. The ForwardLog takes its lock only to append one record
+  ([load_balancer/design.md#forwardlog](load_balancer/design.md#forwardlog)).
 - If the implementation uses cooperative coroutines on one thread, nothing in the Ingress may busy-wait: every
   wait is on network I/O, a timer, or a lock held only briefly.
 
@@ -86,9 +88,13 @@ procedure shutdown():                                  # on interrupt or termina
     wait until no forward is in progress (sum of stats[*].outstanding == 0) or now() >= deadline
     stop the Load Canceller if it is still sending, then run its drain
     close every upstream and canceller connection           # errors ignored
-    write <output_path>.cancels.csv and <output_path>.summary.json
+    write <output_path>.cancels.csv, <output_path>.forwards.csv and <output_path>.summary.json
     exit 0
 ```
+
+`forwards.csv` is the ForwardLog (`load_balancer.forward_log`) with `t_ns = end_ns - run_start` for every record,
+sorted stably by `t_ns`. Every record has `end_ns >= run_start`: `run_start` is set before the first `pick`. If no
+`/ping` was received, the log is empty and the file has only its header.
 
 Forwards still in progress at the deadline are abandoned: their client streams are reset and they are counted in
 neither `ok` nor `rejected`. The load generator finishes before the operator stops the Ingress, so in a normal run
