@@ -125,6 +125,7 @@ downloads each point's results and plots all points together.
 | **ThroughputLatencyPlot** | Latency percentiles against measured goodput, one line per series, points in swept order | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#throughputlatencyplot) |
 | **CancelOfferedFraction** | A point's canceller `cancel_rate` divided by its `global_rate` (PointTable column `cx_offered_fraction`) | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#cancelofferedfraction) |
 | **ThroughputLatencyNormalizedPlot** | ThroughputLatencyPlot with goodput scaled by `1 / (1 - CancelOfferedFraction)` | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#throughputlatencynormalizedplot) |
+| **FigurePage** | One interactive figure of a run, `plots/<name>.html`, that opens offline | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#sweepplots) |
 | **LbImbalance** | Largest over smallest per-backend `forwarded` count of a point (PointTable column `lb_imbalance`) | [benchmark_runner/result_plotter/design.md](benchmark_runner/result_plotter/design.md#lbimbalance) |
 | **IngressPlacement** | Which experiment machine runs the Ingress: `client` (default) or `server` | [benchmark_runner/config/design.md](benchmark_runner/config/design.md#ingressplacement) |
 
