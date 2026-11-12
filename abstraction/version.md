@@ -81,3 +81,4 @@
 | 0.9.15 | 2026-11-12T00:00:00Z | Child bump: server 0.6.1 (worker_pool 0.4.0) |
 | 0.9.16 | 2026-11-12T00:00:00Z | Child bump: server 0.6.2 (ping_handler 0.6.0) |
 | 0.9.17 | 2026-11-12T00:00:00Z | Child bump: ingress 0.1.15 (load_balancer 0.3.0) |
+| 0.9.18 | 2026-11-12T00:00:00Z | Server parameters: `workload`, `window_size`, `message_bytes`, `n_messages_per_request`; `response_rate` required only for `cpu_burn`. Ingress `output_path` names `forwards.csv`. Glossary: ServerWorkload, MessageBuffer, MessageCursor, MessageWork, ForwardRecord, ForwardLog |
