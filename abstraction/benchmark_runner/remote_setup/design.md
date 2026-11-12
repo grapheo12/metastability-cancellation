@@ -28,12 +28,19 @@ file is the same one the machines will check out.
 function read_manifest(path):
     doc = parse_toml(path)                       # PinError if missing or malformed
     require the keys lang, required_tools, build, binaries.{server, loadgen, ingress} (exactly these three binaries)
-    allow one optional key, thread_env; any other key is a PinError
+    allow the optional keys thread_env, gc_trace_env, gc_trace_regex; any other key is a PinError
     if thread_env is present: require a non-empty string of letters, digits and "_" not starting with a digit
+    if gc_trace_env or gc_trace_regex is present: require both                         # GcTraceHook
+        gc_trace_env: a non-empty array of "NAME=value" strings, NAME as for thread_env, value without whitespace
+        gc_trace_regex: compiles, and has the named groups cycle, start_s, stw_start_ms, mark_ms, stw_end_ms
     require required_tools to be an array of non-empty strings without whitespace
     require the binaries to be relative paths without ".."
-    return BuildManifest          # thread_env = none when absent
+    return BuildManifest          # thread_env, gc_trace_env, gc_trace_regex = none when absent
 ```
+
+The two `gc_trace_*` keys are the **GcTraceHook**: how to switch on a runtime's per-cycle garbage-collection trace
+(the GcTrace) and how to read one of its lines. A language without a collector, or without such a trace, leaves them
+out. The Experiment Executor uses them when a config sets `[server] gc_trace`.
 
 The manifest is the language hook of the [Shared tooling](../../../AGENTS.md#shared-tooling) rules. Each
 `impl/<lang>` branch provides one, and the runner never assumes anything else about a language.
