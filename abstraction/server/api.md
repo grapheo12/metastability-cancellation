@@ -7,7 +7,8 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 | Parameter | Type / unit | Default |
 |---|---|---|
 | `listen_addr` | `host:port` | `0.0.0.0:8080` |
-| `response_rate` | float, requests/s, `> 0` | required |
+| `workload` | `cpu_burn` \| `message_buffer` | `cpu_burn` |
+| `response_rate` | float, requests/s, `> 0` | required when `workload = cpu_burn` |
 | `response_bytes` | integer, bytes, `>= 42` | required |
 | `cancel_mode` | `ignore` \| `cooperative` | `cooperative` |
 | `cancel_check_interval_us` | integer, µs, `>= 1` | `50` |
@@ -16,6 +17,9 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 | `initial_stall_ms` | integer, ms, `>= 0` | `1000` |
 | `queue_log_path` | path, or empty | empty |
 | `queue_sample_interval_ms` | integer, ms, `>= 1` | `10` |
+| `window_size` | integer, `1 ..= 2^32-1` | `200000` |
+| `message_bytes` | integer, bytes, `>= 1` | `1024` |
+| `n_messages_per_request` | integer, `>= 1` | `50` |
 
 ## Constants
 
@@ -28,7 +32,7 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 
 ### `ServerConfig`
 
-An immutable record holding the ten parameters above after validation
+An immutable record holding the fourteen parameters above after validation
 ([design.md#configuration-validation](design.md#configuration-validation)). One read-only copy is
 shared by all Connection Handlers and workers.
 
@@ -80,7 +84,7 @@ printed.
 ## Lifecycle
 
 - **Start:** validate the config, create the CancelRegistry, the CancelCounters, the WorkQueue and the
-  WorkerPool, open `queue_log_path` if set, bind `listen_addr`, print one line `listening on <addr>` to standard
+  WorkerPool, fill the MessageBuffer when `workload = message_buffer`, open `queue_log_path` if set, bind `listen_addr`, print one line `listening on <addr>` to standard
   output, then start the QueueLengthLog sampler if set.
 - **Run:** accept connections until stopped.
 - **Stop:** on interrupt or termination signal, stop accepting, stop the QueueLengthLog sampler and close its
@@ -97,4 +101,5 @@ printed.
 | Worker Pool | [worker_pool/api.md](worker_pool/api.md) |
 | Ping Handler | [ping_handler/api.md](ping_handler/api.md) |
 | CPU Burner | [cpu_burner/api.md](cpu_burner/api.md) |
+| Message Buffer | [message_buffer/api.md](message_buffer/api.md) |
 | Cancel Tracker | [cancel_tracker/api.md](cancel_tracker/api.md) |
