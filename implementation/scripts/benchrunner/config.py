@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.10.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.11.0)
 """BenchConfig loading and validation, SweepExpansion, argument formatting."""
 
 import datetime
@@ -24,7 +24,7 @@ PROGRAM_PARAMS = {
 # Design: abstraction/benchmark_runner/config/design.md#processplacement
 PLACEMENT_KEYS = ["threads", "cpu_set"]
 RUNNER_KEYS = {
-    "server": ["listen_port", "instances"] + PLACEMENT_KEYS,
+    "server": ["listen_port", "instances", "gc_trace"] + PLACEMENT_KEYS,
     "load_gen": PLACEMENT_KEYS,
     "ingress": ["machine", "listen_port", "cancel_rate_fraction"] + PLACEMENT_KEYS,
 }
@@ -87,6 +87,7 @@ class BenchConfig:
     placement: dict  # section -> {"threads": int | None, "cpu_set": str | None}
     cancel_rate_fraction: object = None  # number, list of numbers, or None (CancelRateFraction)
     file_swept: list = None  # swept keys in file order, program parameters and sweepable runner keys
+    gc_trace: bool = False  # [server] gc_trace: run the servers with the BuildManifest's GcTraceHook
 
     def swept_keys(self):
         if self.run.sweep_order is not None:
@@ -190,6 +191,7 @@ def load_config(path, runner_dir, now=None):
     params, fraction, file_swept = {}, None, []
     ports = {"server": 8080, "ingress": 9090}
     instances = 1
+    gc_trace = False
     ingress_machine = "client"
     placement = {section: {"threads": None, "cpu_set": None} for section in SECTIONS}
     for section in SECTIONS:
@@ -202,6 +204,12 @@ def load_config(path, runner_dir, now=None):
             if key in FORBIDDEN[section]:
                 raise ConfigError(f"{name} is set by the runner")
             if key in RUNNER_KEYS[section]:
+                # Design: abstraction/benchmark_runner/config/design.md#benchconfig
+                if key == "gc_trace":
+                    if not isinstance(value, bool):  # an array too: it cannot be swept
+                        raise ConfigError(f"{name} must be true or false")
+                    gc_trace = value
+                    continue
                 if isinstance(value, list) and name not in SWEEPABLE_RUNNER_KEYS:
                     raise ConfigError(f"{name} cannot be swept")
                 if key == "listen_port":
@@ -277,7 +285,7 @@ def load_config(path, runner_dir, now=None):
         setup_timeout_s=_positive(run, "setup_timeout_s", 900.0),
     )
     config = BenchConfig(repo_url, machines, params, ports["server"], instances, ports["ingress"], ingress_machine,
-                         options, placement, fraction, file_swept)
+                         options, placement, fraction, file_swept, gc_trace)
     if sweep_order is not None:
         if sorted(sweep_order) != sorted(file_swept) or len(set(sweep_order)) != len(sweep_order):
             raise ConfigError("run.sweep_order must list every swept key exactly once")

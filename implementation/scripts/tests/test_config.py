@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.10.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.11.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -180,6 +180,16 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(len(points), 8)
         self.assertEqual([dict(p.ingress_args)["lb_policy"] for p in points[:2]], ["round_robin", "power_of_two"])
         self.assertConfigError(BASE.replace("cancel_rate = 100", "incr_rand_max = 4"), "unknown key ingress.incr_rand_max")
+
+    # Design: abstraction/benchmark_runner/config/design.md#benchconfig
+    def test_gc_trace(self):
+        self.assertFalse(self.load(BASE).gc_trace)
+        c = self.load(BASE.replace("[server]", "[server]\ngc_trace = true", 1))
+        self.assertTrue(c.gc_trace)
+        self.assertNotIn("gc_trace", dict(cfg.expand_sweep(c)[0].server_args))  # runner-owned, never passed on
+        for bad in ('"yes"', "1", "[true, false]"):
+            self.assertConfigError(BASE.replace("[server]", f"[server]\ngc_trace = {bad}", 1),
+                                   "server.gc_trace must be true or false")
 
     # Design: abstraction/benchmark_runner/config/design.md#benchconfig
     def test_server_workload_params(self):
