@@ -1,6 +1,7 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.7.0)
-"""PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot, QueueLengthPlot and ForwardTimelinePlots."""
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.8.0)
+"""PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot, QueueLengthPlot and ForwardTimelinePlots,
+drawn as interactive HTML FigurePages with plotly."""
 
 import csv
 import glob
@@ -200,11 +201,43 @@ X_VALUES = {"lg_goodput": lambda r: r.get("lg_goodput"), "lg_goodput_normalized"
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
-def plot(output_dir):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+COLUMN_PX, HEIGHT_PX = 600, 450  # FigurePage: about 600 px per subplot column
+HOVER = "%{fullData.name}<br>x=%{x}<br>y=%{y}<extra></extra>"
 
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
+def new_figure(titles):
+    """One row of subplots, titles above them, one shared legend."""
+    from plotly.subplots import make_subplots
+    fig = make_subplots(rows=1, cols=len(titles), subplot_titles=titles)
+    fig.update_layout(width=COLUMN_PX * len(titles), height=HEIGHT_PX, template="plotly_white",
+                      legend=dict(font=dict(size=10)))
+    return fig
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
+def add_line(fig, col, xs, ys, label, mode, first_col):
+    """One line in subplot col; its legend entry (shown once) toggles it in every subplot."""
+    import plotly.graph_objects as go
+    fig.add_trace(go.Scatter(x=list(xs), y=list(ys), name=label, mode=mode, legendgroup=label,
+                             showlegend=first_col, hovertemplate=HOVER, marker=dict(size=5)), row=1, col=col)
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
+def set_log_y_if_positive(fig, col, ys):
+    """Log y only when the subplot has points and every y is above 0."""
+    if ys and all(y > 0 for y in ys):
+        fig.update_yaxes(type="log", row=1, col=col)
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
+def save_page(fig, path):
+    """Writes the FigurePage; plotly.min.js is written once next to it, so pages open offline."""
+    fig.write_html(path, include_plotlyjs="directory", full_html=True)
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
+def plot(output_dir):
     rows, swept_keys = build_table(output_dir)
     done = [r for r in rows if r["status"] == "done"]
     if not done:
@@ -229,33 +262,32 @@ def plot(output_dir):
     os.makedirs(os.path.join(output_dir, "plots"), exist_ok=True)
     for name, x, metrics, yscale, ylim in FIGURES:
         if x == "time":  # QueueLengthPlot
-            draw_queue_length(plt, output_dir, done, swept_keys)
+            draw_queue_length(output_dir, done, swept_keys)
             continue
         if x == "forward_time":  # ForwardTimelinePlots
-            draw_forward_timelines(plt, output_dir, done, swept_keys)
+            draw_forward_timelines(output_dir, done, swept_keys)
             continue
-        fig, axes = plt.subplots(1, len(metrics), figsize=(6 * len(metrics), 4.5), squeeze=False)
-        for ax, (title, value) in zip(axes[0], metrics):
+        fig = new_figure([title for title, _ in metrics])
+        for col, (title, value) in enumerate(metrics, start=1):
+            ys = []
             for combo, members in series.items():
                 if x == "x_key":
                     pts = sorted((position[r[x_key]], value(r)) for r in members if value(r) is not None)
                 else:  # ThroughputLatencyPlot and ThroughputLatencyNormalizedPlot
                     pts = throughput_latency_line(members, x_key, position, value, X_VALUES[x])
                 if pts:
-                    ax.plot([p[0] for p in pts], [p[1] for p in pts], marker="o", label=label(combo))
-            ax.set_title(title)
-            ax.set_xlabel(x_key if x == "x_key" else X_LABELS[x])
-            if yscale == "log" and any(line.get_ydata().min() > 0 for line in ax.get_lines()):
-                ax.set_yscale("log")
+                    add_line(fig, col, (p[0] for p in pts), (p[1] for p in pts), label(combo), "lines+markers",
+                             col == 1)
+                    ys += [p[1] for p in pts]
+            fig.update_xaxes(title_text=x_key if x == "x_key" else X_LABELS[x], row=1, col=col)
+            if yscale == "log":
+                set_log_y_if_positive(fig, col, ys)
             if ylim:
-                ax.set_ylim(*ylim)
+                fig.update_yaxes(range=list(ylim), row=1, col=col)
             if ticks is not None and x == "x_key":
-                ax.set_xticks(range(len(ticks)), ticks)
-            if len(series) > 1 and ax is axes[0][0]:
-                ax.legend(fontsize="small")
-        fig.tight_layout()
-        fig.savefig(os.path.join(output_dir, "plots", f"{name}.png"), dpi=120)
-        plt.close(fig)
+                fig.update_xaxes(tickvals=list(range(len(ticks))), ticktext=ticks, row=1, col=col)
+        fig.update_layout(title_text=name, showlegend=len(series) > 1)
+        save_page(fig, os.path.join(output_dir, "plots", f"{name}.html"))
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#queuelengthplot
@@ -289,8 +321,8 @@ def point_queue_series(pdir, params):
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#queuelengthplot
-def draw_queue_length(plt, output_dir, done, swept_keys):
-    path = os.path.join(output_dir, "plots", "queue_length.png")
+def draw_queue_length(output_dir, done, swept_keys):
+    path = os.path.join(output_dir, "plots", "queue_length.html")
     lines = []
     for row in sorted(done, key=lambda r: int(r["point"])):
         pdir = os.path.join(output_dir, "points", f"point_{int(row['point']):04d}")
@@ -304,18 +336,13 @@ def draw_queue_length(plt, output_dir, done, swept_keys):
         if os.path.exists(path):
             os.remove(path)
         return
-    fig, ax = plt.subplots(figsize=(6, 4.5))
+    fig = new_figure(["queue_length"])
     for label, series in lines:
-        ax.plot([p[0] for p in series], [p[1] for p in series], label=label)
-    ax.set_xlabel("time since server start (s)")
-    ax.set_ylabel("queue_len (waiting jobs, all instances)")
-    ax.set_ylim(bottom=0)
-    ax.set_title("queue_length")
-    if len(lines) > 1:
-        ax.legend(fontsize="small")
-    fig.tight_layout()
-    fig.savefig(path, dpi=120)
-    plt.close(fig)
+        add_line(fig, 1, (p[0] for p in series), (p[1] for p in series), label, "lines", True)
+    fig.update_xaxes(title_text="time since server start (s)")
+    fig.update_yaxes(title_text="queue_len (waiting jobs, all instances)", rangemode="tozero")
+    fig.update_layout(showlegend=len(lines) > 1)
+    save_page(fig, path)
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#forwardtimelineplots
@@ -399,31 +426,25 @@ def forward_timelines(output_dir, done, swept_keys):
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#forwardtimelineplots
-def draw_forward_timelines(plt, output_dir, done, swept_keys):
+def draw_forward_timelines(output_dir, done, swept_keys):
     plots = os.path.join(output_dir, "plots")
     produced = set()
     for file, ylabel, lines in forward_timelines(output_dir, done, swept_keys):
-        fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), squeeze=False)
-        for ax, idx, title in ((axes[0][0], 1, f"median per {FORWARD_BIN_MS} ms"),
-                               (axes[0][1], 2, f"p99 per {FORWARD_BIN_MS} ms")):
+        fig = new_figure([f"median per {FORWARD_BIN_MS} ms", f"p99 per {FORWARD_BIN_MS} ms"])
+        for col in (1, 2):
+            ys = []
             for line in lines:
-                s = line[idx]
-                ax.plot([p[0] for p in s], [p[1] for p in s], marker=".", markersize=2, linewidth=0.8,
-                        label=line[0])
-            ax.set_title(title)
-            ax.set_xlabel("time since first /ping at the Ingress (s)")
-            ax.set_ylabel(ylabel)
-            if any(line.get_ydata().min() > 0 for line in ax.get_lines()):
-                ax.set_yscale("log")
-            if len(lines) > 1 and idx == 1:
-                ax.legend(fontsize="small")
-        fig.suptitle(file)
-        fig.tight_layout()
-        fig.savefig(os.path.join(plots, f"{file}.png"), dpi=120)
-        plt.close(fig)
-        produced.add(f"{file}.png")
-    for path in glob.glob(os.path.join(plots, "forward_latency*.png")) + \
-            glob.glob(os.path.join(plots, "ewma_latency*.png")):
+                s = line[col]
+                add_line(fig, col, (p[0] for p in s), (p[1] for p in s), line[0], "lines+markers", col == 1)
+                ys += [p[1] for p in s]
+            fig.update_xaxes(title_text="time since first /ping at the Ingress (s)", row=1, col=col)
+            fig.update_yaxes(title_text=ylabel, row=1, col=col)
+            set_log_y_if_positive(fig, col, ys)
+        fig.update_traces(marker=dict(size=3), line=dict(width=1))
+        fig.update_layout(title_text=file, showlegend=len(lines) > 1)
+        save_page(fig, os.path.join(plots, f"{file}.html"))
+        produced.add(f"{file}.html")
+    for path in glob.glob(os.path.join(plots, "forward_latency*.html")) + \
+            glob.glob(os.path.join(plots, "ewma_latency*.html")):
         if os.path.basename(path) not in produced:
             os.remove(path)  # stale figure
-

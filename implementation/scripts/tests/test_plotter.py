@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.7.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.8.0)
 import csv
 import json
 import os
@@ -51,9 +51,9 @@ class PointTableTest(unittest.TestCase):
     # Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
     def test_plots(self):
         try:
-            import matplotlib  # noqa: F401
+            import plotly  # noqa: F401
         except ImportError:
-            self.skipTest("matplotlib not installed")
+            self.skipTest("plotly not installed")
         with tempfile.TemporaryDirectory() as out:
             pid = 0
             for rate in (1000, 2000):
@@ -63,7 +63,11 @@ class PointTableTest(unittest.TestCase):
             plotter.plot(out)
             for name in ("latency_e2e", "goodput", "outcomes", "server_counters", "throughput_latency",
                          "server_counters_normalized", "throughput_latency_normalized"):
-                self.assertTrue(os.path.getsize(os.path.join(out, "plots", f"{name}.png")) > 0)
+                page = os.path.join(out, "plots", f"{name}.html")
+                self.assertTrue(0 < os.path.getsize(page) < 1_000_000)  # the library is not embedded
+                with open(page) as f:
+                    self.assertIn('src="plotly.min.js"', f.read())
+            self.assertTrue(os.path.exists(os.path.join(out, "plots", "plotly.min.js")))  # shared, offline
 
     # Design: abstraction/benchmark_runner/result_plotter/design.md#throughputlatencyplot
     def test_throughput_latency_line_keeps_swept_order(self):
@@ -138,9 +142,9 @@ class PointTableTest(unittest.TestCase):
 
     def test_nothing_to_plot(self):
         try:
-            import matplotlib  # noqa: F401
+            import plotly  # noqa: F401
         except ImportError:
-            self.skipTest("matplotlib not installed")
+            self.skipTest("plotly not installed")
         with tempfile.TemporaryDirectory() as out:
             write_point(out, 0, {}, done=False)
             with self.assertRaises(plotter.NothingToPlot):
@@ -179,9 +183,9 @@ class QueueLengthPlotTest(unittest.TestCase):
     # Design: abstraction/benchmark_runner/result_plotter/design.md#queuelengthplot
     def test_plot_file(self):
         try:
-            import matplotlib  # noqa: F401
+            import plotly  # noqa: F401
         except ImportError:
-            self.skipTest("matplotlib not installed")
+            self.skipTest("plotly not installed")
         with tempfile.TemporaryDirectory() as out:
             write_point(out, 0, {"server.n_worker_threads": 1})
             write_point(out, 1, {"server.n_worker_threads": 4})
@@ -189,7 +193,7 @@ class QueueLengthPlotTest(unittest.TestCase):
             write_queue_log(os.path.join(out, "points", "point_0000"), 0, [(0, 0), (10, 5), (20, 9)])
             write_queue_log(os.path.join(out, "points", "point_0001"), 0, [(0, 0), (10, 0), (20, 1)])
             plotter.plot(out)
-            path = os.path.join(out, "plots", "queue_length.png")
+            path = os.path.join(out, "plots", "queue_length.html")
             self.assertTrue(os.path.getsize(path) > 0)
             for pid in (0, 1):
                 os.remove(os.path.join(out, "points", f"point_{pid:04d}", "server_0.queue.csv"))
@@ -259,9 +263,9 @@ class ForwardTimelinePlotsTest(unittest.TestCase):
     # Design: abstraction/benchmark_runner/result_plotter/design.md#forwardtimelineplots
     def test_plot_files(self):
         try:
-            import matplotlib  # noqa: F401
+            import plotly  # noqa: F401
         except ImportError:
-            self.skipTest("matplotlib not installed")
+            self.skipTest("plotly not installed")
         with tempfile.TemporaryDirectory() as out:
             write_point(out, 0, {"load_gen.global_rate": 500})
             write_point(out, 1, {"load_gen.global_rate": 1000})
@@ -269,17 +273,17 @@ class ForwardTimelinePlotsTest(unittest.TestCase):
             write_forward_log(os.path.join(out, "points", "point_0001"), FWD_EXAMPLE, backends=1)
             plotter.plot(out)
             plots = os.path.join(out, "plots")
-            self.assertTrue(os.path.getsize(os.path.join(plots, "forward_latency_server_0.png")) > 0)
-            self.assertTrue(os.path.exists(os.path.join(plots, "ewma_latency_server_0.png")))
-            self.assertFalse(os.path.exists(os.path.join(plots, "forward_latency_server_1.png")))  # no rows
+            self.assertTrue(os.path.getsize(os.path.join(plots, "forward_latency_server_0.html")) > 0)
+            self.assertTrue(os.path.exists(os.path.join(plots, "ewma_latency_server_0.html")))
+            self.assertFalse(os.path.exists(os.path.join(plots, "forward_latency_server_1.html")))  # no rows
             write_forward_log(os.path.join(out, "points", "point_0000"), FWD_EXAMPLE, backends=1)
             plotter.plot(out)
-            self.assertTrue(os.path.exists(os.path.join(plots, "forward_latency.png")))
-            self.assertFalse(os.path.exists(os.path.join(plots, "ewma_latency_server_0.png")))  # stale, removed
+            self.assertTrue(os.path.exists(os.path.join(plots, "forward_latency.html")))
+            self.assertFalse(os.path.exists(os.path.join(plots, "ewma_latency_server_0.html")))  # stale, removed
             for pid in (0, 1):
                 os.remove(os.path.join(out, "points", f"point_{pid:04d}", "ingress.forwards.csv"))
             plotter.plot(out)
-            self.assertFalse(os.path.exists(os.path.join(plots, "forward_latency.png")))
+            self.assertFalse(os.path.exists(os.path.join(plots, "forward_latency.html")))
 
 
 if __name__ == "__main__":
