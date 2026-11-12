@@ -22,3 +22,4 @@
 | 0.7.0 | 2026-11-12T00:00:00Z | ProcessStart: the first stdout line is `process_start_unix_ns <u64>` (wall clock, before validation), so process-relative GcTrace times can be placed on a shared clock |
 | 0.7.1 | 2026-11-12T00:00:00Z | Parameter `n_gc_binary_tree_size` (`1 ..= 65536`, default 15) replaces `message_bytes`; the Listener passes the seed to `buffer_new`. Child bump: message_buffer 0.2.0 |
 | 0.7.2 | 2026-11-12T00:00:00Z | Child bump: ping_handler 0.7.0 |
+| 0.7.3 | 2026-11-12T00:00:00Z | Child bump: message_buffer 0.2.1 |
