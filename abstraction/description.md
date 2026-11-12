@@ -21,8 +21,9 @@ HTTP/2 service. The testbed covers two cancellation paths:
 A **Server** accepts HTTP/2 connections and starts one handler (coroutine or thread) per connection.
 It exposes `POST /ping` and `DELETE /cancel`. A handler answers `/cancel` itself and puts every `/ping` on one
 process-wide, unbounded **WorkQueue**. A **WorkerPool** of `n_worker_threads` workers takes `/ping`s off it in
-arrival order. For each `/ping` a worker busy-loops on the CPU for a random
-time drawn from an exponential distribution, then answers `202` (completed) or `503` (cancelled by
+arrival order. For each `/ping` a worker does the work of the **ServerWorkload**: by default it busy-loops on the
+CPU for a random time drawn from an exponential distribution (`cpu_burn`); with `message_buffer` it instead writes
+new messages into a large **MessageBuffer**, to stress the garbage collector. It then answers `202` (completed) or `503` (cancelled by
 `/cancel`) with a JSON body of a fixed size. A **Load Generator** simulates `N` clients, each on its
 own connection. Every client has its own Poisson arrival clock (rate `global_rate / N`) and keeps up to
 `n_waiting_requests` requests outstanding (a semi-open loop: arrivals wait only when that cap is reached), and
@@ -69,6 +70,10 @@ downloads each point's results and plots all points together.
 | **PaddedJsonBody** | JSON body `{"id":..,"payload":..}` padded so its byte length is exact | [protocol/design.md](protocol/design.md#paddedjsonbody) |
 | **CancelBody** | JSON body `{"id":..}` of a `/cancel` request | [protocol/design.md](protocol/design.md#cancelbody) |
 | **ServiceTime** | CPU time per request, `Exp(response_rate)` seconds, in whole microseconds | [sampling/design.md](sampling/design.md#exponentialsampler) |
+| **ServerWorkload** | What a `/ping` costs the server: `cpu_burn` (burn the ServiceTime) or `message_buffer` (MessageWork) | [server/design.md](server/design.md#why-a-messagebuffer-workload) |
+| **MessageBuffer** | Server-wide window of `window_size` messages, filled before the server listens; requests overwrite slots under one lock | [server/message_buffer/design.md](server/message_buffer/design.md#messagebuffer) |
+| **MessageCursor** | Per client, the next MessageBuffer slot its messages overwrite; starts at `(client_id × 7919) mod window_size` | [server/message_buffer/design.md](server/message_buffer/design.md#messagecursor) |
+| **MessageWork** | A `message_buffer` request's work: create `n_messages_per_request` messages with cancel checks after each, then push them | [server/ping_handler/design.md](server/ping_handler/design.md#messagework) |
 | **CooperativeCpuBurn** | Busy loop that checks the RST flag on a time interval and `/cancel` every `CHECK_ITER` spin units | [server/cpu_burner/design.md](server/cpu_burner/design.md#cooperativecpuburn) |
 | **WorkQueue** | The server's one unbounded FIFO of admitted `/ping`s, shared by all connections | [server/worker_pool/design.md](server/worker_pool/design.md#workqueue) |
 | **WorkerPool** | `n_worker_threads` server workers that run WorkQueue jobs in arrival order | [server/worker_pool/design.md](server/worker_pool/design.md#workerpool) |
@@ -98,6 +103,8 @@ downloads each point's results and plots all points together.
 | **EwmaLatency** | Per backend, exponentially weighted moving average of the latency of `ok` forwards (ns, starts at 1 ms, weight `ewma_beta` on the old value) | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#ewmalatency) |
 | **EwmaScore** | `(outstanding + 1) × EwmaLatency` of a backend; the `ewma` LbPolicy picks the lower of a random pair | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#ewmascore) |
 | **ForwardTicket** | `(server_id, start_ns)` returned by the LoadBalancer's `pick` and given back to `finish`, to time the forward | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#forwardticket) |
+| **ForwardRecord** | `(end_ns, server_id, outcome, latency_ns, ewma_latency_ns)` of one finished forward | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#forwardlog) |
+| **ForwardLog** | The LoadBalancer's list of every ForwardRecord, written as `<output_path>.forwards.csv` | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#forwardlog) |
 | **UpstreamPool** | One h2c connection per (client, backend), dialed once | [ingress/upstream_pool/design.md](ingress/upstream_pool/design.md#upstreampool) |
 | **InFlightMap** | Lock-free `request_id → InFlightEntry` of the requests the Ingress is waiting on | [ingress/inflight_map/design.md](ingress/inflight_map/design.md#inflightmap) |
 | **InFlightEntry** | `(request_id, server_id)` of one forward in progress | [ingress/inflight_map/design.md](ingress/inflight_map/design.md#inflightmap) |

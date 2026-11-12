@@ -12,7 +12,8 @@ three on remote machines. Its interface is in [Benchmark runner](#benchmark-runn
 | Parameter | Type / unit | Default | Meaning |
 |---|---|---|---|
 | `listen_addr` | `host:port` | `0.0.0.0:8080` | Address to accept connections on |
-| `response_rate` | float, requests/s, `> 0` | required | Rate of the exponential ServiceTime. Mean CPU time per request is `1/response_rate` s |
+| `workload` | `cpu_burn` \| `message_buffer` | `cpu_burn` | The ServerWorkload. `cpu_burn`: each `/ping` burns its ServiceTime. `message_buffer`: each `/ping` writes `n_messages_per_request` new messages into the MessageBuffer ([server/design.md](server/design.md#why-a-messagebuffer-workload)) |
+| `response_rate` | float, requests/s, `> 0` | required when `workload = cpu_burn` | Rate of the exponential ServiceTime. Mean CPU time per request is `1/response_rate` s |
 | `response_bytes` | integer, bytes, `>= 42` | required | Exact byte length of every `/ping` response body (`202` and `503`) |
 | `cancel_mode` | `ignore` \| `cooperative` | `cooperative` | `ignore`: never cancel work (RST and `/cancel` both ignored). `cooperative`: stop work on RST or on a matching `/cancel` |
 | `cancel_check_interval_us` | integer, µs, `>= 1` | `50` | How often CooperativeCpuBurn checks the RST flag |
@@ -21,6 +22,9 @@ three on remote machines. Its interface is in [Benchmark runner](#benchmark-runn
 | `initial_stall_ms` | integer, ms, `>= 0` | `1000` | StallGate: after the first admitted `/ping`, the server queues requests but runs none for this long, to build a backlog. `0`: no stall ([server/worker_pool/design.md](server/worker_pool/design.md#stallgate)) |
 | `queue_log_path` | path, or empty | empty | Where to write the QueueLengthLog CSV. Empty: no log ([server/api.md#queuelengthlog-output](server/api.md#queuelengthlog-output)) |
 | `queue_sample_interval_ms` | integer, ms, `>= 1` | `10` | Time between two QueueLengthLog samples. Ignored when `queue_log_path` is empty |
+| `window_size` | integer, `1 ..= 2^32-1` | `200000` | Number of messages in the MessageBuffer, all created before the server listens. Used only by `message_buffer` ([server/message_buffer/design.md](server/message_buffer/design.md#messagebuffer)) |
+| `message_bytes` | integer, bytes, `>= 1` | `1024` | Length of every message. Used only by `message_buffer` |
+| `n_messages_per_request` | integer, `>= 1` | `50` | Messages each `/ping` creates and writes. Used only by `message_buffer` ([server/ping_handler/design.md](server/ping_handler/design.md#messagework)) |
 
 The server runs until it receives an interrupt or termination signal. On shutdown it prints its
 CancelCounters ([Server outputs](#server-outputs)).
@@ -54,7 +58,7 @@ The minimum body size of 42 bytes comes from [protocol/design.md](protocol/desig
 | `duration_s` | float, s, `> 0` | required if `cancel_rate > 0`, else ignored | Length of the LoadCanceller's sending phase |
 | `initial_stall_ms` | integer, ms, `>= 0` | `1000` | The LoadCanceller schedules no cancel earlier than this after the Ingress's first `/ping`; sending still ends at `duration_s`. `0`: no stall ([ingress/load_canceller/design.md](ingress/load_canceller/design.md#cancelschedule)) |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for the LoadBalancer's and the LoadCanceller's random choices |
-| `output_path` | path prefix | `ingress` | Outputs go to `<output_path>.cancels.csv` and `<output_path>.summary.json` |
+| `output_path` | path prefix | `ingress` | Outputs go to `<output_path>.cancels.csv`, `<output_path>.forwards.csv` and `<output_path>.summary.json` |
 
 The Ingress's constants, outputs and lifecycle are in [ingress/api.md](ingress/api.md).
 
@@ -118,6 +122,8 @@ time, one row every `queue_sample_interval_ms`. See [server/api.md](server/api.m
 ### Ingress outputs
 - `<output_path>.cancels.csv`: one CancelRecord per LoadCanceller arrival. Columns are in
   [ingress/load_canceller/api.md](ingress/load_canceller/api.md#output_pathcancelscsv).
+- `<output_path>.forwards.csv`: one ForwardRecord per finished forward (time, backend, outcome, latency,
+  EwmaLatency). Columns are in [ingress/api.md](ingress/api.md#output_pathforwardscsv).
 - `<output_path>.summary.json`: LoadCanceller counts and rates, plus BackendStats per backend. Fields are in
   [ingress/api.md](ingress/api.md#output_pathsummaryjson). Written at shutdown by
   [ingress/design.md#shutdown](ingress/design.md#shutdown).
