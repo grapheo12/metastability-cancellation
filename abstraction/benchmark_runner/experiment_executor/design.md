@@ -81,7 +81,8 @@ function start_servers(point, config, server):
         args  = ["--listen_addr", "0.0.0.0:" + (config.server.listen_port + k),
                  "--queue_log_path", RD_server + "/server_" + k + ".queue.csv"]        # QueueLengthLog
                 + args(point.server_args)
-        words = placement_prefix("server", point, server) + [server.binaries.server] + args
+        words = placement_prefix("server", point, server) + gc_trace_prefix(config, server)    # GcEvents
+                + [server.binaries.server] + args
         start_program(server, words, RD_server + "/server_" + k + ".out",
                       <server workdir>/server_<k>.pid, config.run.server_ready_timeout_s)
 
@@ -182,6 +183,59 @@ rest of the line. So the pid of a backgrounded or `exec`ed line is the pid of th
 | 4 | `"0-3"` | true | `env GOMAXPROCS=4 taskset -c 0-3` |
 | 1 | `"8"` | false | `env GOMAXPROCS=1` (pinning dropped; the run flow has already warned) |
 
+## GcEvents
+
+With `[server] gc_trace = true`, every server instance runs with the BuildManifest's GcTraceHook switched on, and its
+GcTrace lines, which land in `server_<k>.out` with the rest of its output, are turned into **GcEvents** on the wall
+clock. The run flow has already checked that the hook exists
+([../design.md#run-flow](../design.md#run-flow)).
+
+```
+function gc_trace_prefix(config, server):                   # -> words
+    if not config.server.gc_trace: return []
+    return ["env"] + server.gc_trace_env           # after any ProcessPlacement prefix; env commands chain
+
+function write_gc_events(point, k, pdir, regex):
+    out = pdir/server_<k>.out
+    if out does not exist: print("point <id>: server_<k>.out missing (no GcEvents)"); return
+    start = none; events = []
+    for each line of out, in order:
+        if start is none and the line is "process_start_unix_ns " + decimal digits:
+            start = that integer                                          # the server's ProcessStart line
+        else if regex matches at the start of the line:
+            events.append(m)
+    if start is none: print("point <id>: server_<k>.out has no process_start_unix_ns line (no GcEvents)"); return
+    if events is empty: print("point <id>: server_<k>.out has no GcTrace lines"); 
+    write pdir/server_<k>.gc.csv:
+        header "t_unix_ns,cycle,stw_start_ms,mark_ms,stw_end_ms"
+        one row per event, in file order:
+            t_unix_ns = start + seconds_to_ns(m.start_s), then m.cycle, m.stw_start_ms, m.mark_ms, m.stw_end_ms
+            (the three durations copied exactly as written in the line)
+
+function seconds_to_ns(s):                                  # s: decimal string "I" or "I.F"; exact, no float
+    (i, f) = split s at "."; f = "" if absent
+    f = (f + "000000000")[0 ..= 8]                          # keep 9 digits, truncating any further ones
+    return decimal(i) * 1_000_000_000 + decimal(f)
+```
+
+- **Shared clock.** `start_s` counts from the server's process start. The ProcessStart line gives that start on
+  the wall clock, so `t_unix_ns` is a wall-clock time and can be compared with the Ingress's `run_start_unix_ns`
+  ([../../ingress/api.md#output_pathsummaryjson](../../ingress/api.md#output_pathsummaryjson)). Both are read on the
+  same machine when the Ingress runs there; across machines the difference also contains their clock offset.
+- **Never fails the point.** A missing start line, no GcTrace lines, or a missing `.out` file only prints one
+  warning; the plots then have no GC overlay for that instance. The file is written even with no events (header
+  only), so "no GC ran" and "no trace" can be told apart.
+- **Exact arithmetic.** `seconds_to_ns` works on the decimal string, so `@4.507s` gives exactly `4_507_000_000` ns.
+
+Worked example, ProcessStart `1700000000000000000`:
+
+| Line | `start_s` | `t_unix_ns` | Check |
+|---|---|---|---|
+| `gc 1 @0.012s 1%: 0.018+5.1+0.042 ms clock, …` | `0.012` | 1_700_000_000_012_000_000 | + 12_000_000 |
+| `gc 2 @4.507s 3%: 0.020+12+0.050 ms clock, …` | `4.507` | 1_700_000_004_507_000_000 | + 4_507_000_000 |
+| `gc 3 @10s 2%: 0.01+1+0.02 ms clock, …` | `10` | 1_700_000_010_000_000_000 | no fraction |
+| `listening on 0.0.0.0:8080` | — | not an event | does not match |
+
 ## Point outputs
 
 ```
@@ -198,6 +252,7 @@ function collect_outputs(point, config, server, client, ingress_host, pdir):
         fetch(server.transport, RD/server_<k>.queue.csv, pdir/server_<k>.queue.csv)     # QueueLengthLog
         if pdir/server_<k>.queue.csv does not exist:
             print("point <id>: server_<k>.queue.csv missing (left out of queue_length)")
+        if config.server.gc_trace: write_gc_events(point, k, pdir, server.gc_trace_regex)   # GcEvents
         line = last line of pdir/server_<k>.out that starts with COUNTERS_PREFIX
         if line exists:
             c = line parsed as JSON (the three CancelCounters keys)
