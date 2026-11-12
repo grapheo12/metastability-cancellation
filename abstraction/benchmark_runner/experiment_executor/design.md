@@ -197,7 +197,7 @@ function collect_outputs(point, config, server, client, ingress_host, pdir):
         fetch(server.transport, RD/server_<k>.out, pdir/server_<k>.out)
         fetch(server.transport, RD/server_<k>.queue.csv, pdir/server_<k>.queue.csv)     # QueueLengthLog
         if pdir/server_<k>.queue.csv does not exist:
-            print("point <id>: server_<k>.queue.csv missing (left out of queue_length.png)")
+            print("point <id>: server_<k>.queue.csv missing (left out of queue_length)")
         line = last line of pdir/server_<k>.out that starts with COUNTERS_PREFIX
         if line exists:
             c = line parsed as JSON (the three CancelCounters keys)
@@ -214,7 +214,7 @@ function validate_outputs(point, pdir):
 
 `server_counters.json` keeps its meaning (the system's CancelCounters) by summing the instances; per-instance files
 remain for inspection. The QueueLengthLog files are not required: a missing one prints one warning line and
-never fails the point; the Result Plotter leaves that point out of `queue_length.png`. The same holds for
+never fails the point; the Result Plotter leaves that point out of the `queue_length` figure. The same holds for
 `ingress.forwards.csv` and the forward timeline plots. Every fetch is best effort (`missing` is fine), so a failed point still keeps whatever
 evidence exists.
 

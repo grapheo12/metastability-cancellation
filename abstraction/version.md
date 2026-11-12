@@ -86,3 +86,4 @@
 | 0.9.20 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.14 (experiment_executor 0.6.0) |
 | 0.9.21 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.15 (result_plotter 0.7.0) |
 | 0.9.22 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.16 (result_plotter 0.8.0) |
+| 0.9.23 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.17 (experiment_executor 0.6.1) |

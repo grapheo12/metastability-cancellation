@@ -8,3 +8,4 @@
 | 0.4.0 | 2026-11-03T00:00:00Z | IngressPlacement: the Ingress starts, stops and is collected on `ingress_host` (server or client machine); the load generator targets `point.loadgen_target`; leftover Ingress cleanup on both machines |
 | 0.5.0 | 2026-11-10T00:00:00Z | QueueLengthLog: every server instance gets `--queue_log_path <RD>/server_<k>.queue.csv`; Point outputs fetch it, warn once if missing, never fail the point |
 | 0.6.0 | 2026-11-12T00:00:00Z | Point outputs fetch `ingress.forwards.csv` (ForwardLog), warn once if missing, never fail the point |
+| 0.6.1 | 2026-11-12T00:00:00Z | The missing QueueLengthLog warning names the `queue_length` figure without a file extension |
