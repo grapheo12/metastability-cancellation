@@ -30,3 +30,4 @@
 | 0.2.14 | 2026-11-12T00:00:00Z | Output directory lists `ingress.forwards.csv`. Child bump: experiment_executor 0.6.0 |
 | 0.2.15 | 2026-11-12T00:00:00Z | Output directory lists the forward timeline plots. Child bump: result_plotter 0.7.0 |
 | 0.2.16 | 2026-11-12T00:00:00Z | Output directory lists `.html` figures and their shared script file. Child bump: result_plotter 0.8.0 |
+| 0.2.17 | 2026-11-12T00:00:00Z | Child bump: experiment_executor 0.6.1 |
