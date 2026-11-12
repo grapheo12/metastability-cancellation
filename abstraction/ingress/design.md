@@ -116,6 +116,7 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 - `shutdown` is `(*Ingress).Shutdown`: `http.Server.Shutdown` with a 100 ms bound sends GOAWAY on every client connection (as in the server), then it waits on the BackendStats `outstanding` sum, stops the canceller, closes upstream and client connections, and writes both outputs. `cmd/ingress/main.go` calls it on SIGINT/SIGTERM and exits `0`, or `1` if writing fails.
 - The summary JSON is the `Summary` struct, marshalled with `json.MarshalIndent`, in API field order.
 - `initial_stall_ms` is `Config.InitialStallMs` (`--initial_stall_ms`, default 1000), with `InitialStallNs = InitialStallMs * 1e6`. Validation rejects values whose nanoseconds would overflow `int64`. The summary's `config` echoes it after `duration_s`.
+- `ewma_beta` is `Config.EwmaBeta` (`--ewma_beta`, default `0.7`), parsed with `strconv.ParseFloat(..., 64)` and rejected when NaN or outside `[0, 1]` (which also rejects infinities). The summary's `config` echoes it after `lb_policy`.
 
 ### Traceability
 
@@ -127,9 +128,9 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 |---|---|
 | [Structure](#structure) | [ingress.go:47](../../implementation/go/internal/ingress/ingress.go#L47) |
 | [Shared state](#shared-state) | [ingress.go:22](../../implementation/go/internal/ingress/ingress.go#L22) |
-| [Configuration validation](#configuration-validation) | [config.go:72](../../implementation/go/internal/ingress/config.go#L72) |
+| [Configuration validation](#configuration-validation) | [config.go:75](../../implementation/go/internal/ingress/config.go#L75), [config_test.go:9](../../implementation/go/internal/ingress/config_test.go#L9) |
 | [Concurrency model](#concurrency-model) | [ingress.go:77](../../implementation/go/internal/ingress/ingress.go#L77) |
-| [Time base](#time-base) | [frontend.go:124](../../implementation/go/internal/ingress/frontend.go#L124) |
+| [Time base](#time-base) | [frontend.go:125](../../implementation/go/internal/ingress/frontend.go#L125) |
 | [Shutdown](#shutdown) | [ingress.go:111](../../implementation/go/internal/ingress/ingress.go#L111), [ingress_test.go:75](../../implementation/go/internal/ingress/ingress_test.go#L75) |
 | [Why one upstream connection per client and backend](#why-one-upstream-connection-per-client-and-backend) | [upstream.go:29](../../implementation/go/internal/ingress/upstream.go#L29) |
 <!-- trace:end -->

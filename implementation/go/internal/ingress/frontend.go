@@ -64,12 +64,13 @@ func (ing *Ingress) handlePing(ctx context.Context, body []byte) fwdResponse {
 	}
 	ing.startOnce()
 
-	s := ing.lb.Pick()
+	ticket := ing.lb.Pick()
+	s := ticket.ServerID
 	entry := &InFlightEntry{RequestID: id, ServerID: s}
 	ing.inflight.Publish(entry) // keyed by the RequestId
 	resp, outcome := ing.forward(ctx, clientID, s, body)
 	ing.inflight.Clear(entry) // before relaying the answer
-	ing.lb.Finish(s, outcome)
+	ing.lb.Finish(ticket, outcome)
 	return resp
 }
 

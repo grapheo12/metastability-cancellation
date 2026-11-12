@@ -147,7 +147,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | Design subsection | Implementation (file:line) |
 |---|---|
 | [Client connections](#client-connections) | [frontend.go:28](../../../implementation/go/internal/ingress/frontend.go#L28), [ingress.go:77](../../../implementation/go/internal/ingress/ingress.go#L77) |
-| [ForwardTask](#forwardtask) | [frontend.go:56](../../../implementation/go/internal/ingress/frontend.go#L56), [frontend.go:81](../../../implementation/go/internal/ingress/frontend.go#L81), [ingress_test.go:75](../../../implementation/go/internal/ingress/ingress_test.go#L75) |
-| [StartOnce](#startonce) | [frontend.go:124](../../../implementation/go/internal/ingress/frontend.go#L124), [ingress_test.go:122](../../../implementation/go/internal/ingress/ingress_test.go#L122) |
+| [ForwardTask](#forwardtask) | [frontend.go:56](../../../implementation/go/internal/ingress/frontend.go#L56), [frontend.go:82](../../../implementation/go/internal/ingress/frontend.go#L82), [ingress_test.go:75](../../../implementation/go/internal/ingress/ingress_test.go#L75) |
+| [StartOnce](#startonce) | [frontend.go:125](../../../implementation/go/internal/ingress/frontend.go#L125), [ingress_test.go:122](../../../implementation/go/internal/ingress/ingress_test.go#L122) |
 | [State machine (per ForwardTask)](#state-machine-per-forwardtask) | [ingress_test.go:156](../../../implementation/go/internal/ingress/ingress_test.go#L156) |
 <!-- trace:end -->

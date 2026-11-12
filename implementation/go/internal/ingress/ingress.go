@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.1.12)
+// Source: abstraction/ingress/design.md (ingress v0.1.14)
 package ingress
 
 import (
@@ -151,6 +151,7 @@ type summaryConfig struct {
 	Backends       []string `json:"backends"`
 	NumClients     uint32   `json:"num_clients"`
 	LbPolicy       string   `json:"lb_policy"`
+	EwmaBeta       float64  `json:"ewma_beta"`
 	CancelRate     float64  `json:"cancel_rate"`
 	DurationS      float64  `json:"duration_s"`
 	InitialStallMs uint64   `json:"initial_stall_ms"`
@@ -174,7 +175,7 @@ func (ing *Ingress) writeSummary(records []*CancelRecord, runEndS float64) error
 	c := ing.cfg
 	counts, rates, targeted := summarizeCancels(records, c)
 	s := Summary{
-		Config:  summaryConfig{c.ListenAddr, c.Backends, c.NumClients, c.LbPolicy, c.CancelRate, c.DurationS, c.InitialStallMs, c.Seed, c.OutputPath},
+		Config:  summaryConfig{c.ListenAddr, c.Backends, c.NumClients, c.LbPolicy, c.EwmaBeta, c.CancelRate, c.DurationS, c.InitialStallMs, c.Seed, c.OutputPath},
 		RunEndS: runEndS, Counts: counts, RatesPerS: rates, ClientsTargeted: targeted, Backends: ing.lb.Snapshot(),
 	}
 	b, err := json.MarshalIndent(s, "", "  ")

@@ -2,7 +2,7 @@
 // proxy in front of several servers, with an in-process LoadCanceller that
 // picks victims from the InFlightMap.
 //
-// Source: abstraction/ingress/design.md (ingress v0.1.12)
+// Source: abstraction/ingress/design.md (ingress v0.1.14)
 package ingress
 
 import (
@@ -27,6 +27,7 @@ const (
 	PolicyRoundRobin       = "round_robin"
 	PolicyLeastOutstanding = "least_outstanding"
 	PolicyPowerOfTwo       = "power_of_two"
+	PolicyEwma             = "ewma"
 )
 
 // Config is the validated IngressConfig.
@@ -37,6 +38,7 @@ type Config struct {
 	Backends   []string
 	NumClients uint32
 	LbPolicy   string
+	EwmaBeta   float64
 	CancelRate float64
 	DurationS  float64
 	Seed       uint64
@@ -53,6 +55,7 @@ type Params struct {
 	Backends       string
 	NumClients     string
 	LbPolicy       string
+	EwmaBeta       string
 	CancelRate     string
 	DurationS      string
 	Seed           string
@@ -62,7 +65,7 @@ type Params struct {
 
 // DefaultParams returns the defaults from abstraction/ingress/api.md#program-parameters.
 func DefaultParams() Params {
-	return Params{ListenAddr: "0.0.0.0:9090", LbPolicy: PolicyLeastOutstanding, CancelRate: "0", Seed: "0",
+	return Params{ListenAddr: "0.0.0.0:9090", LbPolicy: PolicyLeastOutstanding, EwmaBeta: "0.7", CancelRate: "0", Seed: "0",
 		OutputPath: "ingress", InitialStallMs: "1000"}
 }
 
@@ -94,10 +97,14 @@ func Validate(p Params) (Config, error) {
 	}
 	c.NumClients = uint32(n)
 	switch p.LbPolicy {
-	case PolicyRoundRobin, PolicyLeastOutstanding, PolicyPowerOfTwo:
+	case PolicyRoundRobin, PolicyLeastOutstanding, PolicyPowerOfTwo, PolicyEwma:
 		c.LbPolicy = p.LbPolicy
 	default:
-		return c, errors.New("lb_policy must be round_robin, least_outstanding or power_of_two")
+		return c, errors.New("lb_policy must be round_robin, least_outstanding, power_of_two or ewma")
+	}
+	// !(in range) also rejects NaN; the range rejects infinities.
+	if c.EwmaBeta, err = strconv.ParseFloat(p.EwmaBeta, 64); err != nil || !(c.EwmaBeta >= 0 && c.EwmaBeta <= 1) {
+		return c, errors.New("ewma_beta must be a number in [0, 1]")
 	}
 	if c.CancelRate, err = strconv.ParseFloat(p.CancelRate, 64); err != nil || c.CancelRate < 0 ||
 		math.IsInf(c.CancelRate, 0) || math.IsNaN(c.CancelRate) {
