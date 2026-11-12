@@ -1,15 +1,17 @@
 # Server — Description
 
-Subcomponents: Connection Handler, Worker Pool, Ping Handler, CPU Burner, Cancel Tracker.
+Subcomponents: Connection Handler, Worker Pool, Ping Handler, CPU Burner, Message Buffer, Cancel Tracker.
 
 An HTTP/2 (h2c, prior knowledge) server with two endpoints, `POST /ping` and `DELETE /cancel`. It
 accepts connections and gives each one its own **Connection Handler**, which runs as its own
 coroutine or thread. A connection is bound to a client id by its first `/ping` (`id >> 32`).
 
-- **`/ping`** costs a random amount of pure CPU time (the ServiceTime, `Exp(response_rate)`). The
-  Connection Handler draws the ServiceTime and puts the request on one process-wide, unbounded
-  **WorkQueue**. A **WorkerPool** of `n_worker_threads` workers takes requests off it in arrival order and
-  burns the CPU. The server then answers `202` with a PaddedJsonBody of `response_bytes`, or `503` with the
+- **`/ping`** does the work of the **ServerWorkload** named by `workload`. With `cpu_burn` (the default) it
+  costs a random amount of pure CPU time (the ServiceTime, `Exp(response_rate)`). With `message_buffer` it
+  creates `n_messages_per_request` messages and writes them into a **MessageBuffer** filled at startup, to
+  stress the garbage collector. The Connection Handler (for `cpu_burn`, after drawing the ServiceTime) puts the
+  request on one process-wide, unbounded **WorkQueue**. A **WorkerPool** of `n_worker_threads` workers takes
+  requests off it in arrival order and does the work. The server then answers `202` with a PaddedJsonBody of `response_bytes`, or `503` with the
   same kind of body if a `/cancel` stopped it.
 - **`/cancel`** is never queued. The Connection Handler records the RequestId in the global
   **CancelRegistry** under its client id and answers `202` straight away.

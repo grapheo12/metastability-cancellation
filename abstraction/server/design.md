@@ -10,7 +10,8 @@ flowchart TD
   CH -->|push PingJob| Q[(WorkQueue, global, unbounded FIFO)]
   Q -->|pop| W[WorkerPool: n_worker_threads workers]
   W -->|run| PR[Ping Handler: run]
-  PR --> CB[CPU Burner]
+  PR -->|cpu_burn| CB[CPU Burner]
+  PR -->|message_buffer| MB[(Message Buffer: window, global)]
   PR -->|CancelCheckPoints| CM[Cancel Tracker: CancelMatching]
   W -.reply.-> CH
   CH -->|"DELETE /cancel, inline"| HC[Cancel Tracker: handle_cancel]
@@ -26,14 +27,17 @@ flowchart TD
 | Connection Handler | HTTP/2 framing for one connection, per-stream RST flags, client binding, routing, admitting `/ping` onto the WorkQueue, answering `/cancel` inline, response writing | [connection_handler/description.md](connection_handler/description.md) |
 | Worker Pool | The process-wide WorkQueue, the `n_worker_threads` workers that run PingJobs, and the QueueLengthLog sampler | [worker_pool/description.md](worker_pool/description.md) |
 | Ping Handler | Admit a `/ping` (parse body, bind client id, sample ServiceTime) and run it (CancelCheckPoints, burn, build response) | [ping_handler/description.md](ping_handler/description.md) |
-| CPU Burner | Busy-loop for an exact time, with optional RST and `/cancel` checks | [cpu_burner/description.md](cpu_burner/description.md) |
+| CPU Burner | Busy-loop for an exact time, with optional RST and `/cancel` checks (`workload = cpu_burn`) | [cpu_burner/description.md](cpu_burner/description.md) |
+| Message Buffer | The window of messages filled at startup and the per-client MessageCursors (`workload = message_buffer`) | [message_buffer/description.md](message_buffer/description.md) |
 | Cancel Tracker | CancelRegistry, CancelInbox, per-client cancel state, CancelMatching, CancelCounters, `handle_cancel` | [cancel_tracker/description.md](cancel_tracker/description.md) |
 
 ## Configuration validation
 
 ```
 function validate(params):
-    response_rate > 0                         else error
+    workload in {cpu_burn, message_buffer}    else error
+    if workload == cpu_burn or response_rate is given:
+        response_rate > 0                     else error "response_rate must be a number > 0"
     protocol.validate_body_size(response_bytes)
     cancel_mode in {ignore, cooperative}      else error
     cancel_check_interval_us >= 1             else error
@@ -41,6 +45,9 @@ function validate(params):
     n_worker_threads is an integer in 1 ..= 2^32-1   else error
     queue_sample_interval_ms is an integer >= 1      else error   # checked even if queue_log_path is empty
     initial_stall_ms is an integer >= 0              else error
+    window_size is an integer in 1 ..= 2^32-1        else error   # these three are checked under every workload
+    message_bytes is an integer >= 1                 else error
+    n_messages_per_request is an integer >= 1        else error
     queue_log_path is any string; empty means no QueueLengthLog
     return ServerConfig(params)
 ```
@@ -52,7 +59,9 @@ function serve(config):
     registry = cancel_tracker.registry_new(CANCEL_REGISTRY_CAPACITY)     # one per process
     counters = cancel_tracker.counters_new()                            # one per process
     queue = worker_pool.queue_new(config.initial_stall_ms)              # one per process; StallGate
-    pool = worker_pool.pool_start(config.n_worker_threads, queue, config, registry, counters)
+    buf = message_buffer.buffer_new(config.window_size, config.message_bytes) if config.workload == message_buffer
+          else none                                                     # MessageBuffer: full before bind
+    pool = worker_pool.pool_start(config.n_worker_threads, queue, config, registry, counters, buf)
     log = open_for_write(config.queue_log_path) if config.queue_log_path != "" else none   # error: exit non-zero
     socket = bind_and_listen(config.listen_addr)
     print("listening on " + config.listen_addr)
@@ -80,7 +89,7 @@ shift. Reproducing the server's random sequence therefore needs the same connect
 |---|---|---|---|
 | Listener | 1 | accept loop | creates everything below |
 | Connection Handler | 1 per connection | HTTP/2 framing, admit `/ping`, `handle_cancel` inline, response writing | its own `Rng` and binding (exclusively), its own stream table, WorkQueue (push), CancelRegistry (push, read watermark) |
-| Worker | `n_worker_threads` | `queue_pop`, then run the PingJob | WorkQueue (pop), CancelRegistry (per-client state under the client's lock), CancelCounters |
+| Worker | `n_worker_threads` | `queue_pop`, then run the PingJob | WorkQueue (pop), CancelRegistry (per-client state under the client's lock), CancelCounters, MessageBuffer (under its lock) |
 | QueueLengthLog sampler | 0 or 1 | wake every `queue_sample_interval_ms`, append one row | WorkQueue (`queue_len`, under the queue lock), its log file (exclusively) |
 
 Rules every subcomponent shares:
@@ -92,7 +101,8 @@ Rules every subcomponent shares:
   ([cancel_tracker/design.md](cancel_tracker/design.md)) is held only for one CancelMatching pass or one
   watermark update, never across a burn. A Connection Handler's admission lock (it keeps admit and push in one
   order per connection) is held across one `queue_push`. That is the only nesting: admission lock, then WorkQueue
-  lock. A client's cancel lock never nests with another lock.
+  lock. A client's cancel lock never nests with another lock. The MessageBuffer lock is held only for one `push_messages`
+  and never nests with another lock.
 - **Lock-free paths.** RST flags (atomic booleans), CancelInbox pushes, FinishedWatermark reads and the
   CancelCounters stay lock-free.
 - **Ordering.** `/ping` jobs start in global admission order
@@ -123,10 +133,15 @@ In both modes every `202` answer to `/cancel` carries the target client's Finish
 ([cancel_tracker/design.md#finishedwatermark](cancel_tracker/design.md#finishedwatermark)), so "thrown away" in
 `ignore` mode still returns a useful reply.
 
-In both modes the ServiceTime is sampled for every `POST /ping` request whose body parses and
+With `workload = cpu_burn`, in both modes the ServiceTime is sampled for every `POST /ping` request whose body parses and
 whose client id matches the connection, cancelled or not. It is drawn when the Connection Handler admits the
 request, before it is queued, so the random sequence of a connection depends only on its request arrival order,
-not on which worker runs what ([ping_handler/design.md](ping_handler/design.md#sampling-order)).
+not on which worker runs what ([ping_handler/design.md](ping_handler/design.md#sampling-order)). With
+`workload = message_buffer` nothing is drawn.
+
+With `workload = message_buffer`, "burn" in the tables above means creating the request's messages: RST and
+`/cancel` are checked after each message, and a cancelled request never writes to the MessageBuffer
+([ping_handler/design.md](ping_handler/design.md#handle_ping)).
 
 ## Shutdown
 
@@ -153,6 +168,18 @@ trying to stop. It reaches the worker through the lock-free CancelInbox.
 
 The ServiceTime is drawn on the Connection Handler, not on the worker, to keep the per-connection random
 sequence independent of how jobs are spread over the workers.
+
+## Why a MessageBuffer workload
+
+`cpu_burn` makes every request cost CPU time and nothing else, so the server allocates almost nothing and its
+garbage collector, if it has one, stays idle. `message_buffer` instead makes every request allocate: a large
+window of messages stays live for the whole run, and each request replaces some of them, so the replaced ones die
+after a medium lifetime. That is the pattern that makes a tracing collector work hardest
+([message_buffer/description.md](message_buffer/description.md)). Its latency effects then show up in the
+clients' and the Ingress's latencies, under the same WorkQueue and cancellation rules as `cpu_burn`.
+
+The window is shared by all workers, so it needs a lock. Messages are created before the lock is taken, so
+workers contend only for the slot writes.
 
 ## Design specific to Go
 

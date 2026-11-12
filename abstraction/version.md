@@ -77,3 +77,4 @@
 | 0.9.11 | 2026-11-11T00:00:00Z | Ingress parameters: `lb_policy` value `ewma`, new `ewma_beta`. Glossary: LbPolicy, BackendStats, new EwmaLatency, EwmaScore, ForwardTicket |
 | 0.9.12 | 2026-11-11T00:00:00Z | Child bump: ingress 0.1.14 (frontend 0.2.1) |
 | 0.9.13 | 2026-11-11T00:00:00Z | Child bump: benchmark_runner 0.2.12 (config 0.9.0) |
+| 0.9.14 | 2026-11-12T00:00:00Z | Child bump: server 0.6.0 (new message_buffer 0.1.0) |
