@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.6.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.6.1)
 import contextlib
 import io
 import json
@@ -145,7 +145,7 @@ class PointOutputsTest(unittest.TestCase):
                 executor.collect_outputs(point(instances=2), m, m, remote, remote, pdir)
             self.assertTrue(os.path.exists(os.path.join(pdir, "server_0.queue.csv")))
             self.assertEqual(out.getvalue().strip(),
-                             "point 0: server_1.queue.csv missing (left out of queue_length.png)")
+                             "point 0: server_1.queue.csv missing (left out of queue_length)")
             for name in ("loadgen.summary.json", "ingress.summary.json"):
                 open(os.path.join(pdir, name), "w").close()
             self.assertIsNone(executor.validate_outputs(point(instances=2), pdir))

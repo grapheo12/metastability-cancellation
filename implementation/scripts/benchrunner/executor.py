@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.6.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.6.1)
 """run_point: ServerLifecycle, IngressLifecycle, ClientRun and point outputs for one SweepPoint."""
 
 import json
@@ -247,7 +247,7 @@ def collect_outputs(point, server, client, rd_server, rd_client, pdir, ingress_h
         queue_csv = os.path.join(pdir, f"server_{k}.queue.csv")
         server.transport.fetch(f"{rd_server}/server_{k}.queue.csv", queue_csv)
         if not os.path.exists(queue_csv):
-            print(f"point {point.id}: server_{k}.queue.csv missing (left out of queue_length.png)")
+            print(f"point {point.id}: server_{k}.queue.csv missing (left out of queue_length)")
         c = _last_counters(out)
         if c is not None:
             with open(os.path.join(pdir, f"server_counters_{k}.json"), "w") as f:
