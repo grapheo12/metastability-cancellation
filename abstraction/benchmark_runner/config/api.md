@@ -32,6 +32,7 @@ A key set here overrides the SSH configuration ([../remote_transport/design.md#s
 |---|---|---|---|
 | `listen_port` | integer `1..=65535` | `8080` | Runner-owned. Server instance `k` gets `--listen_addr 0.0.0.0:<listen_port + k>`. Cannot be swept |
 | `instances` | integer `1..=64`, and `listen_port + instances - 1 <= 65535` | `1` | Runner-owned. Number of server processes on the server machine, all with the same program parameters. They are the Ingress's backends. Cannot be swept |
+| `gc_trace` | boolean | `false` | Runner-owned. Turns on the servers' GcTrace through the BuildManifest's GcTraceHook ([../remote_setup/api.md#buildmanifest](../remote_setup/api.md#buildmanifest)); the run fails with exit `2` before setup if the hook is missing. Cannot be swept |
 | `threads`, `cpu_set` | see [ProcessPlacement keys](#processplacement-keys) | unset | Runner-owned. The server's ProcessPlacement. Cannot be swept |
 | any server parameter except `listen_addr`, `queue_log_path` | scalar or non-empty array | the program's default (`queue_sample_interval_ms`: 10) | See [../../api.md#server-parameters](../../api.md#server-parameters) |
 
@@ -87,7 +88,7 @@ A **scalar** is a TOML string, integer, float or boolean. Arrays may not be nest
 ### `BenchConfig`
 
 The validated file with every default filled in: `repo_url`, `machines.server`, `machines.client`, `server`,
-`load_gen`, `ingress`, `run`, plus the server's `instances`. Program sections keep their keys in file order. See
+`load_gen`, `ingress`, `run`, plus the server's `instances` and `gc_trace`. Program sections keep their keys in file order. See
 [design.md#benchconfig](design.md#benchconfig).
 
 ### `SweepPoint`

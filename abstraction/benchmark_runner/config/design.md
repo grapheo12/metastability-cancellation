@@ -12,7 +12,7 @@ PROGRAM_PARAMS = {
   "ingress":   ["lb_policy", "ewma_beta", "cancel_rate", "duration_s", "seed", "initial_stall_ms"],
 }
 PLACEMENT_KEYS = ["threads", "cpu_set"]                                  # ProcessPlacement
-RUNNER_KEYS = { "server":    ["listen_port", "instances"] + PLACEMENT_KEYS,
+RUNNER_KEYS = { "server":    ["listen_port", "instances", "gc_trace"] + PLACEMENT_KEYS,
                 "load_gen":  PLACEMENT_KEYS,
                 "ingress":   ["machine", "listen_port", "cancel_rate_fraction"] + PLACEMENT_KEYS }
 SWEEPABLE_RUNNER_KEYS = ["ingress.cancel_rate_fraction"]                 # CancelRateFraction
@@ -40,6 +40,7 @@ function load_config(path):
     for key in ["num_clients", "duration_s", "slo_ms"]:          # the runner itself needs these
         if key not in doc.load_gen: ConfigError("load_gen.<key> is required")
     check_cancel_rate_fraction(doc)                              # CancelRateFraction
+    require server.gc_trace, if present, is a boolean    else ConfigError("server.gc_trace must be true or false")   # GcTrace
     require server.listen_port + server.instances - 1 <= 65535
                          else ConfigError("server.listen_port + server.instances - 1 must be <= 65535")
     check_ingress_placement(config)                           # IngressPlacement: port collision
@@ -58,6 +59,7 @@ Error messages for the runner keys added with ProcessPlacement and CancelRateFra
 | `cancel_rate_fraction` (or an element) not a number, or `<= 0` | `ingress.cancel_rate_fraction must be a number > 0` |
 | `cancel_rate_fraction` is an empty array | `ingress.cancel_rate_fraction must be a scalar or a non-empty array of scalars` |
 | `instances` not an integer in `1..=64` | `server.instances must be an integer in 1..=64` |
+| `gc_trace` not a boolean (an array included: it cannot be swept) | `server.gc_trace must be true or false` |
 | `machine` not `"client"` or `"server"` | `ingress.machine must be "client" or "server"` |
 | a `[canceller]` table (from before the Ingress) | `unknown table [canceller]` |
 | `[server] queue_log_path` | `server.queue_log_path is set by the runner` (the Experiment Executor always sets it, [../experiment_executor/design.md#serverlifecycle](../experiment_executor/design.md#serverlifecycle)) |
