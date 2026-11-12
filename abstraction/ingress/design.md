@@ -79,6 +79,11 @@ Duplicate backends are allowed: they are separate `server_id`s that happen to sh
 generator's traffic, not with the Ingress process. `run_end_s` in the summary is `(time of shutdown - run_start)`
 in seconds, or `0` if no `/ping` was ever received.
 
+When it sets `run_start`, the Frontend also reads the wall clock once, `run_start_unix_ns` (Unix epoch, ns). It is
+only reported, in the summary, so that tools can place the Ingress's times (for example the `t_ns` of
+`forwards.csv`) next to other processes' wall-clock times, such as a server's GcTrace. The Ingress never uses it
+for timing. It is `0` if no `/ping` was ever received.
+
 ## Shutdown
 
 ```
