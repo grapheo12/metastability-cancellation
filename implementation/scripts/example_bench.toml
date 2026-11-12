@@ -34,7 +34,8 @@ duration_s = 10
 
 [ingress]                   # runs on the client machine; the load generator talks to it
 listen_port = 9090
-lb_policy = "least_outstanding"
+lb_policy = "least_outstanding"   # or round_robin, power_of_two, ewma
+# ewma_beta = 0.7           # ewma only: weight of the old EwmaLatency, in [0, 1]
 cancel_rate = 2000          # the in-Ingress LoadCanceller (0 or unset: no cancels)
 
 [run]
