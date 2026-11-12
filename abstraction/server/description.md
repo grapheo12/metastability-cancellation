@@ -8,8 +8,8 @@ coroutine or thread. A connection is bound to a client id by its first `/ping` (
 
 - **`/ping`** does the work of the **ServerWorkload** named by `workload`. With `cpu_burn` (the default) it
   costs a random amount of pure CPU time (the ServiceTime, `Exp(response_rate)`). With `message_buffer` it
-  creates `n_messages_per_request` messages and writes them into a **MessageBuffer** filled at startup, to
-  stress the garbage collector. The Connection Handler (for `cpu_burn`, after drawing the ServiceTime) puts the
+  creates `n_messages_per_request` messages, each a random binary tree of `n_gc_binary_tree_size` nodes, and writes
+  them into a **MessageBuffer** filled at startup, to stress the garbage collector. The Connection Handler (for `cpu_burn`, after drawing the ServiceTime) puts the
   request on one process-wide, unbounded **WorkQueue**. A **WorkerPool** of `n_worker_threads` workers takes
   requests off it in arrival order and does the work. The server then answers `202` with a PaddedJsonBody of `response_bytes`, or `503` with the
   same kind of body if a `/cancel` stopped it.

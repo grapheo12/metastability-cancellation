@@ -3,26 +3,41 @@
 `W` is `window_size`. Slot indices and cursors are u32 in `0 ..= W-1`. Cursor arithmetic is done in u64, so it
 cannot overflow.
 
-## make_message
+## MessageTree
 
 ```
-function make_message(n, size):            # n: u64
-    m = new bytes of length size
-    for i in 0 ..= size-1: m[i] = n mod 256
-    return m
+TreeNode = { value: u64, left: TreeNode | none, right: TreeNode | none }
+
+function make_tree(rng, n):                 # exactly n nodes
+    if n == 0: return none
+    node = new TreeNode(value = next_u64(rng))
+    k = uniform_int(rng, 0, n - 1)          # nodes in the left subtree; one or more draws, one even when n == 1
+    node.left  = make_tree(rng, k)
+    node.right = make_tree(rng, n - 1 - k)
+    return node
 ```
 
-This is Pusher's `mkMessage`. The content only has to be written, so that the pages are really touched; nothing
-reads it back. Every message is a new allocation, never reused.
+- **Exact size.** The left subtree gets `k` nodes and the right `n - 1 - k`, so the tree has exactly `n` nodes.
+- **Random shape.** `k` is uniform over `0 ..= n-1` at every node, so any shape from a path to a balanced tree can
+  occur.
+- **Draw order.** Pre-order: a node's value, then its left size, then its whole left subtree, then its whole right
+  subtree. The same Rng state always gives the same tree. An implementation may use an explicit stack instead of
+  recursion, keeping this order; `n <= 65536` bounds the depth.
+- **References.** Every node is a new allocation that refers to its children, so a tracing collector visits all
+  `n` nodes of every live tree, unlike Pusher's byte messages, whose contents a collector never reads. Nothing reads
+  the values back; they only make each node a full object.
+- `n = 1` gives a single node with no children (its left-size draw is `uniform_int(rng, 0, 0)`, which still uses
+  one draw).
 
 ## MessageBuffer
 
 ```
-buf = { lock: mutex, slots: array[W] of Message, cursors: map client_id -> u32 (empty) }
+buf = { lock: mutex, slots: array[W] of Message (tree roots), cursors: map client_id -> u32 (empty) }
 
-function buffer_new(W, size):
+function buffer_new(W, n, seed):
+    rng = rng_new(derive_seed(seed, STREAM_SERVER_PREFILL, 0))
     for i in 0 ..= W-1:
-        buf.slots[i] = make_message(i, size)       # in slot order; the window is full before the server listens
+        buf.slots[i] = make_tree(rng, n)            # in slot order; the window is full before the server listens
     return buf
 ```
 
@@ -30,7 +45,7 @@ function buffer_new(W, size):
   ([../design.md#listener](../design.md#listener)), so every request finds a full window and a run's first
   requests do not pay for it.
 - The window is never freed while the server runs. It is the live heap the collector has to trace on every cycle.
-- Messages hold no references. A collector traces the `W` slot references but never looks inside a message.
+- A collector traces the `W` slot references and then every node of every tree: `W × n` objects per cycle.
 
 ## MessageCursor
 
@@ -55,6 +70,19 @@ function push_messages(buf, client_id, msgs):
 
 ## Worked examples
 
+MessageTree, `n = 4`, with these left-size draws (values `a, b, c, d` are whatever `next_u64` returns):
+
+| Draw (in order) | Node | Value | `k` = left size | Subtree sizes (left, right) |
+|---|---|---|---|---|
+| 1, 2 | A (root) | a | 1 | (1, 2) |
+| 3, 4 | B (A's left) | b | 0 | (0, 0) |
+| 5, 6 | C (A's right) | c | 1 | (1, 0) |
+| 7, 8 | D (C's left) | d | 0 | (0, 0) |
+
+The tree is `A(left = B, right = C(left = D))`: 4 nodes, each with one value draw and one left-size draw (here
+none of the `uniform_int` calls rejected). `n = 1`: one node, one value draw, one left-size draw returning `0`.
+
+
 `W = 10`. First slot `(client_id × 7919) mod 10`:
 
 | `client_id` | `client_id × 7919` | First slot |
@@ -77,7 +105,8 @@ except that it records the client's start slot as its cursor.
 
 ## Failure and edge cases
 
-- The fill at startup may take noticeable time and memory (`W × message_bytes`, about 200 MB with the defaults).
+- The fill at startup may take noticeable time and memory: `W × n` node allocations (3 million, each holding a
+  u64 and two references, with the defaults).
   If memory runs out the process fails before it listens, which the runner reports as a server that never became
   ready.
 - `client_id` is the id the connection is bound to, so it is always valid when `push_messages` is called.
