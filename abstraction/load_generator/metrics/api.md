@@ -24,7 +24,7 @@ The record written as [Summary JSON](#summary-json). See [design.md#summary](des
 
 ## Functions
 
-### `aggregate(records, config, run_end_ns) -> SummaryReport`
+### `aggregate(records, config, run_end_ns, run_start_unix_ns: u64) -> SummaryReport`
 Counts outcomes, computes rates over `duration_s`, and computes latency statistics over `ok` records. See
 [design.md#collection](design.md#collection), [design.md#summary](design.md#summary) and
 [design.md#percentiles](design.md#percentiles).
@@ -55,6 +55,7 @@ per [design.md#requestrecord](design.md#requestrecord).
 {
   "config":   { every LoadGenConfig parameter, by its parameter name },
   "run_end_s": float,
+  "run_start_unix_ns": integer,
   "counts":   { "scheduled", "sent", "ok", "rejected", "cancelled", "error", "not_sent" },
   "rates_per_s": { "offered", "sent", "goodput" },
   "e2e_latency_us":     { "count", "mean", "p50", "p90", "p99", "p999", "max" },
@@ -62,7 +63,9 @@ per [design.md#requestrecord](design.md#requestrecord).
 }
 ```
 
-Definitions are in [design.md#summary](design.md#summary).
+Definitions are in [design.md#summary](design.md#summary). `run_start_unix_ns` is the wall-clock time (Unix epoch,
+ns) of the Run Controller's `run_start`, the origin of every `*_ns` field of the Requests CSV, so tools can place
+those times next to other processes' wall-clock times.
 
 ## Uses
 
