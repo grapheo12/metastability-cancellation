@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.7.0)
+// Source: abstraction/server/design.md (server v0.7.2)
 package server
 
 import (
@@ -17,6 +17,7 @@ import (
 	"golang.org/x/net/http2"
 
 	"testbed/internal/protocol"
+	"testbed/internal/sampling"
 )
 
 type testClient struct {
@@ -293,7 +294,7 @@ func TestValidateWorkload(t *testing.T) {
 	}
 	p.Workload = "message_buffer"
 	c, err := Validate(p)
-	if err != nil || c.Workload != WorkloadMessageBuffer || c.WindowSize != 200000 || c.MessageBytes != 1024 ||
+	if err != nil || c.Workload != WorkloadMessageBuffer || c.WindowSize != 200000 || c.NGCBinaryTreeSize != 15 ||
 		c.NMessagesPerRequest != 50 {
 		t.Fatalf("message_buffer defaults: %+v %v", c, err)
 	}
@@ -302,7 +303,8 @@ func TestValidateWorkload(t *testing.T) {
 		func(q *Params) { q.ResponseRate = "0" }, // validated when given
 		func(q *Params) { q.WindowSize = "0" },
 		func(q *Params) { q.WindowSize = "4294967296" },
-		func(q *Params) { q.MessageBytes = "0" },
+		func(q *Params) { q.NGCBinaryTreeSize = "0" },
+		func(q *Params) { q.NGCBinaryTreeSize = "65537" },
 		func(q *Params) { q.NMessagesPerRequest = "0" },
 	} {
 		q := p
@@ -322,11 +324,11 @@ func TestValidateWorkload(t *testing.T) {
 func TestMessageBufferEndToEnd(t *testing.T) {
 	s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseBytes: 64, CancelMode: CancelCooperative,
 		CancelCheckIntervalUs: 50, NWorkerThreads: 2, Workload: WorkloadMessageBuffer, WindowSize: 100,
-		MessageBytes: 16, NMessagesPerRequest: 5})
+		NGCBinaryTreeSize: 3, NMessagesPerRequest: 5, Seed: 11})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.buf == nil || len(s.buf.slots) != 100 || s.buf.slots[99][0] != 99 {
+	if s.buf == nil || len(s.buf.slots) != 100 || size(s.buf.slots[99]) != 3 {
 		t.Fatal("window not filled at Listen")
 	}
 	go s.Serve()
@@ -338,14 +340,19 @@ func TestMessageBufferEndToEnd(t *testing.T) {
 		}
 	}
 	s.Shutdown()
-	// client 1 starts at 7919 mod 100 = 19; 3 requests x 5 messages fill 19..33
-	for i := 0; i < 15; i++ {
-		id := protocol.MakeRequestID(uint32(i/5), 1)
-		if got, want := s.buf.slots[19+i][0], byte(id+uint64(i%5)); got != want || len(s.buf.slots[19+i]) != 16 {
-			t.Fatalf("slot %d = %d want %d", 19+i, got, want)
+	// client 1 starts at 7919 mod 100 = 19; 3 requests x 5 trees fill 19..33,
+	// each request's trees drawn from its own stream (seed, client 1, seq)
+	for seq := uint32(0); seq < 3; seq++ {
+		rng := sampling.NewRng(sampling.DeriveSeed(sampling.DeriveSeed(11, sampling.StreamServerMessages, 1),
+			sampling.StreamServerMessages, seq))
+		for k := 0; k < 5; k++ {
+			slot := 19 + int(seq)*5 + k
+			if want := makeTree(rng, 3); s.buf.slots[slot].Value != want.Value || size(s.buf.slots[slot]) != 3 {
+				t.Fatalf("slot %d is not tree %d of request %d", slot, k, seq)
+			}
 		}
 	}
-	if s.buf.cursors[1] != 34 || s.buf.slots[18][0] != 18 || s.buf.slots[34][0] != 34 {
+	if s.buf.cursors[1] != 34 {
 		t.Fatalf("cursor %d", s.buf.cursors[1])
 	}
 }
@@ -355,9 +362,9 @@ func TestMessageBufferEndToEnd(t *testing.T) {
 // Design: abstraction/server/ping_handler/design.md#messagework
 // Design: abstraction/server/ping_handler/design.md#cancelcheckpoints
 func TestFillMessagesCancel(t *testing.T) {
-	cfg := Config{MessageBytes: 4, NMessagesPerRequest: 3}
+	cfg := Config{NGCBinaryTreeSize: 4, NMessagesPerRequest: 3}
 	job := &PingJob{RequestID: protocol.MakeRequestID(5, 2), ClientID: 2}
-	buf := NewMessageBuffer(10, 4)
+	buf := NewMessageBuffer(10, 4, 0)
 	calls := 0
 	idCheck := func() bool { calls++; return calls == 2 } // registered before the second check
 	var rst atomic.Bool
@@ -374,9 +381,16 @@ func TestFillMessagesCancel(t *testing.T) {
 	if got := fillMessages(job, cfg, buf, nil, nil); got != BurnCompleted {
 		t.Fatalf("ignore mode: %v", got)
 	}
-	// client 2 starts at 2*7919 mod 10 = 8: slots 8, 9, 0 get bytes 05, 06, 07
-	if buf.slots[8][0] != 5 || buf.slots[9][0] != 6 || buf.slots[0][0] != 7 || buf.cursors[2] != 1 {
-		t.Fatalf("slots %v %v %v cursor %d", buf.slots[8], buf.slots[9], buf.slots[0], buf.cursors[2])
+	// client 2 starts at 2*7919 mod 10 = 8: slots 8, 9, 0 get trees 0, 1, 2 of the request's stream
+	rng := sampling.NewRng(sampling.DeriveSeed(sampling.DeriveSeed(0, sampling.StreamServerMessages, 2),
+		sampling.StreamServerMessages, 5))
+	for _, slot := range []int{8, 9, 0} {
+		if want := makeTree(rng, 4); buf.slots[slot].Value != want.Value || size(buf.slots[slot]) != 4 {
+			t.Fatalf("slot %d", slot)
+		}
+	}
+	if buf.cursors[2] != 1 {
+		t.Fatalf("cursor %d", buf.cursors[2])
 	}
 }
 

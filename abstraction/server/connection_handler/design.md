@@ -177,7 +177,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | Design subsection | Implementation (file:line) |
 |---|---|
 | [Shared state](#shared-state) | [connhandler.go:46](../../../implementation/go/internal/server/connhandler.go#L46) |
-| [FrameReader](#framereader) | [connhandler.go:92](../../../implementation/go/internal/server/connhandler.go#L92), [server_test.go:134](../../../implementation/go/internal/server/server_test.go#L134) |
+| [FrameReader](#framereader) | [connhandler.go:92](../../../implementation/go/internal/server/connhandler.go#L92), [server_test.go:135](../../../implementation/go/internal/server/server_test.go#L135) |
 | [Admission](#admission) | [connhandler.go:150](../../../implementation/go/internal/server/connhandler.go#L150) |
 | [Routing](#routing) | [connhandler.go:130](../../../implementation/go/internal/server/connhandler.go#L130) |
 | [Response writing](#response-writing) | [connhandler.go:171](../../../implementation/go/internal/server/connhandler.go#L171) |

@@ -120,13 +120,15 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 ### Go choices
 
 - File `internal/server/messagebuffer.go` in the one `internal/server` package (see the server's Go choices).
-- A message is a `[]byte` from `make`, filled with `byte(n)` (which is `n mod 256`). `[]byte` holds no pointers,
-  so Go's collector allocates it as a no-scan object and never looks inside it, as in Pusher's Go version.
-- `MessageBuffer` is `{mu sync.Mutex; slots [][]byte; cursors map[uint32]uint32}`. `buffer_new` is
-  `NewMessageBuffer(windowSize uint32, messageBytes int)`, and `push_messages` is `(*MessageBuffer).Push(clientID, msgs)`,
-  which locks with `defer Unlock`. Cursor arithmetic is in `uint64`.
-- Tests: `messagebuffer_test.go` checks `makeMessage`, the fill in slot order, the cursor worked example, and
-  `W = 1`.
+- A message is a `*TreeNode`, with `TreeNode{Value uint64; Left, Right *TreeNode}` (24 bytes, a Go size class of
+  its own). It holds pointers, so Go's collector scans every node. `make_tree` is the recursive
+  `makeTree(rng *sampling.Rng, n int)`, using `rng.NextU64()` and `rng.UniformInt(0, n-1)` in the spec's order;
+  a recursion depth of at most 65536 is fine on Go's growable goroutine stacks.
+- `MessageBuffer` is `{mu sync.Mutex; slots []*TreeNode; cursors map[uint32]uint32}`. `buffer_new` is
+  `NewMessageBuffer(windowSize uint32, treeSize int, seed uint64)` with the prefill stream, and `push_messages` is
+  `(*MessageBuffer).Push(clientID, msgs)`, which locks with `defer Unlock`. Cursor arithmetic is in `uint64`.
+- Tests: `messagebuffer_test.go` checks exact sizes (0, 1, 4, 15, 1000, 65536), the draw order against a replay
+  from a copied Rng, a single-node tree, the fill from the prefill stream, the cursor worked example, and `W = 1`.
 
 ### Traceability
 
@@ -136,9 +138,9 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [MessageTree](#messagetree) |  |
-| [MessageBuffer](#messagebuffer) | [messagebuffer.go:27](../../../implementation/go/internal/server/messagebuffer.go#L27), [messagebuffer.go:39](../../../implementation/go/internal/server/messagebuffer.go#L39), [messagebuffer_test.go:11](../../../implementation/go/internal/server/messagebuffer_test.go#L11) |
-| [MessageCursor](#messagecursor) | [messagebuffer.go:51](../../../implementation/go/internal/server/messagebuffer.go#L51), [messagebuffer_test.go:25](../../../implementation/go/internal/server/messagebuffer_test.go#L25) |
-| [Worked examples](#worked-examples) | [messagebuffer_test.go:25](../../../implementation/go/internal/server/messagebuffer_test.go#L25) |
-| [Failure and edge cases](#failure-and-edge-cases) | [messagebuffer.go:39](../../../implementation/go/internal/server/messagebuffer.go#L39) |
+| [MessageTree](#messagetree) | [messagebuffer.go:28](../../../implementation/go/internal/server/messagebuffer.go#L28), [messagebuffer_test.go:32](../../../implementation/go/internal/server/messagebuffer_test.go#L32) |
+| [MessageBuffer](#messagebuffer) | [messagebuffer.go:43](../../../implementation/go/internal/server/messagebuffer.go#L43), [messagebuffer.go:55](../../../implementation/go/internal/server/messagebuffer.go#L55), [messagebuffer_test.go:74](../../../implementation/go/internal/server/messagebuffer_test.go#L74) |
+| [MessageCursor](#messagecursor) | [messagebuffer.go:68](../../../implementation/go/internal/server/messagebuffer.go#L68), [messagebuffer_test.go:90](../../../implementation/go/internal/server/messagebuffer_test.go#L90) |
+| [Worked examples](#worked-examples) | [messagebuffer_test.go:32](../../../implementation/go/internal/server/messagebuffer_test.go#L32), [messagebuffer_test.go:90](../../../implementation/go/internal/server/messagebuffer_test.go#L90) |
+| [Failure and edge cases](#failure-and-edge-cases) | [messagebuffer.go:55](../../../implementation/go/internal/server/messagebuffer.go#L55) |
 <!-- trace:end -->

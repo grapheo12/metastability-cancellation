@@ -1,23 +1,39 @@
-// Source: abstraction/server/message_buffer/design.md (message_buffer v0.1.0)
+// Source: abstraction/server/message_buffer/design.md (message_buffer v0.2.0)
 package server
 
-import "sync"
+import (
+	"sync"
+
+	"testbed/internal/sampling"
+)
 
 // MessageCursorStride spreads the first slot of each client's MessageCursor.
 //
 // API: abstraction/server/message_buffer/api.md#constants
 const MessageCursorStride = 7919
 
-// makeMessage returns a new message whose every byte is n mod 256.
+// TreeNode is one node of a MessageTree: 24 bytes, two of them pointers, so
+// the collector must scan every node.
 //
-// Design: abstraction/server/message_buffer/design.md#make_message
-func makeMessage(n uint64, size int) []byte {
-	m := make([]byte, size)
-	b := byte(n) // n mod 256
-	for i := range m {
-		m[i] = b
+// API: abstraction/server/message_buffer/api.md#treenode
+type TreeNode struct {
+	Value       uint64
+	Left, Right *TreeNode
+}
+
+// makeTree returns a new random tree of exactly n nodes (nil for 0), drawing
+// in pre-order: value, left size, left subtree, right subtree.
+//
+// Design: abstraction/server/message_buffer/design.md#messagetree
+func makeTree(rng *sampling.Rng, n int) *TreeNode {
+	if n == 0 {
+		return nil
 	}
-	return m
+	node := &TreeNode{Value: rng.NextU64()}
+	k := int(rng.UniformInt(0, uint64(n-1))) // nodes in the left subtree
+	node.Left = makeTree(rng, k)
+	node.Right = makeTree(rng, n-1-k)
+	return node
 }
 
 // MessageBuffer is the window of messages shared by every worker, and each
@@ -26,7 +42,7 @@ func makeMessage(n uint64, size int) []byte {
 // Design: abstraction/server/message_buffer/design.md#messagebuffer
 type MessageBuffer struct {
 	mu      sync.Mutex
-	slots   [][]byte
+	slots   []*TreeNode       // MessageTree roots
 	cursors map[uint32]uint32 // client_id -> next slot to overwrite
 }
 
@@ -36,10 +52,11 @@ type MessageBuffer struct {
 //
 // Design: abstraction/server/message_buffer/design.md#messagebuffer
 // Design: abstraction/server/message_buffer/design.md#failure-and-edge-cases
-func NewMessageBuffer(windowSize uint32, messageBytes int) *MessageBuffer {
-	b := &MessageBuffer{slots: make([][]byte, windowSize), cursors: map[uint32]uint32{}}
+func NewMessageBuffer(windowSize uint32, treeSize int, seed uint64) *MessageBuffer {
+	b := &MessageBuffer{slots: make([]*TreeNode, windowSize), cursors: map[uint32]uint32{}}
+	rng := sampling.NewRng(sampling.DeriveSeed(seed, sampling.StreamServerPrefill, 0))
 	for i := range b.slots {
-		b.slots[i] = makeMessage(uint64(i), messageBytes)
+		b.slots[i] = makeTree(rng, treeSize) // in slot order
 	}
 	return b
 }
@@ -48,7 +65,7 @@ func NewMessageBuffer(windowSize uint32, messageBytes int) *MessageBuffer {
 // MessageCursor, wrapping at the window size, under the lock.
 //
 // Design: abstraction/server/message_buffer/design.md#messagecursor
-func (b *MessageBuffer) Push(clientID uint32, msgs [][]byte) {
+func (b *MessageBuffer) Push(clientID uint32, msgs []*TreeNode) {
 	w := uint64(len(b.slots))
 	b.mu.Lock()
 	defer b.mu.Unlock()

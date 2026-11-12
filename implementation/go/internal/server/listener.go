@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.7.0)
+// Source: abstraction/server/design.md (server v0.7.2)
 package server
 
 import (
@@ -65,7 +65,7 @@ func Listen(cfg Config) (*Server, error) {
 	}
 	if cfg.Workload == WorkloadMessageBuffer {
 		// Design: abstraction/server/design.md#listener
-		s.buf = NewMessageBuffer(cfg.WindowSize, cfg.MessageBytes) // full before the bind
+		s.buf = NewMessageBuffer(cfg.WindowSize, cfg.NGCBinaryTreeSize, cfg.Seed) // full before the bind
 	}
 	if cfg.QueueLogPath != "" {
 		f, err := os.Create(cfg.QueueLogPath)

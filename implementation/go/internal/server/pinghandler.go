@@ -1,4 +1,4 @@
-// Source: abstraction/server/ping_handler/design.md (ping_handler v0.6.0)
+// Source: abstraction/server/ping_handler/design.md (ping_handler v0.7.0)
 package server
 
 import (
@@ -94,9 +94,12 @@ func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *Cance
 //
 // Design: abstraction/server/ping_handler/design.md#messagework
 func fillMessages(job *PingJob, cfg Config, buf *MessageBuffer, cancelled *atomic.Bool, idCheck func() bool) BurnOutcome {
-	msgs := make([][]byte, 0, cfg.NMessagesPerRequest)
+	seq, clientID := protocol.SplitRequestID(job.RequestID)
+	rng := sampling.NewRng(sampling.DeriveSeed( // the request's own MessageTree stream
+		sampling.DeriveSeed(cfg.Seed, sampling.StreamServerMessages, clientID), sampling.StreamServerMessages, seq))
+	msgs := make([]*TreeNode, 0, cfg.NMessagesPerRequest)
 	for k := 0; k < cfg.NMessagesPerRequest; k++ {
-		msgs = append(msgs, makeMessage(job.RequestID+uint64(k), cfg.MessageBytes)) // u64, wrapping
+		msgs = append(msgs, makeTree(rng, cfg.NGCBinaryTreeSize)) // MessageTree k, in order
 		if cancelled != nil && cancelled.Load() {
 			return BurnCancelledRST
 		}

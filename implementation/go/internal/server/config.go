@@ -1,7 +1,7 @@
 // Package server implements the HTTP/2 /ping + /cancel server. Each file maps
 // to one component of abstraction/server.
 //
-// Source: abstraction/server/design.md (server v0.7.0)
+// Source: abstraction/server/design.md (server v0.7.2)
 package server
 
 import (
@@ -52,7 +52,7 @@ type Config struct {
 	InitialStallMs        uint64 // StallGate; 0: no stall
 	Workload              Workload
 	WindowSize            uint32 // MessageBuffer slots
-	MessageBytes          int
+	NGCBinaryTreeSize     int    // nodes per MessageTree
 	NMessagesPerRequest   int
 }
 
@@ -70,7 +70,7 @@ type Params struct {
 	InitialStallMs        string
 	Workload              string
 	WindowSize            string
-	MessageBytes          string
+	NGCBinaryTreeSize     string
 	NMessagesPerRequest   string
 }
 
@@ -86,7 +86,7 @@ func DefaultParams() Params {
 		InitialStallMs:        "1000",
 		Workload:              "cpu_burn",
 		WindowSize:            "200000",
-		MessageBytes:          "1024",
+		NGCBinaryTreeSize:     "15",
 		NMessagesPerRequest:   "50",
 	}
 }
@@ -165,11 +165,11 @@ func Validate(p Params) (Config, error) {
 		return c, errors.New("window_size must be an integer in 1..=4294967295")
 	}
 	c.WindowSize = uint32(ws)
-	mb, err := strconv.Atoi(p.MessageBytes)
-	if err != nil || mb < 1 {
-		return c, errors.New("message_bytes must be an integer >= 1")
+	ts, err := strconv.Atoi(p.NGCBinaryTreeSize)
+	if err != nil || ts < 1 || ts > 65536 {
+		return c, errors.New("n_gc_binary_tree_size must be an integer in 1..=65536")
 	}
-	c.MessageBytes = mb
+	c.NGCBinaryTreeSize = ts
 	nm, err := strconv.Atoi(p.NMessagesPerRequest)
 	if err != nil || nm < 1 {
 		return c, errors.New("n_messages_per_request must be an integer >= 1")
