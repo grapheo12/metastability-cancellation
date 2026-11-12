@@ -25,7 +25,7 @@ A value that is missing or `null` is an empty field. See [design.md#pointtable](
 ## Functions
 
 ### `plot(output_dir) -> ok | NothingToPlot`
-Writes `all_points.csv` and `plots/*.png` ([../api.md#output-directory](../api.md#output-directory)). Returns
+Writes `all_points.csv` and `plots/*.html` (interactive FigurePages, [design.md#sweepplots](design.md#sweepplots)) ([../api.md#output-directory](../api.md#output-directory)). Returns
 `NothingToPlot` (after still writing the table) when no point is `done`. See
 [design.md#pointtable](design.md#pointtable), [design.md#sweepplots](design.md#sweepplots) and
 [design.md#throughputlatencyplot](design.md#throughputlatencyplot) and

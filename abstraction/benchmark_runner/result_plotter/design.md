@@ -45,7 +45,7 @@ function plot(output_dir):
         y-axis log scale if the figure says so
         legend with series labels when there is more than one series
         x-axis label = x_key
-        save as output_dir/plots/<figure name>.png (create plots/ first), width 6 in per subplot column
+        save as output_dir/plots/<figure name>.html (create plots/ first), about 600 px wide per subplot column
 ```
 
 | Figure (file name) | x | Subplots (metric) | y scale |
@@ -76,9 +76,20 @@ is `load_gen.global_rate` and the lines are labelled `server.cancel_mode=ignore,
 `server.cancel_mode=ignore, load_gen.num_clients=32`, and so on, one per combination that appears among the
 `done` points.
 
+Every figure is an interactive page (**FigurePage**), `plots/<figure name>.html`:
+
+- **Offline.** A page opens in a browser with no network access. Pages may share one script file that the
+  plotter writes into `plots/` next to them; nothing else outside `plots/` is needed.
+- **Interactive.** Each line can be hidden or shown from the legend, the axes can be zoomed and panned, and
+  hovering over a point shows its x value, its y value and its line's label.
+- **Layout.** A figure's subplots sit side by side in one row, each with its title above it, sharing the
+  figure's legend. "About 600 px wide per subplot column" is the page's initial size; the page may resize.
+- **Log scale.** A "log" y-axis is used only when every plotted y value of that subplot is above 0; otherwise the
+  subplot stays linear, so an empty or zero-valued line never breaks the page.
+
 ## ThroughputLatencyPlot
 
-The **ThroughputLatencyPlot** (`throughput_latency.png`) puts measured goodput, not a swept key, on the x-axis. The
+The **ThroughputLatencyPlot** (`throughput_latency.html`) puts measured goodput, not a swept key, on the x-axis. The
 series are the same as in every other figure, so with `sweep_order = [load_gen.global_rate, X]` there is one line
 per value of `X`, and each line has one point per offered rate.
 
@@ -92,7 +103,7 @@ function draw_throughput_latency(figure, done, x_key, series, position):
     x-axis linear, label "lg_goodput (requests/s)"
     y-axis log scale (same positivity rule as the other figures)
     legend with series labels when there is more than one series
-    save as output_dir/plots/throughput_latency.png, width 6 in per subplot column
+    save as output_dir/plots/throughput_latency.html, about 600 px wide per subplot column
 ```
 
 Points are joined in swept order, so past saturation, where goodput stops growing or falls while offered load
@@ -157,7 +168,7 @@ function lb_imbalance(summary_path):
 
 ## ThroughputLatencyNormalizedPlot
 
-The **ThroughputLatencyNormalizedPlot** (`throughput_latency_normalized.png`) is the ThroughputLatencyPlot with
+The **ThroughputLatencyNormalizedPlot** (`throughput_latency_normalized.html`) is the ThroughputLatencyPlot with
 each point's goodput scaled by `1 / (1 - cx_offered_fraction)`. It answers what goodput the same points would
 show if the share of load the LoadCanceller aims at had not been removed. Everything else (subplots, series, swept-order
 joining, y scale, legend) is as in the ThroughputLatencyPlot.
@@ -181,7 +192,7 @@ x-axis label: `lg_goodput / (1 - cx_offered_fraction) (requests/s)`.
 
 ## QueueLengthPlot
 
-The **QueueLengthPlot** (`queue_length.png`) shows each done point's WorkQueue backlog over time, from the servers'
+The **QueueLengthPlot** (`queue_length.html`) shows each done point's WorkQueue backlog over time, from the servers'
 QueueLengthLogs ([../../server/api.md#queuelengthlog-output](../../server/api.md#queuelengthlog-output)). Unlike the
 other figures it has time on the x-axis and **one line per point**, not per series.
 
@@ -211,12 +222,12 @@ function draw_queue_length(output_dir, done, swept_keys):
         label = ", ".join(k + "=" + row[k] for k in swept_keys) or ("point " + row.point)
         lines.append((label, s))
     if lines is empty:
-        delete output_dir/plots/queue_length.png if it exists; return     # not an error
+        delete output_dir/plots/queue_length.html if it exists; return     # not an error
     one plot; for each (label, s) in lines: a line without markers through s
     x-axis linear, label "time since server start (s)"
     y-axis linear from 0, label "queue_len (waiting jobs, all instances)"
     legend with the labels when there is more than one line
-    save as output_dir/plots/queue_length.png, width 6 in
+    save as output_dir/plots/queue_length.html, about 600 px wide
 ```
 
 - **Instances are summed by row index.** All instances of a point use the same `queue_sample_interval_ms` and start
@@ -241,7 +252,7 @@ Worked example, one point with 2 instances:
 | One instance's file missing, the other present | Plotted from the present instance only |
 | A log with a header only | Point left out (`m = 0`) |
 | Truncated last line | Rows up to it are used |
-| No done point has a log | No `queue_length.png`; any earlier one is deleted |
+| No done point has a log | No `queue_length.html`; any earlier one is deleted |
 
 Non-goal: no PointTable column summarizes the queue length in this version.
 
@@ -250,13 +261,13 @@ Non-goal: no PointTable column summarizes the queue length in this version.
 The **ForwardTimelinePlots** show what the Ingress's LoadBalancer saw over time, from its ForwardLog
 (`ingress.forwards.csv`, [../../ingress/api.md#output_pathforwardscsv](../../ingress/api.md#output_pathforwardscsv)):
 
-- `forward_latency.png`: the latency of `ok` forwards;
-- `ewma_latency.png`: the backend's EwmaLatency recorded with every forward.
+- `forward_latency.html`: the latency of `ok` forwards;
+- `ewma_latency.html`: the backend's EwmaLatency recorded with every forward.
 
 Each figure has two subplots, the median and the p99 of the values in each time bin of `FORWARD_BIN_MS = 20` ms.
 Like the QueueLengthPlot, each figure has **one line per done point**. When some done point has more than one
-backend, each backend gets its own pair of figures, `forward_latency_server_<k>.png` and
-`ewma_latency_server_<k>.png`, holding only that backend's rows.
+backend, each backend gets its own pair of figures, `forward_latency_server_<k>.html` and
+`ewma_latency_server_<k>.html`, holding only that backend's rows.
 
 ```
 FORWARD_BIN_MS = 20
@@ -309,9 +320,9 @@ function draw_forward_timelines(output_dir, done, swept_keys):
             x-axis linear, label "time since first /ping at the Ingress (s)"
             y-axis log, label ylabel
             legend with the labels when there is more than one line
-            save as output_dir/plots/<file>.png, width 6 in per subplot
+            save as output_dir/plots/<file>.html, about 600 px wide per subplot
             produced.append(file)
-    delete every output_dir/plots/forward_latency*.png and ewma_latency*.png not in produced   # stale ones
+    delete every output_dir/plots/forward_latency*.html and ewma_latency*.html not in produced   # stale ones
 ```
 
 - **Time base.** `t_ns` is measured from the Ingress's `run_start`, its first `/ping`, so every point starts at 0
@@ -348,7 +359,7 @@ Bin 2 has no row, so the lines go straight from x = 0.02 to x = 0.06.
 | No `ingress.forwards.csv` for a point (e.g. a run made before the ForwardLog) | Point left out |
 | A file with a header only, or no `ok` row for the latency figure | Point left out of that figure |
 | Truncated last line | Rows up to it are used |
-| Every done point has `B = 1` | `forward_latency.png` and `ewma_latency.png` |
-| Some done point has `B = 2` | `forward_latency_server_0.png`, `…_server_1.png`, and the same for `ewma_latency`; a point with `B = 1` appears only in the `_server_0` figures |
+| Every done point has `B = 1` | `forward_latency.html` and `ewma_latency.html` |
+| Some done point has `B = 2` | `forward_latency_server_0.html`, `…_server_1.html`, and the same for `ewma_latency`; a point with `B = 1` appears only in the `_server_0` figures |
 | No done point has a ForwardLog | No forward timeline figure; earlier ones are deleted |
 
