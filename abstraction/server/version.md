@@ -18,3 +18,4 @@
 | 0.5.3 | 2026-11-10T00:00:00Z | Child bump: worker_pool 0.3.1 |
 | 0.6.0 | 2026-11-12T00:00:00Z | ServerWorkload `workload` (`cpu_burn` \| `message_buffer`); parameters `window_size`, `message_bytes`, `n_messages_per_request`; `response_rate` required only for `cpu_burn`; Listener fills the MessageBuffer before bind; MessageBuffer lock rules. New child message_buffer 0.1.0 |
 | 0.6.1 | 2026-11-12T00:00:00Z | Child bump: worker_pool 0.4.0 |
+| 0.6.2 | 2026-11-12T00:00:00Z | Child bump: ping_handler 0.6.0 |

@@ -27,7 +27,9 @@ function admit_ping(task, config, rng, conn_state):
     else if conn_state.client_id != client_id:
         return Response(400, empty)
 
-    service_us = sampling.exponential_us(rng, config.response_rate)      # see Sampling order
+    service_us = 0
+    if config.workload == cpu_burn:
+        service_us = sampling.exponential_us(rng, config.response_rate)  # see Sampling order
     return PingJob(task = task, request_id = id, client_id = client_id,
                    service_us = service_us, reply = new OneShot)
 ```
@@ -35,7 +37,7 @@ function admit_ping(task, config, rng, conn_state):
 ## run_ping
 
 ```
-function run_ping(job, config, registry, counters):
+function run_ping(job, config, registry, counters, buf):        # buf: MessageBuffer, or NONE for cpu_burn
     id = job.request_id
     slot = cancel_tracker.registry_client(registry, job.client_id)      # none if the registry is full
     cancel_tracker.registry_start(registry, slot, id)                    # CancelMatching: started, not finished
@@ -52,15 +54,21 @@ function run_ping(job, config, registry, counters):
             finish(false); return Response(503, protocol.build_body(id, config.response_bytes))
 
         # CancelCheckPoint 2: during processing
-        outcome = cpu_burner.burn(job.service_us, job.task.cancelled, config.cancel_check_interval_us,
-                                  id_check, CHECK_ITER)
+        if config.workload == cpu_burn:
+            outcome = cpu_burner.burn(job.service_us, job.task.cancelled, config.cancel_check_interval_us,
+                                      id_check, CHECK_ITER)
+        else:
+            outcome = fill_messages(job, config, buf, job.task.cancelled, id_check)        # MessageWork
         if outcome == CANCELLED_RST:
             finish(false); return Aborted
         if outcome == CANCELLED_ID:
             counters.cancelled_during_processing.fetch_add(1, relaxed)
             finish(false); return Response(503, protocol.build_body(id, config.response_bytes))
     else:  # ignore
-        cpu_burner.burn(job.service_us, NONE, config.cancel_check_interval_us, NONE, CHECK_ITER)
+        if config.workload == cpu_burn:
+            cpu_burner.burn(job.service_us, NONE, config.cancel_check_interval_us, NONE, CHECK_ITER)
+        else:
+            fill_messages(job, config, buf, NONE, NONE)                                    # always COMPLETED
 
     finish(true)                                                         # completed: feeds completed_before_cancel
     return Response(202, protocol.build_body(id, config.response_bytes))
@@ -69,6 +77,42 @@ function run_ping(job, config, registry, counters):
 `run_ping` never fails. If the registry is full and the client has no slot, `slot` is `none`: `should_cancel` returns
 `false` and `finish` does nothing, so the request just runs to `202` (or `Aborted` by RST). `/cancel`s for such a
 client are answered `503` by `handle_cancel`, because they would need the same missing slot.
+
+## MessageWork
+
+The work of a request when `workload = message_buffer`: create `n_messages_per_request` messages, then write them
+all into the MessageBuffer ([../message_buffer/design.md](../message_buffer/design.md#messagecursor)).
+
+```
+function fill_messages(job, config, buf, cancel_flag, id_check):    # -> COMPLETED | CANCELLED_RST | CANCELLED_ID
+    msgs = []
+    for k in 0 ..= config.n_messages_per_request - 1:
+        msgs.append(message_buffer.make_message(job.request_id + k, config.message_bytes))   # u64, wrapping
+        if cancel_flag is not NONE and cancel_flag.load(): return CANCELLED_RST
+        if id_check is not NONE and id_check(): return CANCELLED_ID
+    message_buffer.push_messages(buf, job.client_id, msgs)      # takes the buffer lock once
+    return COMPLETED
+```
+
+- **Created before the lock.** Every message is allocated and filled before `push_messages`, so the buffer lock
+  covers only the slot writes.
+- **Checks after each message.** After every message, the RST flag first, then CancelMatching, the same precedence
+  as the burn. A cancelled request drops the messages it created and never writes to the buffer, so cancelled work
+  still leaves garbage.
+- **No checks after the push.** Once `push_messages` starts, the request completes.
+- **Message numbers.** Message `k` of request `id` is `make_message(id + k)` (unsigned 64-bit, wrapping), so
+  its bytes are `(id + k) mod 256`.
+- The work takes as long as the allocations take; there is no ServiceTime, and `response_rate` is not used.
+
+Worked example, `n_messages_per_request = 3`, `message_bytes = 4`, request id `0x0000000200000005` (client 2,
+seq 5), `cooperative`:
+
+| Situation | Messages created | Buffer writes | Result |
+|---|---|---|---|
+| No cancel | bytes `05 05 05 05`, `06 06 06 06`, `07 07 07 07` | 3 slots from client 2's cursor | `202` |
+| `/cancel` registered after check point 1, before the second message's check | 2 | none | `503`, `cancelled_during_processing += 1` |
+| RST set after check point 1, before the first message's check | 1 | none | `Aborted` |
+| `/cancel` registered before the request starts | 0 (caught at check point 1) | none | `503`, `cancelled_before_processing += 1` |
 
 ## Client binding
 
@@ -80,8 +124,9 @@ change the state.
 
 ## Sampling order
 
-`exponential_us` is called **exactly once for each request that parses and matches the binding,
-before it is queued and before any cancellation check**, in both modes, inside `admit_ping`. A connection admits
+With `workload = cpu_burn`, `exponential_us` is called **exactly once for each request that parses and matches
+the binding, before it is queued and before any cancellation check**, in both modes, inside `admit_ping`. With
+`workload = message_buffer` it is never called, and the connection's `rng` is not used. A connection admits
 its requests one at a time in the order they were fully received. The `k`-th such request on connection `c`
 therefore always gets the `k`-th sample of that connection's stream, whatever the cancellation timing, whatever
 `n_worker_threads` is, and whichever worker runs it. A `400` request draws no sample.
@@ -93,7 +138,8 @@ In `cooperative` mode the worker running the request checks for cancellation at 
 | # | When | RST flag | `/cancel` (CancelMatching) |
 |---|---|---|---|
 | 1 | When a worker has popped the job, before the burn | checked first, then → `Aborted` | → `503`, `cancelled_before_processing += 1` |
-| 2 | During the burn | every `cancel_check_interval_us` → `Aborted` | every `CHECK_ITER` spin units → `503`, `cancelled_during_processing += 1` |
+| 2 | During the burn (`cpu_burn`) | every `cancel_check_interval_us` → `Aborted` | every `CHECK_ITER` spin units → `503`, `cancelled_during_processing += 1` |
+| 2 | During MessageWork (`message_buffer`), before the buffer is written | after each message → `Aborted` | after each message → `503`, `cancelled_during_processing += 1` |
 | (3) | Before the response is written | checked by the Connection Handler ([response writing](../connection_handler/design.md#response-writing)) | not checked: a completed burn is final |
 
 A request reset or cancelled while it waits in the WorkQueue is caught at check point 1 when its turn comes. It
@@ -136,7 +182,7 @@ Worked example for client 0 in `cooperative` mode, `/cancel` for id 1 registered
 
 | Status | Returned by | When | Body |
 |---|---|---|---|
-| `202` | `run_ping` | Burn completed | PaddedJsonBody of `response_bytes` |
+| `202` | `run_ping` | Burn or MessageWork completed | PaddedJsonBody of `response_bytes` |
 | `503` | `run_ping` | `/cancel` matched at check point 1 or 2 | PaddedJsonBody of `response_bytes` |
 | `400` | `admit_ping` | Unparseable body or client id mismatch | empty |
 | none (`Aborted`) | `run_ping` | RST at check point 1 or 2 | — |
