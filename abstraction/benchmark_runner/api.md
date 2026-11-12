@@ -35,6 +35,7 @@ set `[run] output_dir` to that run's directory.
       loadgen.summary.json
       loadgen.log
       ingress.cancels.csv     # Ingress outputs (../ingress/api.md#outputs)
+      ingress.forwards.csv    # the Ingress's ForwardLog
       ingress.summary.json
       ingress.log
       server_<k>.out          # stdout + stderr of server instance k
