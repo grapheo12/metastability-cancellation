@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.2.1)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.2.2)
 package ingress
 
 import (
@@ -102,6 +102,9 @@ func TestForwardRelayAndSpread(t *testing.T) {
 	raw, _ := os.ReadFile(ing.cfg.OutputPath + ".summary.json")
 	if err := json.Unmarshal(raw, &s); err != nil {
 		t.Fatal(err)
+	}
+	if lo, hi := uint64(time.Now().Add(-time.Minute).UnixNano()), uint64(time.Now().UnixNano()); s.RunStartUnixNs < lo || s.RunStartUnixNs > hi {
+		t.Fatalf("run_start_unix_ns %d not within the last minute", s.RunStartUnixNs)
 	}
 	if len(s.Backends) != 2 || s.Backends[0].Forwarded != 6 || s.Backends[1].Forwarded != 6 ||
 		s.Backends[0].OK+s.Backends[1].OK != 12 || s.Counts.Scheduled != 0 || s.RunEndS <= 0 {

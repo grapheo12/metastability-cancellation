@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.1.15)
+// Source: abstraction/ingress/design.md (ingress v0.1.17)
 package ingress
 
 import (
@@ -149,7 +149,12 @@ func (ing *Ingress) Shutdown() error {
 	if err := writeForwardsCSV(ing.cfg.OutputPath+".forwards.csv", ing.lb.ForwardLog(), runStart); err != nil {
 		return err
 	}
-	return ing.writeSummary(records, runEnd)
+	var runStartUnixNs uint64
+	if started {
+		// Design: abstraction/ingress/design.md#time-base
+		runStartUnixNs = uint64(runStart.UnixNano()) // reported only
+	}
+	return ing.writeSummary(records, runEnd, runStartUnixNs)
 }
 
 type summaryConfig struct {
@@ -171,18 +176,19 @@ type summaryConfig struct {
 type Summary struct {
 	Config          summaryConfig       `json:"config"`
 	RunEndS         float64             `json:"run_end_s"`
+	RunStartUnixNs  uint64              `json:"run_start_unix_ns"` // 0 without /ping
 	Counts          cancelCounts        `json:"counts"`
 	RatesPerS       cancelRates         `json:"rates_per_s"`
 	ClientsTargeted int                 `json:"clients_targeted"`
 	Backends        []BackendStatsValue `json:"backends"`
 }
 
-func (ing *Ingress) writeSummary(records []*CancelRecord, runEndS float64) error {
+func (ing *Ingress) writeSummary(records []*CancelRecord, runEndS float64, runStartUnixNs uint64) error {
 	c := ing.cfg
 	counts, rates, targeted := summarizeCancels(records, c)
 	s := Summary{
 		Config:  summaryConfig{c.ListenAddr, c.Backends, c.NumClients, c.LbPolicy, c.EwmaBeta, c.CancelRate, c.DurationS, c.InitialStallMs, c.Seed, c.OutputPath},
-		RunEndS: runEndS, Counts: counts, RatesPerS: rates, ClientsTargeted: targeted, Backends: ing.lb.Snapshot(),
+		RunEndS: runEndS, RunStartUnixNs: runStartUnixNs, Counts: counts, RatesPerS: rates, ClientsTargeted: targeted, Backends: ing.lb.Snapshot(),
 	}
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {

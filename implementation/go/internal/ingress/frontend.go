@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.2.1)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.2.2)
 package ingress
 
 import (
@@ -130,7 +130,7 @@ func (ing *Ingress) startOnce() {
 	}
 	ing.startMu.Lock()
 	defer ing.startMu.Unlock()
-	ing.runStart = time.Now()
+	ing.runStart = time.Now() // one read: monotonic for run_start, wall clock for run_start_unix_ns
 	if ing.cfg.CancelRate > 0 {
 		ing.canceller = StartCanceller(ing.cfg, ing.inflight, ing.runStart)
 	}
