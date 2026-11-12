@@ -30,7 +30,7 @@ Writes `all_points.csv` and `plots/*.html` (interactive FigurePages, [design.md#
 [design.md#pointtable](design.md#pointtable), [design.md#sweepplots](design.md#sweepplots) and
 [design.md#throughputlatencyplot](design.md#throughputlatencyplot) and
 [design.md#throughputlatencynormalizedplot](design.md#throughputlatencynormalizedplot) and
-[design.md#queuelengthplot](design.md#queuelengthplot) and [design.md#forwardtimelineplots](design.md#forwardtimelineplots).
+[design.md#queuelengthplot](design.md#queuelengthplot) and [design.md#forwardtimelineplots](design.md#forwardtimelineplots) and [design.md#gcoverlay](design.md#gcoverlay).
 
 ## Uses
 
@@ -39,3 +39,4 @@ Writes `all_points.csv` and `plots/*.html` (interactive FigurePages, [design.md#
 - [../../ingress/api.md](../../ingress/api.md#output_pathsummaryjson): Ingress summary fields (`counts`, `backends`)
 - [../../server/api.md](../../server/api.md#queuelengthlog-output): the QueueLengthLog CSV (`server_<k>.queue.csv`)
 - [../../ingress/api.md](../../ingress/api.md#output_pathforwardscsv): the ForwardLog CSV (`ingress.forwards.csv`)
+- [../experiment_executor/design.md](../experiment_executor/design.md#gcevents): the GcEvents CSV (`server_<k>.gc.csv`), placed with the Ingress summary's `run_start_unix_ns`

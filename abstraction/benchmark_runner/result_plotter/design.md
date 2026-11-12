@@ -320,6 +320,7 @@ function draw_forward_timelines(output_dir, done, swept_keys):
             x-axis linear, label "time since first /ping at the Ingress (s)"
             y-axis log, label ylabel
             legend with the labels when there is more than one line
+            if name == "forward_latency": overlay GcEvents on both subplots ([GcOverlay](#gcoverlay))
             save as output_dir/plots/<file>.html, about 600 px wide per subplot
             produced.append(file)
     delete every output_dir/plots/forward_latency*.html and ewma_latency*.html not in produced   # stale ones
@@ -362,6 +363,55 @@ Bin 2 has no row, so the lines go straight from x = 0.02 to x = 0.06.
 | Every done point has `B = 1` | `forward_latency.html` and `ewma_latency.html` |
 | Some done point has `B = 2` | `forward_latency_server_0.html`, `…_server_1.html`, and the same for `ewma_latency`; a point with `B = 1` appears only in the `_server_0` figures |
 | No done point has a ForwardLog | No forward timeline figure; earlier ones are deleted |
+
+## GcOverlay
+
+When a point has the servers' GcEvents (`server_<k>.gc.csv`, written with `[server] gc_trace`,
+[../experiment_executor/design.md#gcevents](../experiment_executor/design.md#gcevents)), the `forward_latency`
+figures show each garbage-collection cycle of the backend they plot as a vertical line at the cycle's start, on the
+same time axis as the latency.
+
+```
+function read_gc_log(path):                        # -> list of (t_unix_ns, cycle, stw_start_ms, mark_ms, stw_end_ms) | none
+    if path does not exist: return none
+    rows = []
+    for each line after the header "t_unix_ns,cycle,stw_start_ms,mark_ms,stw_end_ms":
+        if the line does not have 5 fields, the first two decimal integers and the last three decimal numbers: stop
+        rows.append(...)
+    return rows
+
+function gc_events(pdir, k, t_end_s):              # -> list of (x_s, cycle, stw_start_ms, mark_ms, stw_end_ms) | none
+    gc = read_gc_log(pdir/server_<k>.gc.csv)
+    start = run_start_unix_ns of pdir/ingress.summary.json, or none if the file or the key is missing, or it is 0
+    if gc is none or start is none: return none
+    events = []
+    for (t, c, a, m, b) in gc:
+        x = (t - start) / 1e9                       # integer difference first, then one division
+        if 0 <= x <= t_end_s: events.append((x, c, a, m, b))
+    return events
+```
+
+- **Which backend.** Figure `forward_latency_server_<k>` uses instance `k`'s events; the single `forward_latency`
+  figure (every point has `B = 1`) uses instance 0's.
+- **Range.** `t_end_s` is the end of the point's last bin in that figure (its last x plus `FORWARD_BIN_MS / 1000`).
+  Cycles before the Ingress's first `/ping` (the server starts earlier, and fills its MessageBuffer) or after the
+  last forward are left out.
+- **Drawing.** For each point with events, one extra line per subplot: a vertical segment at every event's `x`, from
+  the smallest to the largest y plotted in that subplot, thin and dotted, in the point's color, in the point's legend
+  group (hiding the point hides its GC lines too) and without its own legend entry. Hovering over a segment shows
+  `GC <cycle> at <x> s: <stw_start_ms> + <mark_ms> + <stw_end_ms> ms`.
+- **Colors.** Points get fixed colors in point-id order from one palette, so a point's GC lines match its latency
+  line.
+- A point without GcEvents, or without `run_start_unix_ns` (a run made before it), is drawn without an overlay.
+
+Worked example: `run_start_unix_ns = 1_700_000_001_000_000_000`, `t_end_s = 30.02`:
+
+| `t_unix_ns` | `x` (s) | Kept | Check |
+|---|---|---|---|
+| 1_700_000_000_500_000_000 | -0.5 | no | before the first `/ping` |
+| 1_700_000_001_000_000_000 | 0.0 | yes | `0 <= x` |
+| 1_700_000_004_507_000_000 | 3.507 | yes | 3_507_000_000 ns / 1e9 |
+| 1_700_000_031_100_000_000 | 30.1 | no | after `t_end_s` |
 
 ## Design specific to Python
 

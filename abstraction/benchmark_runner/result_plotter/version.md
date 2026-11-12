@@ -10,3 +10,4 @@
 | 0.6.0 | 2026-11-10T00:00:00Z | QueueLengthPlot (`queue_length.png`): per-point WorkQueue length over time, instances summed by row index, one line per done point, worked example and edge cases |
 | 0.7.0 | 2026-11-12T00:00:00Z | ForwardTimelinePlots (`forward_latency`, `ewma_latency`, per backend when B > 1): median and p99 per 20 ms bin from `ingress.forwards.csv`, one line per done point; worked example and edge cases |
 | 0.8.0 | 2026-11-12T00:00:00Z | Every figure is an interactive FigurePage `plots/<name>.html` (offline, legend toggles, zoom, hover; log y only when all y > 0) instead of a `.png` |
+| 0.9.0 | 2026-11-12T00:00:00Z | GcOverlay: `forward_latency` figures mark each GcEvent of their backend (from `server_<k>.gc.csv`, aligned with the Ingress's `run_start_unix_ns`) as a vertical line in the point's color and legend group; worked example |
