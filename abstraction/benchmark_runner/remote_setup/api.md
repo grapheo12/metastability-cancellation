@@ -34,6 +34,8 @@ The TOML file each implementation provides:
 | `binaries.loadgen` | path | Load generator executable, same base |
 | `binaries.ingress` | path | Ingress executable, same base. A manifest that still names `binaries.canceller` is rejected |
 | `thread_env` | string, optional | Name of the environment variable that sets a program's worker-thread count in this language's runtime. Needed only when a config sets `threads`. Absent: the implementation has no such knob |
+| `gc_trace_env` | array of strings, optional | **GcTraceHook**: `NAME=value` environment words that make the server write one GcTrace line per garbage-collection cycle to its standard output or error. Absent: the implementation has no GcTrace |
+| `gc_trace_regex` | string, optional, required with `gc_trace_env` | **GcTraceHook**: a regular expression, with named groups written `(?P<name>…)`, that matches one GcTrace line. Groups: `cycle` (integer), `start_s` (seconds since the process started, decimal), `stw_start_ms`, `mark_ms`, `stw_end_ms` (wall-clock ms of the cycle's three phases, decimal) |
 
 See [design.md#buildmanifest](design.md#buildmanifest).
 
