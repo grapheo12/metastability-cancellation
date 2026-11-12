@@ -4,7 +4,7 @@
 
 ### `ForwardTask`
 
-The handling of one client `/ping` stream: its RequestId, client id, chosen `server_id`, published InFlightEntry, and
+The handling of one client `/ping` stream: its RequestId, client id, ForwardTicket (chosen `server_id`), published InFlightEntry, and
 the client stream's reset flag. See [design.md#forwardtask](design.md#forwardtask).
 
 ## Functions
@@ -32,6 +32,6 @@ Runs one ForwardTask. `ctx` holds the In-Flight Map, the Load Balancer, the Upst
 
 - [../../protocol/api.md](../../protocol/api.md): `parse_body`, `split_request_id`, status constants
 - [../inflight_map/api.md](../inflight_map/api.md): `publish`, `clear`
-- [../load_balancer/api.md](../load_balancer/api.md): `pick`, `finish`, `ForwardOutcome`
+- [../load_balancer/api.md](../load_balancer/api.md): `pick`, `finish`, `ForwardTicket`, `ForwardOutcome`
 - [../upstream_pool/api.md](../upstream_pool/api.md): `get`, `discard`
 - [../load_canceller/api.md](../load_canceller/api.md): `canceller_start`

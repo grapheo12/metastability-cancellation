@@ -42,12 +42,13 @@ function handle_ping(stream, ctx):
     if client_id >= config.num_clients: return Response(400, empty)
     start_once(ctx)                                               # StartOnce
 
-    s = load_balancer.pick(ctx.lb)
+    ticket = load_balancer.pick(ctx.lb)                           # ForwardTicket
+    s = ticket.server_id
     entry = InFlightEntry(request_id = id, server_id = s)
     inflight_map.publish(ctx.inflight, entry)                     # keyed by the RequestId
     (response, outcome) = forward(ctx, client_id, s, stream)
     inflight_map.clear(ctx.inflight, entry)                       # before relaying: see below
-    load_balancer.finish(ctx.lb, s, outcome)
+    load_balancer.finish(ctx.lb, ticket, outcome)                 # same ticket: times the forward
     return response
 
 function forward(ctx, c, s, stream):
@@ -75,7 +76,10 @@ function forward(ctx, c, s, stream):
 - **Clear before relay.** The entry is cleared as soon as the upstream answer is in, before the response is
   written to the client, so the Load Canceller never picks a request that the Ingress has already finished with.
   The `clear` checks identity ([../inflight_map/design.md#publish-and-clear](../inflight_map/design.md#publish-and-clear)).
-- Every `pick` is matched by exactly one `finish`, on every path, so `outstanding` returns to 0.
+- Every `pick` is matched by exactly one `finish` with the ticket that `pick` returned, on every path, so
+  `outstanding` returns to 0. `finish` runs right after `clear`, before the response is written, so the measured
+  latency of an `ok` forward ends when the full upstream answer is in
+  ([../load_balancer/design.md#forwardticket](../load_balancer/design.md#forwardticket)).
 - **Many per client.** A client connection carries up to `n_waiting_requests` concurrent streams, so up to that
   many ForwardTasks of one client run at once, each with its own InFlightMap entry, and those that go to the same
   backend share the client's upstream connection as concurrent streams.
