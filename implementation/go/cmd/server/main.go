@@ -1,6 +1,6 @@
 // Command server runs the HTTP/2 /ping + /cancel server.
 //
-// Source: abstraction/server/api.md (server v0.6.2)
+// Source: abstraction/server/api.md (server v0.7.0)
 package main
 
 import (
@@ -9,12 +9,15 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"testbed/internal/server"
 )
 
 // API: abstraction/server/api.md#lifecycle
 func main() {
+	// Design: abstraction/server/design.md#processstart
+	fmt.Println(server.ProcessStartLine(time.Now())) // first line, before validation
 	p := server.DefaultParams()
 	fs := flag.NewFlagSet("server", flag.ContinueOnError)
 	fs.StringVar(&p.ListenAddr, "listen_addr", p.ListenAddr, "host:port to accept connections on")

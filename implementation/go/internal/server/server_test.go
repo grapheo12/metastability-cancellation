@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.6.2)
+// Source: abstraction/server/design.md (server v0.7.0)
 package server
 
 import (
@@ -455,4 +455,11 @@ func TestInitialStallEndToEnd(t *testing.T) {
 		t.Fatalf("cancelled_before_processing %d, want 1", bp)
 	}
 	s.Shutdown()
+}
+
+// Design: abstraction/server/design.md#processstart
+func TestProcessStartLine(t *testing.T) {
+	if got := ProcessStartLine(time.Unix(1700000000, 12)); got != "process_start_unix_ns 1700000000000000012" {
+		t.Fatalf("got %q", got)
+	}
 }

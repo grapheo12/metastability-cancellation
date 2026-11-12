@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.6.2)
+// Source: abstraction/server/design.md (server v0.7.0)
 package server
 
 import (
@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -176,4 +177,13 @@ func (s *Server) Shutdown() {
 	before, during, completed := s.counters.Snapshot()
 	fmt.Printf("{\"cancelled_before_processing\":%d,\"cancelled_during_processing\":%d,\"completed_before_cancel\":%d}\n",
 		before, during, completed)
+}
+
+// ProcessStartLine is the server's first stdout line: its wall-clock start in
+// Unix nanoseconds, so process-relative times (the GcTrace) can be aligned.
+//
+// Design: abstraction/server/design.md#processstart
+// API: abstraction/server/api.md#processstart-output
+func ProcessStartLine(now time.Time) string {
+	return "process_start_unix_ns " + strconv.FormatInt(now.UnixNano(), 10)
 }

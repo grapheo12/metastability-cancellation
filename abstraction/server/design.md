@@ -215,6 +215,7 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 - Shutdown: close the listener, `WorkQueue.Close()`, then GOAWAY via a `net/http.Server` configured with `http2.ConfigureServer` and passed as `ServeConnOpts.BaseConfig` (its `Shutdown` hook makes every connection send GOAWAY; best effort, because sockets are then closed), close every handler, `WorkerPool.Join()`, wait for the handlers with a `sync.WaitGroup`, then print the CancelCounters line with `fmt.Printf`.
 - `workload` is `Config.Workload`, an `int` enum (`WorkloadCPUBurn` is the zero value, so test fixtures that build a `Config` directly keep the burn). `window_size` is `WindowSize uint32`, `message_bytes` and `n_messages_per_request` are `int`. `Validate` parses `response_rate` only when it is given or the workload is `cpu_burn`. `Listen` builds the MessageBuffer before `os.Create(queue_log_path)` and `net.Listen`, keeps it as `Server.buf` (nil for `cpu_burn`), and passes it to `StartWorkerPool`.
 - Tests: `TestValidateWorkload` covers the new parameters and the optional `response_rate`. `TestMessageBufferEndToEnd` checks that the window is full after `Listen` and that three `/ping`s of client 1 land at its cursor (`7919 mod 100 = 19`).
+- ProcessStart: `cmd/server/main.go` prints `server.ProcessStartLine(time.Now())` before parsing flags; the line is built by `ProcessStartLine` (`strconv.FormatInt(now.UnixNano(), 10)`), tested by `TestProcessStartLine`. Go's gctrace `@` counts from runtime initialization, a little before `main`, which is the accepted sub-millisecond difference.
 - Locks of the Concurrency model: the admission lock is `connectionHandler.mu`, the WorkQueue lock is `WorkQueue.mu`, a client's cancel lock is `clientCancelState.mu`, all `sync.Mutex`. The MessageBuffer lock is `MessageBuffer.mu`.
 
 ### Traceability
@@ -225,12 +226,13 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [Structure](#structure) | [listener.go:24](../../implementation/go/internal/server/listener.go#L24) |
+| [Structure](#structure) | [listener.go:25](../../implementation/go/internal/server/listener.go#L25) |
 | [Configuration validation](#configuration-validation) | [config.go:42](../../implementation/go/internal/server/config.go#L42), [config.go:97](../../implementation/go/internal/server/config.go#L97), [server_test.go:261](../../implementation/go/internal/server/server_test.go#L261), [server_test.go:288](../../implementation/go/internal/server/server_test.go#L288) |
-| [Listener](#listener) | [listener.go:48](../../implementation/go/internal/server/listener.go#L48), [listener.go:67](../../implementation/go/internal/server/listener.go#L67), [listener.go:89](../../implementation/go/internal/server/listener.go#L89), [listener.go:104](../../implementation/go/internal/server/listener.go#L104), [server_test.go:322](../../implementation/go/internal/server/server_test.go#L322), [server_test.go:388](../../implementation/go/internal/server/server_test.go#L388) |
-| [Concurrency model](#concurrency-model) | [listener.go:85](../../implementation/go/internal/server/listener.go#L85), [server_test.go:216](../../implementation/go/internal/server/server_test.go#L216) |
+| [ProcessStart](#processstart) | [main.go:20](../../implementation/go/cmd/server/main.go#L20), [listener.go:187](../../implementation/go/internal/server/listener.go#L187), [server_test.go:461](../../implementation/go/internal/server/server_test.go#L461) |
+| [Listener](#listener) | [listener.go:49](../../implementation/go/internal/server/listener.go#L49), [listener.go:68](../../implementation/go/internal/server/listener.go#L68), [listener.go:90](../../implementation/go/internal/server/listener.go#L90), [listener.go:105](../../implementation/go/internal/server/listener.go#L105), [server_test.go:322](../../implementation/go/internal/server/server_test.go#L322), [server_test.go:388](../../implementation/go/internal/server/server_test.go#L388) |
+| [Concurrency model](#concurrency-model) | [listener.go:86](../../implementation/go/internal/server/listener.go#L86), [server_test.go:216](../../implementation/go/internal/server/server_test.go#L216) |
 | [Cancellation semantics](#cancellation-semantics) | [pinghandler.go:44](../../implementation/go/internal/server/pinghandler.go#L44), [server_test.go:75](../../implementation/go/internal/server/server_test.go#L75) |
-| [Shutdown](#shutdown) | [listener.go:153](../../implementation/go/internal/server/listener.go#L153) |
-| [Why one shared WorkQueue](#why-one-shared-workqueue) | [listener.go:57](../../implementation/go/internal/server/listener.go#L57) |
+| [Shutdown](#shutdown) | [listener.go:154](../../implementation/go/internal/server/listener.go#L154) |
+| [Why one shared WorkQueue](#why-one-shared-workqueue) | [listener.go:58](../../implementation/go/internal/server/listener.go#L58) |
 | [Why a MessageBuffer workload](#why-a-messagebuffer-workload) | [config.go:32](../../implementation/go/internal/server/config.go#L32) |
 <!-- trace:end -->
