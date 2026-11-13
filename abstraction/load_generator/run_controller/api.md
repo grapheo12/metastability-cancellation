@@ -18,4 +18,4 @@ See [design.md#configuration-validation](design.md#configuration-validation).
 - [../client/api.md](../client/api.md): `run_client`
 - [../metrics/api.md](../metrics/api.md): `aggregate`, `write_requests_csv`, `write_summary_json`
 - [../../sampling/api.md](../../sampling/api.md): `derive_seed`, `rng_new`
-- [../../protocol/api.md](../../protocol/api.md): `validate_body_size`
+- [../../protocol/api.md](../../protocol/api.md): `validate_request_body_size`

@@ -6,7 +6,7 @@
 function validate(params):
     1 <= num_clients <= 2^32 - 1             else error
     global_rate > 0                          else error
-    protocol.validate_body_size(request_bytes)
+    protocol.validate_request_body_size(request_bytes)   # >= 76 (PingRequestBody)
     slo_ms > 0                               else error
     duration_s > 0                           else error
     seed parses as u64                       else error
@@ -45,11 +45,12 @@ function main(params):
         if c failed: close all in conns; exit non-zero
         conns.append(c)
     run_start = monotonic_now_ns()
-    run_start_unix_ns = wall_clock_unix_ns()  # reported only, in the summary; never used for timing
+    run_start_unix_ns = wall_clock_unix_ns()  # reported in the summary and the origin of every RequestDeadline;
+                                              # never used for timing
     tasks = []
     for i in 0 .. N-1:
         rng_i = sampling.rng_new(sampling.derive_seed(config.seed, STREAM_CLIENT_ARRIVALS, i))
-        tasks.append(spawn run_client(i, conns[i], config, rng_i, run_start))
+        tasks.append(spawn run_client(i, conns[i], config, rng_i, run_start, run_start_unix_ns))
     all_records = []
     for i in 0 .. N-1:
         all_records.extend(join(tasks[i]))     # see DrainPhase
