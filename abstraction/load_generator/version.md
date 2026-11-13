@@ -15,3 +15,4 @@
 | 0.4.0 | 2026-11-12T00:00:00Z | Child bump: client 0.5.0 (StallWindow) |
 | 0.4.1 | 2026-11-12T00:00:00Z | Child bump: metrics 0.4.0 (StallWindow excluded) |
 | 0.4.2 | 2026-11-12T00:00:00Z | Child bump: run_controller 0.5.0 (`initial_stall_ms` validation) |
+| 0.4.3 | 2026-11-12T00:00:00Z | Parameter `initial_stall_ms` (default 1000) and derived `initial_stall_ns`; description introduces the StallWindow |

@@ -93,6 +93,8 @@ downloads each point's results and plots all points together.
 | **SLOCancellation** | Client resets every RequestCopy of a request once `slo_ms` has passed since its first send | [load_generator/client/design.md](load_generator/client/design.md#slocancellation) |
 | **RetryTimer** | Per RequestCopy, `retry_timeout_ms` from its send: fires the next copy, or drops the request after the last one | [load_generator/client/design.md](load_generator/client/design.md#retrytimer) |
 | **RequestCopy** | One send of a request on its own stream; all copies carry the same RequestId and body, and only the newest one's answer counts | [load_generator/client/design.md](load_generator/client/design.md#retrytimer) |
+| **StallWindow** | The first `initial_stall_ms` of the load generator's run, mirroring the servers' StallGate | [load_generator/client/design.md](load_generator/client/design.md#stallwindow) |
+| **StallWindowRequest** | A request first sent in the StallWindow: never retries, flagged `in_stall_window`, left out of every metric | [load_generator/client/design.md](load_generator/client/design.md#stallwindow) |
 | **DrainPhase** | Time after `duration_s` when no new requests are sent and in-flight ones resolve | [load_generator/run_controller/design.md](load_generator/run_controller/design.md#drainphase) |
 | **RequestRecord** | One output row per scheduled arrival | [load_generator/metrics/design.md](load_generator/metrics/design.md#requestrecord) |
 | **LoadCanceller** | Single-sender, open-loop Poisson source of `/cancel` requests inside the Ingress | [ingress/load_canceller/design.md](ingress/load_canceller/design.md#cancelschedule) |
