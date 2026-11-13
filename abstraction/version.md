@@ -127,3 +127,4 @@
 | 0.12.3 | 2026-11-13T00:00:00Z | Child bump: server 0.8.0 (worker_pool 0.5.0, EarliestDeadlineFirst) |
 | 0.12.4 | 2026-11-13T00:00:00Z | Child bump: server 0.8.1 (ping_handler 0.8.0) |
 | 0.13.0 | 2026-11-13T00:00:00Z | Server parameter `queue_discipline` (`fifo` \| `edf`, default `fifo`); glossary QueueDiscipline and EarliestDeadlineFirst, WorkQueue wording; request flow and shared-queue rationale name the `edf` order |
+| 0.13.1 | 2026-11-13T00:00:00Z | Child bump: benchmark_runner 0.2.30 (config 0.15.0) |
