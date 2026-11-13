@@ -112,3 +112,4 @@
 | 0.10.0 | 2026-11-12T00:00:00Z | Child bump: load_generator 0.3.0 (client 0.4.0, RetryTimer) |
 | 0.10.1 | 2026-11-12T00:00:00Z | Load generator parameters `retry_timeout_ms` and `max_retries`; glossary RetryTimer and RequestCopy; request flow, time bounds and concurrent-stream bound with retries. Child bump: load_generator 0.3.1 |
 | 0.10.2 | 2026-11-12T00:00:00Z | Child bump: load_generator 0.3.2 (metrics 0.3.0) |
+| 0.10.3 | 2026-11-12T00:00:00Z | Child bump: load_generator 0.3.3 (run_controller 0.4.0) |
