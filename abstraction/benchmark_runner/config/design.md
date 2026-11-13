@@ -8,7 +8,7 @@ PROGRAM_PARAMS = {
                 "n_worker_threads", "queue_sample_interval_ms", "initial_stall_ms",
                 "workload", "window_size", "n_gc_binary_tree_size", "n_messages_per_request"],
   "load_gen":  ["num_clients", "global_rate", "request_bytes", "slo_ms", "duration_s", "seed",
-                "n_waiting_requests"],
+                "n_waiting_requests", "retry_timeout_ms", "max_retries"],
   "ingress":   ["lb_policy", "ewma_beta", "cancel_rate", "duration_s", "seed", "initial_stall_ms"],
 }
 PLACEMENT_KEYS = ["threads", "cpu_set"]                                  # ProcessPlacement
