@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.12.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.13.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -255,6 +255,16 @@ class ConfigTest(unittest.TestCase):
         points = cfg.expand_sweep(self.load(text))
         self.assertEqual(sorted({dict(p.loadgen_args)["n_waiting_requests"] for p in points}), [1, 100])
         self.assertNotIn("n_waiting_requests", dict(cfg.expand_sweep(self.load(BASE))[0].loadgen_args))
+
+    # Design: abstraction/benchmark_runner/config/design.md#benchconfig
+    def test_retry_parameters_are_load_gen_params(self):
+        text = BASE.replace("num_clients = 4", "num_clients = 4\nretry_timeout_ms = 150\nmax_retries = [0, 1]")
+        points = cfg.expand_sweep(self.load(text))
+        self.assertEqual(sorted({dict(p.loadgen_args)["max_retries"] for p in points}), [0, 1])
+        self.assertEqual({dict(p.loadgen_args)["retry_timeout_ms"] for p in points}, {150})
+        args = dict(cfg.expand_sweep(self.load(BASE))[0].loadgen_args)
+        self.assertNotIn("retry_timeout_ms", args)  # program defaults apply
+        self.assertNotIn("max_retries", args)
 
 
 if __name__ == "__main__":
