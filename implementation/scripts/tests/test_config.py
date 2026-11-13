@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.13.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.14.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -255,6 +255,20 @@ class ConfigTest(unittest.TestCase):
         points = cfg.expand_sweep(self.load(text))
         self.assertEqual(sorted({dict(p.loadgen_args)["n_waiting_requests"] for p in points}), [1, 100])
         self.assertNotIn("n_waiting_requests", dict(cfg.expand_sweep(self.load(BASE))[0].loadgen_args))
+
+    # Design: abstraction/benchmark_runner/config/design.md#sweepexpansion
+    def test_initial_stall_copied_to_load_gen(self):
+        def stall(text):
+            return {dict(p.loadgen_args).get("initial_stall_ms") for p in cfg.expand_sweep(self.load(text))}
+        self.assertEqual(stall(BASE), {None})                                       # neither: defaults apply
+        server_only = BASE.replace("[server]\n", "[server]\ninitial_stall_ms = 500\n", 1)
+        self.assertEqual(stall(server_only), {500})
+        swept = BASE.replace("[server]\n", "[server]\ninitial_stall_ms = [0, 1000]\n", 1)
+        self.assertEqual(stall(swept), {0, 1000})
+        for p in cfg.expand_sweep(self.load(swept)):                                # per point
+            self.assertEqual(dict(p.loadgen_args)["initial_stall_ms"], dict(p.server_args)["initial_stall_ms"])
+        both = server_only.replace("num_clients = 4", "num_clients = 4\ninitial_stall_ms = 200")
+        self.assertEqual(stall(both), {200})                                        # load_gen wins
 
     # Design: abstraction/benchmark_runner/config/design.md#benchconfig
     def test_retry_parameters_are_load_gen_params(self):
