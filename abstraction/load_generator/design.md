@@ -24,9 +24,10 @@ flowchart TD
 
 Every timestamp is in **integer nanoseconds since `run_start`**, a single monotonic-clock reading
 taken by the Run Controller after all connections are open and just before the clients start. All
-clients share this origin. Its wall-clock time, `run_start_unix_ns`, is read at the same moment and only reported
+clients share this origin. Its wall-clock time, `run_start_unix_ns`, is read at the same moment. It is reported
 in the summary, so the run's times can be compared with other machines' wall-clock times (their clock offset then
-adds to the comparison).
+adds to the comparison), and it turns each request's SLO end into its RequestDeadline
+([client/design.md#requestdeadline](client/design.md#requestdeadline)). No timer or measurement uses it.
 
 ## Concurrency
 
