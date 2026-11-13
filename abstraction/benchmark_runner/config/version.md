@@ -17,3 +17,4 @@
 | 0.11.0 | 2026-11-12T00:00:00Z | Runner key `[server] gc_trace` (boolean, default false, not sweepable) |
 | 0.12.0 | 2026-11-12T00:00:00Z | Server program parameters: `n_gc_binary_tree_size` replaces `message_bytes` (an old config setting `message_bytes` is now an unknown key) |
 | 0.13.0 | 2026-11-12T00:00:00Z | Load generator program parameters `retry_timeout_ms` and `max_retries` (settable and sweepable) |
+| 0.14.0 | 2026-11-12T00:00:00Z | Load generator program parameter `initial_stall_ms`; `expand_sweep` copies the point's `server.initial_stall_ms` to the load generator unless `load_gen` sets it |

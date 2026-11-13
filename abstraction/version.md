@@ -119,3 +119,4 @@
 | 0.11.1 | 2026-11-12T00:00:00Z | Child bump: load_generator 0.4.1 (metrics 0.4.0) |
 | 0.11.2 | 2026-11-12T00:00:00Z | Child bump: load_generator 0.4.2 (run_controller 0.5.0) |
 | 0.11.3 | 2026-11-12T00:00:00Z | Load generator parameter `initial_stall_ms`; glossary StallWindow and StallWindowRequest; request flow line. Child bump: load_generator 0.4.3 |
+| 0.11.4 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.28 (config 0.14.0) |

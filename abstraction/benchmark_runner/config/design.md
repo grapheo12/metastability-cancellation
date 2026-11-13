@@ -8,7 +8,7 @@ PROGRAM_PARAMS = {
                 "n_worker_threads", "queue_sample_interval_ms", "initial_stall_ms",
                 "workload", "window_size", "n_gc_binary_tree_size", "n_messages_per_request"],
   "load_gen":  ["num_clients", "global_rate", "request_bytes", "slo_ms", "duration_s", "seed",
-                "n_waiting_requests", "retry_timeout_ms", "max_retries"],
+                "n_waiting_requests", "retry_timeout_ms", "max_retries", "initial_stall_ms"],
   "ingress":   ["lb_policy", "ewma_beta", "cancel_rate", "duration_s", "seed", "initial_stall_ms"],
 }
 PLACEMENT_KEYS = ["threads", "cpu_set"]                                  # ProcessPlacement
@@ -106,6 +106,8 @@ function expand_sweep(config):
         choose = { k: combo[i] for i, k in enumerate(swept_keys) }
         server_args  = [ (k, choose.get("server."+k, v)) for k, v in config.server program params ]
         loadgen_args = [ (k, choose.get("load_gen."+k, v)) for k, v in config.load_gen program params ]
+        if "initial_stall_ms" not in loadgen_args and "initial_stall_ms" in server_args:   # StallWindow
+            loadgen_args.append(("initial_stall_ms", value of initial_stall_ms in server_args))
         ingress_args = [ (k, choose.get("ingress."+k, v)) for k, v in config.ingress program params ]
         ingress_args.append(("backends", backend_list(config)))                 # Backends
         ingress_args.append(("num_clients", value of num_clients in loadgen_args))
@@ -123,6 +125,18 @@ function expand_sweep(config):
                                  placement))
     return points          # with no swept keys: exactly one point, id 0
 ```
+
+The load generator's StallWindow must match the servers' StallGate
+([../../load_generator/client/design.md#stallwindow](../../load_generator/client/design.md#stallwindow)), so a point's
+`server.initial_stall_ms` (swept or not) is copied to the load generator unless `load_gen.initial_stall_ms` is set.
+If neither is set, both programs use their default, 1000 ms.
+
+| `server.initial_stall_ms` | `load_gen.initial_stall_ms` | Load generator gets |
+|---|---|---|
+| unset | unset | nothing (its default, 1000) |
+| `500` | unset | `500` |
+| `[0, 1000]` (swept) | unset | `0` on the points with `0`, `1000` on the others |
+| `500` | `200` | `200` |
 
 Worked example. The config has `[server] cancel_mode = ["ignore", "cooperative"]` and
 `[load_gen] global_rate = [1000, 2000]`, and no `sweep_order`:
