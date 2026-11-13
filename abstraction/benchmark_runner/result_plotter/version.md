@@ -13,3 +13,4 @@
 | 0.9.0 | 2026-11-12T00:00:00Z | GcOverlay: `forward_latency` figures mark each GcEvent of their backend (from `server_<k>.gc.csv`, aligned with the Ingress's `run_start_unix_ns`) as a vertical line in the point's color and legend group; worked example |
 | 0.10.0 | 2026-11-12T00:00:00Z | AvailabilityPlot (`availability.html`): per 20 ms window of `end_ns`, ok-under-SLO (from send) over finished requests from `loadgen.requests.csv`, with the GcOverlay; GcOverlay generalized to an instance list and a time origin; worked example |
 | 0.11.0 | 2026-11-12T00:00:00Z | AvailabilityPlot windows are `AVAILABILITY_WINDOW_MS = 200` ms (were the 20 ms forward bins); worked example rescaled |
+| 0.12.0 | 2026-11-12T00:00:00Z | PointTable columns `lg_dropped` and `lg_copies_sent`; `outcomes` figure plots `lg_dropped / lg_scheduled`; Availability counts `dropped` as finished and one row per logical request |

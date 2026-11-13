@@ -11,7 +11,7 @@ One row of the PointTable. The columns, in order, are:
 | `point` | SweepPoint id |
 | `status` | `done`, `failed` or `pending` (neither marker) |
 | one column per swept key, named `<section>.<param>`, in sweep order | `params.json` `swept` |
-| `lg_scheduled`, `lg_sent`, `lg_ok`, `lg_rejected`, `lg_cancelled`, `lg_error`, `lg_not_sent` | `loadgen.summary.json` `counts` |
+| `lg_scheduled`, `lg_sent`, `lg_ok`, `lg_rejected`, `lg_cancelled`, `lg_dropped`, `lg_error`, `lg_not_sent`, `lg_copies_sent` | `loadgen.summary.json` `counts` (`dropped` and `copies_sent`; empty for runs made before retries) |
 | `lg_offered_rate`, `lg_goodput` | `loadgen.summary.json` `rates_per_s.offered`, `.goodput` |
 | `e2e_p50_us`, `e2e_p99_us`, `e2e_p999_us` | `loadgen.summary.json` `e2e_latency_us` |
 | `service_p50_us`, `service_p99_us` | `loadgen.summary.json` `service_latency_us` |

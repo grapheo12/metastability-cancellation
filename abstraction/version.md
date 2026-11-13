@@ -114,3 +114,4 @@
 | 0.10.2 | 2026-11-12T00:00:00Z | Child bump: load_generator 0.3.2 (metrics 0.3.0) |
 | 0.10.3 | 2026-11-12T00:00:00Z | Child bump: load_generator 0.3.3 (run_controller 0.4.0) |
 | 0.10.4 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.26 (config 0.13.0) |
+| 0.10.5 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.27 (result_plotter 0.12.0) |

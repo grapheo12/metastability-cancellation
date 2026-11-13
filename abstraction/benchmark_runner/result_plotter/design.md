@@ -53,7 +53,7 @@ function plot(output_dir):
 |---|---|---|---|
 | `latency_e2e` | `x_key` | `e2e_p50_us`, `e2e_p99_us`, `e2e_p999_us` | log |
 | `goodput` | `x_key` | `lg_goodput` | linear |
-| `outcomes` | `x_key` | `lg_ok / lg_scheduled`, `lg_rejected / lg_scheduled`, `lg_cancelled / lg_scheduled`, `lg_error / lg_scheduled`, `lg_not_sent / lg_scheduled` | linear, 0 to 1 |
+| `outcomes` | `x_key` | `lg_ok / lg_scheduled`, `lg_rejected / lg_scheduled`, `lg_cancelled / lg_scheduled`, `lg_dropped / lg_scheduled`, `lg_error / lg_scheduled`, `lg_not_sent / lg_scheduled` | linear, 0 to 1 |
 | `server_counters` | `x_key` | `srv_cancelled_before_processing`, `srv_cancelled_during_processing`, `srv_completed_before_cancel` | linear |
 | `throughput_latency` | `lg_goodput` | `e2e_p50_us`, `e2e_p99_us`, `e2e_p999_us` | log |
 | `throughput_latency_normalized` | `lg_goodput / (1 - cx_offered_fraction)` | `e2e_p50_us`, `e2e_p99_us`, `e2e_p999_us` | log |
@@ -377,9 +377,11 @@ finished in time, over time, from the load generator's Requests CSV
 requests that finished, among the requests whose `end_ns` lies in the `AVAILABILITY_WINDOW_MS = 200` ms window
 centred on `t`:
 
-- **Finished:** the row has an `end_ns` (`ok`, `rejected`, `cancelled`, `error`); `not_sent` rows are ignored.
+- **Finished:** the row has an `end_ns` (`ok`, `rejected`, `cancelled`, `dropped`, `error`); `not_sent` rows are
+  ignored. A row is one logical request however many RequestCopies it sent, so retries are never counted twice.
 - **Under the SLO:** `outcome == ok` and `end_ns - send_ns <= slo_ms × 1_000_000`, the clock the client's SLO
-  cancellation uses. A cancelled, rejected or failed request is finished but never under the SLO.
+  cancellation uses (`send_ns` is the first copy's send). A cancelled, dropped, rejected or failed request is
+  finished but never under the SLO.
 
 ```
 function read_requests(path):                      # -> list of (end_ns, send_ns, ok) | none
