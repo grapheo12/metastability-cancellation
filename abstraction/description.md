@@ -69,7 +69,7 @@ downloads each point's results and plots all points together.
 | **RequestId** | 64-bit id: high 32 bits are the client id, low 32 bits are the per-client sequence number | [protocol/design.md](protocol/design.md#requestid) |
 | **PaddedJsonBody** | JSON body `{"id":..,"payload":..}` padded so its byte length is exact; the `/ping` response body | [protocol/design.md](protocol/design.md#paddedjsonbody) |
 | **PingRequestBody** | JSON body `{"id":..,"deadline":..,"payload":..}` of a `/ping` request, padded so its byte length is exact | [protocol/design.md](protocol/design.md#pingrequestbody) |
-| **RequestDeadline** | `deadline_unix_ns` in a PingRequestBody: Unix ns of the request's first send plus the SLO; every RequestCopy carries the same one | [protocol/design.md](protocol/design.md#pingrequestbody) |
+| **RequestDeadline** | `deadline_unix_ns` in a PingRequestBody: Unix ns of the request's first send plus the SLO; every RequestCopy carries the same one | [load_generator/client/design.md](load_generator/client/design.md#requestdeadline) |
 | **CancelBody** | JSON body `{"id":..}` of a `/cancel` request | [protocol/design.md](protocol/design.md#cancelbody) |
 | **ServiceTime** | CPU time per request, `Exp(response_rate)` seconds, in whole microseconds | [sampling/design.md](sampling/design.md#exponentialsampler) |
 | **ServerWorkload** | What a `/ping` costs the server: `cpu_burn` (burn the ServiceTime) or `message_buffer` (MessageWork) | [server/design.md](server/design.md#why-a-messagebuffer-workload) |
@@ -78,7 +78,9 @@ downloads each point's results and plots all points together.
 | **MessageCursor** | Per client, the next MessageBuffer slot its messages overwrite; starts at `(client_id × 7919) mod window_size` | [server/message_buffer/design.md](server/message_buffer/design.md#messagecursor) |
 | **MessageWork** | A `message_buffer` request's work: create `n_messages_per_request` messages with cancel checks after each, then push them | [server/ping_handler/design.md](server/ping_handler/design.md#messagework) |
 | **CooperativeCpuBurn** | Busy loop that checks the RST flag on a time interval and `/cancel` every `CHECK_ITER` spin units | [server/cpu_burner/design.md](server/cpu_burner/design.md#cooperativecpuburn) |
-| **WorkQueue** | The server's one unbounded FIFO of admitted `/ping`s, shared by all connections | [server/worker_pool/design.md](server/worker_pool/design.md#workqueue) |
+| **WorkQueue** | The server's one unbounded queue of admitted `/ping`s, shared by all connections, popped by the QueueDiscipline | [server/worker_pool/design.md](server/worker_pool/design.md#workqueue) |
+| **QueueDiscipline** | The WorkQueue's pop order: `fifo` (admission order) or `edf` (EarliestDeadlineFirst) | [server/worker_pool/design.md](server/worker_pool/design.md#workqueue) |
+| **EarliestDeadlineFirst** | `edf` QueueDiscipline: pop the queued job with the smallest `(RequestDeadline, push order)` | [server/worker_pool/design.md](server/worker_pool/design.md#earliestdeadlinefirst) |
 | **WorkerPool** | `n_worker_threads` server workers that run WorkQueue jobs in arrival order | [server/worker_pool/design.md](server/worker_pool/design.md#workerpool) |
 | **PingJob** | One admitted `/ping` with its RequestId and pre-drawn ServiceTime, waiting for or held by a worker | [server/worker_pool/design.md](server/worker_pool/design.md#pingjob) |
 | **CancelMode** | Server switch: `ignore` or `cooperative`. Applies to both cancellation paths | [api.md](api.md#server-parameters) |

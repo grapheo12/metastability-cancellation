@@ -78,7 +78,8 @@ parameters, their output files and the server's `listening on` and CancelCounter
 3. The server's Connection Handler for that connection admits the request. On the connection's
    first `/ping` it binds the connection to client id `id >> 32`. It samples a ServiceTime from the
    connection's Rng and pushes the request onto the server-wide WorkQueue. One of the `n_worker_threads`
-   workers of the WorkerPool takes it in arrival order, checks for cancellation, and runs the CPU Burner,
+   workers of the WorkerPool takes it in arrival order (or, with `queue_discipline = edf`, earliest RequestDeadline
+   first), checks for cancellation, and runs the CPU Burner,
    checking again during the burn. The Connection Handler writes the answer the worker hands back.
 4. Exactly one of these happens:
    - The burn completes. The server answers `202` and the client records `ok` (if within the SLO).
@@ -105,8 +106,10 @@ parameters, their output files and the server's `listening on` and CancelCounter
 
 ## Why the server has one shared WorkQueue
 
-The server runs `/ping`s from all connections on `n_worker_threads` workers fed by **one FIFO, in arrival
-order**, like a CPU-bound service with a fixed number of cores. Each client keeps up to `n_waiting_requests` requests live, so the queue can hold many requests per client.
+The server runs `/ping`s from all connections on `n_worker_threads` workers fed by **one queue, in arrival
+order** by default (`fifo`), like a CPU-bound service with a fixed number of cores. With `queue_discipline =
+edf` the same queue is ordered by RequestDeadline instead ([server/worker_pool/design.md](server/worker_pool/design.md#earliestdeadlinefirst)),
+so a request's place depends on how much of its SLO is left, and a retry copy keeps its original deadline. Each client keeps up to `n_waiting_requests` requests live, so the queue can hold many requests per client.
 After a cancellation, the client's slot is free again while the server may still be working on the cancelled
 request. In `ignore` mode the abandoned work keeps a worker busy, and every
 request queued behind it waits, whichever client sent it. That wait is the effect this testbed measures.
