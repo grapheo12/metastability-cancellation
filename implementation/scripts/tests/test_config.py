@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.14.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.15.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -255,6 +255,13 @@ class ConfigTest(unittest.TestCase):
         points = cfg.expand_sweep(self.load(text))
         self.assertEqual(sorted({dict(p.loadgen_args)["n_waiting_requests"] for p in points}), [1, 100])
         self.assertNotIn("n_waiting_requests", dict(cfg.expand_sweep(self.load(BASE))[0].loadgen_args))
+
+    # Design: abstraction/benchmark_runner/config/design.md#benchconfig
+    def test_queue_discipline_is_a_server_param(self):
+        text = BASE.replace("[server]\n", '[server]\nqueue_discipline = ["fifo", "edf"]\n', 1)
+        points = cfg.expand_sweep(self.load(text))
+        self.assertEqual({dict(p.server_args)["queue_discipline"] for p in points}, {"fifo", "edf"})
+        self.assertNotIn("queue_discipline", dict(cfg.expand_sweep(self.load(BASE))[0].server_args))
 
     # Design: abstraction/benchmark_runner/config/design.md#sweepexpansion
     def test_initial_stall_copied_to_load_gen(self):
