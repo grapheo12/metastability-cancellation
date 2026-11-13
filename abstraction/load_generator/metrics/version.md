@@ -5,3 +5,4 @@
 | 0.1.0 | 2026-10-30T00:00:00Z | Initial spec: RequestRecord, aggregation, CSV/JSON output, nearest-rank percentiles |
 | 0.1.1 | 2026-10-30T00:00:00Z | API style: Types / Functions / Outputs / Uses sections, `SummaryReport` type, every function documented with design links. No behavior change |
 | 0.2.0 | 2026-11-12T00:00:00Z | Summary JSON `run_start_unix_ns` (wall clock of `run_start`), passed to `aggregate` |
+| 0.3.0 | 2026-11-12T00:00:00Z | RequestRecord field `copies` (last CSV column); outcome `dropped`; `send_ns` is the first copy's send; summary counts `dropped` and `copies_sent` |

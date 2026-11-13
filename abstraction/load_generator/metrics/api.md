@@ -9,11 +9,12 @@
 | `request_id` | u64 | RequestId |
 | `client_id` | u32 | Client index |
 | `seq` | u32 | Per-client arrival index |
-| `outcome` | `ok` \| `rejected` \| `cancelled` \| `error` \| `not_sent` | See [../client/api.md#outcome](../client/api.md#outcome) |
-| `http_status` | integer or empty | Status received. Empty for `cancelled`, `not_sent`, and transport errors |
+| `outcome` | `ok` \| `rejected` \| `cancelled` \| `dropped` \| `error` \| `not_sent` | See [../client/api.md#outcome](../client/api.md#outcome) |
+| `http_status` | integer or empty | Status received. Empty for `cancelled`, `dropped`, `not_sent`, and transport errors |
 | `scheduled_ns` | integer | Scheduled arrival time |
-| `send_ns` | integer or empty | When the request was sent. Empty for `not_sent` |
+| `send_ns` | integer or empty | When the request's first RequestCopy was sent. Empty for `not_sent` |
 | `end_ns` | integer or empty | When the request resolved. Empty for `not_sent` |
+| `copies` | u32 | RequestCopies the client started, `1 ..= 1 + max_retries`; `0` for `not_sent` ([../client/design.md#retrytimer](../client/design.md#retrytimer)) |
 
 Derived: `e2e_latency_ns = end_ns - scheduled_ns` and `service_latency_ns = end_ns - send_ns`,
 both empty for `not_sent`. See [design.md#requestrecord](design.md#requestrecord).
@@ -43,8 +44,10 @@ Writes [Summary JSON](#summary-json). See [design.md#summary](design.md#summary)
 UTF-8, comma-separated, `\n` line endings, one header line, rows sorted by `(client_id, seq)`:
 
 ```
-request_id,client_id,seq,outcome,http_status,scheduled_ns,send_ns,end_ns,e2e_latency_ns,service_latency_ns
+request_id,client_id,seq,outcome,http_status,scheduled_ns,send_ns,end_ns,e2e_latency_ns,service_latency_ns,copies
 ```
+
+`copies` is last, so readers that find columns by header name keep working.
 
 Integers are written in decimal. Empty fields are written as nothing between the commas. One row
 per [design.md#requestrecord](design.md#requestrecord).
@@ -56,7 +59,8 @@ per [design.md#requestrecord](design.md#requestrecord).
   "config":   { every LoadGenConfig parameter, by its parameter name },
   "run_end_s": float,
   "run_start_unix_ns": integer,
-  "counts":   { "scheduled", "sent", "ok", "rejected", "cancelled", "error", "not_sent" },
+  "counts":   { "scheduled", "sent", "ok", "rejected", "cancelled", "dropped", "error", "not_sent",
+                "copies_sent" },
   "rates_per_s": { "offered", "sent", "goodput" },
   "e2e_latency_us":     { "count", "mean", "p50", "p90", "p99", "p999", "max" },
   "service_latency_us": { "count", "mean", "p50", "p90", "p99", "p999", "max" }
