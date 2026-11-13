@@ -12,3 +12,4 @@
 | 0.3.1 | 2026-11-12T00:00:00Z | Parameters `retry_timeout_ms` (default 150) and `max_retries` (default 1), derived `retry_timeout_ns`; description introduces RequestCopy and RetryTimer; structure table and DrainPhase wording |
 | 0.3.2 | 2026-11-12T00:00:00Z | Child bump: metrics 0.3.0 (`copies`, `dropped`, `copies_sent`) |
 | 0.3.3 | 2026-11-12T00:00:00Z | Child bump: run_controller 0.4.0 (retry parameter validation) |
+| 0.4.0 | 2026-11-12T00:00:00Z | Child bump: client 0.5.0 (StallWindow) |
