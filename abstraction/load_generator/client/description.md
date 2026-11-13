@@ -7,8 +7,11 @@ Leaf component: the **SemiOpenLoopClient**. One instance simulates one user on i
   comes due; a **receiver** activity collects responses, timeouts and errors. An arrival that comes due while the
   client is at its cap waits for a slot (**GatedArrival**). The schedule itself is never shifted, so waiting builds
   up a backlog that later requests drain. With `n_waiting_requests = 1` this is a closed loop.
-- Cancels each request with `RST_STREAM(CANCEL)` if it is not fully answered within `slo_ms` of being
-  sent (**SLOCancellation**), and then stops waiting on it.
+- Starts a **RetryTimer** of `retry_timeout_ms` for each send of a request (a **RequestCopy**). When it fires, the
+  client sends another copy with the same RequestId and waits only for that copy, up to `max_retries` times; when
+  the last copy's timer fires, the request is `dropped`.
+- Cancels each request with `RST_STREAM(CANCEL)` on every copy if it is not fully answered within `slo_ms` of its
+  first send (**SLOCancellation**), and then stops waiting on it.
 - Stops sending at `duration_s`. Arrivals that were scheduled but not sent are recorded as `not_sent`.
 - Records one RequestRecord per scheduled arrival.
 

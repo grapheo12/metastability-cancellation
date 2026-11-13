@@ -6,13 +6,15 @@
 
 | Value | Meaning |
 |---|---|
-| `ok` | `202` with matching RequestId, fully received before the SLO |
-| `rejected` | `503` with matching RequestId, fully received before the SLO |
-| `cancelled` | The SLO ran out first. The client sent `RST_STREAM(CANCEL)` |
-| `error` | Any other status, a body or id mismatch, or a stream/connection error before the SLO |
+| `ok` | `202` with matching RequestId on the newest RequestCopy, fully received before the SLO |
+| `rejected` | `503` with matching RequestId on the newest RequestCopy, fully received before the SLO |
+| `cancelled` | The SLO ran out first. The client sent `RST_STREAM(CANCEL)` on every RequestCopy |
+| `dropped` | The RetryTimer of the last RequestCopy (copy `max_retries`) fired first. No reset was sent |
+| `error` | Any other status, a body or id mismatch, or a stream/connection error of the newest RequestCopy before the SLO |
 | `not_sent` | Scheduled before `duration_ns` but not yet sendable when the active phase ended |
 
-See [design.md#outcome-classification](design.md#outcome-classification) and, for `not_sent`,
+See [design.md#outcome-classification](design.md#outcome-classification), for `dropped`
+[design.md#retrytimer](design.md#retrytimer), and, for `not_sent`,
 [design.md#semiopenloopclient](design.md#semiopenloopclient).
 
 ## Functions
@@ -26,7 +28,8 @@ Runs one SemiOpenLoopClient, with at most `n_waiting_requests` requests outstand
 
 - `rng` must be `rng_new(derive_seed(seed, STREAM_CLIENT_ARRIVALS, client_id))`.
 - `conn` (`H2Connection`) is an open h2c connection owned only by this client, opened by the Run
-  Controller. It carries up to `n_waiting_requests` concurrent streams.
+  Controller. It carries up to `n_waiting_requests × (1 + max_retries)` concurrent streams of unresolved requests
+  ([design.md#retrytimer](design.md#retrytimer)).
 - `run_start` is the shared monotonic time origin ([../design.md#time-base](../design.md#time-base)).
 
 ## Uses
