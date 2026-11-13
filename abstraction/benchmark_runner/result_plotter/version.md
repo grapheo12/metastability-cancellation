@@ -14,3 +14,4 @@
 | 0.10.0 | 2026-11-12T00:00:00Z | AvailabilityPlot (`availability.html`): per 20 ms window of `end_ns`, ok-under-SLO (from send) over finished requests from `loadgen.requests.csv`, with the GcOverlay; GcOverlay generalized to an instance list and a time origin; worked example |
 | 0.11.0 | 2026-11-12T00:00:00Z | AvailabilityPlot windows are `AVAILABILITY_WINDOW_MS = 200` ms (were the 20 ms forward bins); worked example rescaled |
 | 0.12.0 | 2026-11-12T00:00:00Z | PointTable columns `lg_dropped` and `lg_copies_sent`; `outcomes` figure plots `lg_dropped / lg_scheduled`; Availability counts `dropped` as finished and one row per logical request |
+| 0.13.0 | 2026-11-12T00:00:00Z | AvailabilityPlot skips StallWindowRequests (`in_stall_window = 1`); CSVs without the column are read as before |
