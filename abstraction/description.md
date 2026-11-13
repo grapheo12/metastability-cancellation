@@ -67,7 +67,9 @@ downloads each point's results and plots all points together.
 | Concept | Meaning | Defined in |
 |---|---|---|
 | **RequestId** | 64-bit id: high 32 bits are the client id, low 32 bits are the per-client sequence number | [protocol/design.md](protocol/design.md#requestid) |
-| **PaddedJsonBody** | JSON body `{"id":..,"payload":..}` padded so its byte length is exact | [protocol/design.md](protocol/design.md#paddedjsonbody) |
+| **PaddedJsonBody** | JSON body `{"id":..,"payload":..}` padded so its byte length is exact; the `/ping` response body | [protocol/design.md](protocol/design.md#paddedjsonbody) |
+| **PingRequestBody** | JSON body `{"id":..,"deadline":..,"payload":..}` of a `/ping` request, padded so its byte length is exact | [protocol/design.md](protocol/design.md#pingrequestbody) |
+| **RequestDeadline** | `deadline_unix_ns` in a PingRequestBody: Unix ns of the request's first send plus the SLO; every RequestCopy carries the same one | [protocol/design.md](protocol/design.md#pingrequestbody) |
 | **CancelBody** | JSON body `{"id":..}` of a `/cancel` request | [protocol/design.md](protocol/design.md#cancelbody) |
 | **ServiceTime** | CPU time per request, `Exp(response_rate)` seconds, in whole microseconds | [sampling/design.md](sampling/design.md#exponentialsampler) |
 | **ServerWorkload** | What a `/ping` costs the server: `cpu_burn` (burn the ServiceTime) or `message_buffer` (MessageWork) | [server/design.md](server/design.md#why-a-messagebuffer-workload) |

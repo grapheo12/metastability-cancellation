@@ -5,8 +5,9 @@ server, the load generator and the load canceller must agree on, byte for byte:
 
 - **RequestId**: how a 64-bit request id is built from a client id and a per-client sequence number,
   and how it is written in JSON.
-- **PaddedJsonBody**: the exact JSON serialization of `/ping` request and response bodies, padded to
-  an exact byte length.
+- **PingRequestBody**: the exact JSON serialization of a `/ping` request body, carrying the RequestId and the
+  **RequestDeadline**, padded to an exact byte length.
+- **PaddedJsonBody**: the exact JSON serialization of `/ping` response bodies, padded the same way.
 - **CancelBody**: the exact JSON serialization of a `/cancel` request body.
 - **Status codes** and headers for `/ping` and `/cancel`.
 
