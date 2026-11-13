@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/client/design.md (client v0.5.0)
+// Source: abstraction/load_generator/client/design.md (client v0.6.0)
 package loadgen
 
 import (
@@ -48,7 +48,7 @@ type clientEvent struct {
 //
 // Design: abstraction/load_generator/client/design.md#semiopenloopclient
 // Design: abstraction/load_generator/client/design.md#state-machine
-func RunClient(clientID uint32, conn *h2client.Conn, cfg Config, rng *sampling.Rng, runStart time.Time) []RequestRecord {
+func RunClient(clientID uint32, conn *h2client.Conn, cfg Config, rng *sampling.Rng, runStart time.Time, runStartUnixNs uint64) []RequestRecord {
 	slots := make(chan struct{}, cfg.NWaitingRequests)
 	// Buffered so that settle and the sender rarely wait; the receiver always drains it.
 	events := make(chan clientEvent, int(cfg.NWaitingRequests)+1)
@@ -86,7 +86,7 @@ func RunClient(clientID uint32, conn *h2client.Conn, cfg Config, rng *sampling.R
 				Outcome: OutcomeNotSent, ScheduledNs: tSched,
 			}}
 		} else {
-			startRequest(clientID, uint32(seq), tSched, conn, cfg, runStart, events)
+			startRequest(clientID, uint32(seq), tSched, conn, cfg, runStart, runStartUnixNs, events)
 		}
 		if seq == math.MaxUint32 {
 			break // seq would leave u32: stop scheduling
@@ -123,12 +123,16 @@ type pendingRequest struct {
 // RetryTimers and the SLO timer race through settle; the first wins.
 //
 // Design: abstraction/load_generator/client/design.md#start_request
-func startRequest(clientID, seq uint32, tSched int64, conn *h2client.Conn, cfg Config, runStart time.Time, events chan<- clientEvent) {
+func startRequest(clientID, seq uint32, tSched int64, conn *h2client.Conn, cfg Config, runStart time.Time, runStartUnixNs uint64, events chan<- clientEvent) {
 	id := protocol.MakeRequestID(seq, clientID)
-	r := &pendingRequest{id: id, body: protocol.BuildBody(id, cfg.RequestBytes), conn: conn, cfg: cfg,
+	sendNs := nowNs(runStart)
+	// RequestDeadline: fixed for the request; every RequestCopy sends this one body.
+	// Design: abstraction/load_generator/client/design.md#requestdeadline
+	deadline := runStartUnixNs + uint64(sendNs+cfg.SloNs)
+	r := &pendingRequest{id: id, body: protocol.BuildRequestBody(id, deadline, cfg.RequestBytes), conn: conn, cfg: cfg,
 		runStart: runStart, events: events,
 		rec: RequestRecord{RequestID: id, ClientID: clientID, Seq: seq, ScheduledNs: tSched, Sent: true}}
-	r.rec.SendNs = nowNs(runStart)
+	r.rec.SendNs = sendNs
 	// Design: abstraction/load_generator/client/design.md#stallwindow
 	r.stall = r.rec.SendNs < cfg.InitialStallNs
 	r.rec.InStallWindow = r.stall

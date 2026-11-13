@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/client/design.md (client v0.5.0)
+// Source: abstraction/load_generator/client/design.md (client v0.6.0)
 package loadgen
 
 import (
@@ -33,9 +33,9 @@ func runAgainstStalledServer(t *testing.T, waiting uint32) []RequestRecord {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	cfg := Config{NumClients: 1, GlobalRate: 200, RequestBytes: 64, SloMs: 5000, DurationS: 0.3, NWaitingRequests: waiting,
+	cfg := Config{NumClients: 1, GlobalRate: 200, RequestBytes: 128, SloMs: 5000, DurationS: 0.3, NWaitingRequests: waiting,
 		PerClientRate: 200, SloNs: 5_000_000_000, DurationNs: 300_000_000, RetryTimeoutNs: 10_000_000_000} // no retries
-	return RunClient(0, conn, cfg, sampling.NewRng(7), time.Now())
+	return RunClient(0, conn, cfg, sampling.NewRng(7), time.Now(), 0)
 }
 
 // With a cap above 1, the sender keeps sending while earlier requests are
@@ -97,7 +97,7 @@ func TestCapOneIsClosedLoop(t *testing.T) {
 // Design: abstraction/load_generator/run_controller/design.md#configuration-validation
 func TestValidateNWaitingRequests(t *testing.T) {
 	p := DefaultParams()
-	p.NumClients, p.GlobalRate, p.RequestBytes, p.SloMs, p.DurationS = "2", "10", "64", "100", "2"
+	p.NumClients, p.GlobalRate, p.RequestBytes, p.SloMs, p.DurationS = "2", "10", "128", "100", "2"
 	if c, err := Validate(p); err != nil || c.NWaitingRequests != 100 {
 		t.Fatalf("default: %+v %v", c, err)
 	}
@@ -117,8 +117,9 @@ func TestValidateNWaitingRequests(t *testing.T) {
 // copy (0-based) of a RequestId waits delays[n], or returns at once if its
 // stream is reset. It reports how each copy ended on done.
 type copyEnd struct {
-	copy  int
-	reset bool // the client reset the stream before the answer
+	copy     int
+	reset    bool   // the client reset the stream before the answer
+	deadline uint64 // the copy's RequestDeadline (0 if none)
 }
 
 func scriptedServer(t *testing.T, delays []time.Duration) (*h2client.Conn, chan copyEnd) {
@@ -133,6 +134,7 @@ func scriptedServer(t *testing.T, delays []time.Duration) (*h2client.Conn, chan 
 	h := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		b, _ := io.ReadAll(req.Body)
 		id, _ := protocol.ParseBody(b)
+		dl, _ := protocol.ParseDeadline(b)
 		mu.Lock()
 		n := calls[id]
 		calls[id]++
@@ -141,9 +143,9 @@ func scriptedServer(t *testing.T, delays []time.Duration) (*h2client.Conn, chan 
 		case <-time.After(delays[n]):
 			w.WriteHeader(protocol.StatusOK)
 			w.Write(protocol.BuildBody(id, 64))
-			done <- copyEnd{copy: n}
+			done <- copyEnd{copy: n, deadline: dl}
 		case <-req.Context().Done():
-			done <- copyEnd{copy: n, reset: true}
+			done <- copyEnd{copy: n, reset: true, deadline: dl}
 		}
 	})
 	go func() {
@@ -166,9 +168,9 @@ func scriptedServer(t *testing.T, delays []time.Duration) (*h2client.Conn, chan 
 // oneRequest sends one request through startRequest and returns its record.
 func oneRequest(t *testing.T, conn *h2client.Conn, sloMs, retryMs int64, maxRetries uint32) RequestRecord {
 	t.Helper()
-	cfg := Config{RequestBytes: 64, SloNs: sloMs * 1_000_000, RetryTimeoutNs: retryMs * 1_000_000, MaxRetries: maxRetries}
+	cfg := Config{RequestBytes: 128, SloNs: sloMs * 1_000_000, RetryTimeoutNs: retryMs * 1_000_000, MaxRetries: maxRetries}
 	events := make(chan clientEvent, 1)
-	startRequest(3, 9, 0, conn, cfg, time.Now(), events)
+	startRequest(3, 9, 0, conn, cfg, time.Now(), 0, events)
 	select {
 	case ev := <-events:
 		return ev.rec
@@ -256,7 +258,7 @@ func TestRetryTimerWorkedExamples(t *testing.T) {
 // Design: abstraction/load_generator/run_controller/design.md#configuration-validation
 func TestValidateRetryParameters(t *testing.T) {
 	p := DefaultParams()
-	p.NumClients, p.GlobalRate, p.RequestBytes, p.SloMs, p.DurationS = "2", "10", "64", "100", "2"
+	p.NumClients, p.GlobalRate, p.RequestBytes, p.SloMs, p.DurationS = "2", "10", "128", "100", "2"
 	if c, err := Validate(p); err != nil || c.RetryTimeoutNs != 150_000_000 || c.MaxRetries != 1 {
 		t.Fatalf("defaults: %+v %v", c, err)
 	}
@@ -285,10 +287,10 @@ func TestValidateRetryParameters(t *testing.T) {
 //
 // Design: abstraction/load_generator/client/design.md#stallwindow
 func TestStallWindowNeverRetries(t *testing.T) {
-	cfg := Config{RequestBytes: 64, SloNs: 300_000_000, RetryTimeoutNs: 50_000_000, MaxRetries: 1, InitialStallNs: 10_000_000_000}
+	cfg := Config{RequestBytes: 128, SloNs: 300_000_000, RetryTimeoutNs: 50_000_000, MaxRetries: 1, InitialStallNs: 10_000_000_000}
 	conn, done := scriptedServer(t, []time.Duration{time.Hour, time.Hour})
 	events := make(chan clientEvent, 1)
-	startRequest(3, 9, 0, conn, cfg, time.Now(), events) // sent at ~0, inside the 10 s window
+	startRequest(3, 9, 0, conn, cfg, time.Now(), 0, events) // sent at ~0, inside the 10 s window
 	r := (<-events).rec
 	if r.Outcome != OutcomeCancelled || r.Copies != 1 || !r.InStallWindow || r.EndNs-r.SendNs < 300_000_000 {
 		t.Fatalf("%+v", r)
@@ -305,7 +307,7 @@ func TestStallWindowNeverRetries(t *testing.T) {
 	cfg.InitialStallNs = 1_000_000 // 1 ms window; this request is sent after it
 	conn2, _ := scriptedServer(t, []time.Duration{time.Hour, time.Hour})
 	start := time.Now().Add(-5 * time.Millisecond)
-	startRequest(3, 10, 5_000_000, conn2, cfg, start, events)
+	startRequest(3, 10, 5_000_000, conn2, cfg, start, 0, events)
 	r = (<-events).rec
 	if r.InStallWindow || r.Copies != 2 {
 		t.Fatalf("after the window the request retries: %+v", r)
@@ -317,7 +319,7 @@ func TestStallWindowNeverRetries(t *testing.T) {
 // Design: abstraction/load_generator/run_controller/design.md#configuration-validation
 func TestValidateInitialStall(t *testing.T) {
 	p := DefaultParams()
-	p.NumClients, p.GlobalRate, p.RequestBytes, p.SloMs, p.DurationS = "2", "10", "64", "100", "60"
+	p.NumClients, p.GlobalRate, p.RequestBytes, p.SloMs, p.DurationS = "2", "10", "128", "100", "60"
 	if c, err := Validate(p); err != nil || c.InitialStallMs != 1000 || c.InitialStallNs != 1_000_000_000 {
 		t.Fatalf("default: %+v %v", c, err)
 	}
@@ -329,6 +331,28 @@ func TestValidateInitialStall(t *testing.T) {
 		p.InitialStallMs, p.DurationS = tc.stall, tc.duration
 		if _, err := Validate(p); (err == nil) != tc.ok {
 			t.Fatalf("initial_stall_ms=%s duration_s=%s: err=%v", tc.stall, tc.duration, err)
+		}
+	}
+}
+
+// Every RequestCopy carries the request's one RequestDeadline:
+// run_start_unix_ns + t_send + SLO of the first send.
+//
+// Design: abstraction/load_generator/client/design.md#requestdeadline
+func TestRetryCopiesShareDeadline(t *testing.T) {
+	conn, done := scriptedServer(t, []time.Duration{time.Hour, time.Hour})
+	cfg := Config{RequestBytes: 128, SloNs: 80_000_000, RetryTimeoutNs: 50_000_000, MaxRetries: 1} // SLO resets both copies
+	const unix = 1_794_533_185_000_000_000
+	events := make(chan clientEvent, 1)
+	startRequest(3, 9, 0, conn, cfg, time.Now(), unix, events)
+	r := (<-events).rec
+	if r.Outcome != OutcomeCancelled || r.Copies != 2 {
+		t.Fatalf("%+v", r)
+	}
+	want := uint64(unix + r.SendNs + cfg.SloNs)
+	for i := 0; i < 2; i++ {
+		if e := <-done; e.deadline != want {
+			t.Fatalf("copy %d deadline %d, want %d", e.copy, e.deadline, want)
 		}
 	}
 }

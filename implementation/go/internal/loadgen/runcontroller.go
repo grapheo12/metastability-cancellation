@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/run_controller/design.md (run_controller v0.5.0)
+// Source: abstraction/load_generator/run_controller/design.md (run_controller v0.6.0)
 package loadgen
 
 import (
@@ -33,7 +33,7 @@ func Validate(p Params) (Config, error) {
 	if p.RequestBytes == "" || err != nil {
 		return c, errors.New("request_bytes must be an integer (required)")
 	}
-	if err := protocol.ValidateBodySize(rb); err != nil {
+	if err := protocol.ValidateRequestBodySize(rb); err != nil {
 		return c, errors.New("request_bytes: " + err.Error())
 	}
 	c.RequestBytes = rb
@@ -121,7 +121,7 @@ func Run(cfg Config) error {
 		wg.Add(1)
 		go func(i uint32) {
 			defer wg.Done()
-			results[i] = RunClient(i, conns[i], cfg, rng, runStart)
+			results[i] = RunClient(i, conns[i], cfg, rng, runStart, uint64(runStart.UnixNano()))
 		}(i)
 	}
 	// Design: abstraction/load_generator/run_controller/design.md#drainphase
