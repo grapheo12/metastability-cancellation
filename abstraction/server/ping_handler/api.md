@@ -9,7 +9,7 @@ A `POST /ping` is handled in two steps on two different activities: `admit_ping`
 
 - `PingJob`: the body parses and its client id matches the connection's binding (or binds it). The job carries
   the RequestId, the client id and a freshly drawn ServiceTime (`0` with `workload = message_buffer`, which
-  draws nothing), and has an empty `reply`
+  draws nothing), the RequestDeadline (`2^64 - 1` if the body has none), and has an empty `reply`
   ([../worker_pool/api.md#pingjob](../worker_pool/api.md#pingjob)).
 - `Response(400, empty)`: the body is unparseable, or its client id differs from the connection's. No sample is
   drawn.
@@ -31,7 +31,7 @@ run any client's job, and two jobs of one client may run at once; the client's s
 
 ## Uses
 
-- [../../protocol/api.md](../../protocol/api.md): `parse_body`, `split_request_id` (also for MessageWork's stream), `build_body`
+- [../../protocol/api.md](../../protocol/api.md): `parse_body`, `parse_deadline`, `split_request_id` (also for MessageWork's stream), `build_body`
 - [../../sampling/api.md](../../sampling/api.md): `exponential_us`; for MessageWork `rng_new`, `derive_seed`, `STREAM_SERVER_MESSAGES`
 - [../cpu_burner/api.md](../cpu_burner/api.md): `burn`, `BurnOutcome`
 - [../message_buffer/api.md](../message_buffer/api.md): `make_tree`, `push_messages`, `MessageBuffer`

@@ -30,9 +30,17 @@ function admit_ping(task, config, rng, conn_state):
     service_us = 0
     if config.workload == cpu_burn:
         service_us = sampling.exponential_us(rng, config.response_rate)  # see Sampling order
+    deadline = protocol.parse_deadline(task.body)          # RequestDeadline; none if missing or malformed
+    if deadline is none: deadline = NO_DEADLINE            # 2^64 - 1: after every deadline under edf
     return PingJob(task = task, request_id = id, client_id = client_id,
-                   service_us = service_us, reply = new OneShot)
+                   service_us = service_us, deadline_unix_ns = deadline, reply = new OneShot)
 ```
+
+- **RequestDeadline.** `admit_ping` copies the body's RequestDeadline into the PingJob for the WorkQueue's `edf`
+  QueueDiscipline ([../worker_pool/design.md#earliestdeadlinefirst](../worker_pool/design.md#earliestdeadlinefirst)).
+  A missing or malformed deadline never rejects the request; it becomes `NO_DEADLINE = 2^64 - 1`. Under `fifo` the
+  field is carried but never read. Parsing the deadline draws nothing from the Rng, so the Sampling order is
+  unchanged.
 
 ## run_ping
 
