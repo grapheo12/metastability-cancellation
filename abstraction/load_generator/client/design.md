@@ -13,7 +13,7 @@ C = { lock, slot_free: condition variable, outstanding: integer = 0,       # req
       events: FIFO of Event (unbounded, multi-producer, single consumer),  # to the receiver
       records: list of RequestRecord }                                     # written by the receiver only
 
-function run_client(client_id, conn, config, rng, run_start):
+function run_client(client_id, conn, config, rng, run_start, run_start_unix_ns):
     spawn receiver(C, client_id)
     sender(C, client_id, conn, config, rng)          # runs on the calling activity
     wait until the receiver has returned
@@ -30,7 +30,7 @@ procedure sender(C, client_id, conn, config, rng):
             sendable = now() < D
             if sendable: C.outstanding = C.outstanding + 1
         if sendable:
-            start_request(C, client_id, seq, t_sched, conn, config)   # never waits for the response
+            start_request(C, client_id, seq, t_sched, conn, config, run_start_unix_ns)   # never waits
         else:
             C.events.push(NotSent(seq, t_sched))
         if seq == 2^32 - 1: break
@@ -100,10 +100,11 @@ With `W = 1` the same arrivals give sends at 0, 5, 6.5 and 7.5 ms.
 event for the receiver.
 
 ```
-procedure start_request(C, client_id, seq, t_sched, conn, config):
+procedure start_request(C, client_id, seq, t_sched, conn, config, run_start_unix_ns):
     id   = protocol.make_request_id(seq, client_id)
-    body = protocol.build_body(id, config.request_bytes)
     t_send = now()                                    # first send: SLO and record clocks start here
+    deadline_unix_ns = run_start_unix_ns + t_send + SLO      # RequestDeadline, fixed for the request
+    body = protocol.build_request_body(id, deadline_unix_ns, config.request_bytes)   # every copy reuses it
     req = { id, seq, t_sched, t_send, client_id,
             in_stall_window: boolean = (t_send < STALL),   # StallWindowRequest: never retries
             lock,                                     # guards current, streams, reset_all
@@ -137,6 +138,31 @@ function settle(C, req, result):                      # first event wins
 The callbacks may run on any activity (the HTTP/2 layer's reader, a timer). They never block: they hold
 `req.lock` only for a few field reads and writes, and `settle` does one compare-and-swap, one short locked read
 and one push. Opening and resetting streams happen outside `req.lock`.
+
+## RequestDeadline
+
+Every request carries a **RequestDeadline** in its PingRequestBody
+([../../protocol/design.md#pingrequestbody](../../protocol/design.md#pingrequestbody)): the Unix wall-clock time by
+which its SLO ends,
+
+```
+deadline_unix_ns = run_start_unix_ns + t_send + SLO        # unsigned 64-bit integer ns
+```
+
+- `run_start_unix_ns` is the Run Controller's wall-clock reading of `run_start`
+  ([../design.md#time-base](../design.md#time-base)); `t_send` is the first copy's send on the monotonic time base.
+  So the deadline equals the moment the SLO timer fires, expressed in Unix time, and all clients of one load
+  generator use one origin.
+- It is computed once, in `start_request`, and the body is built once. Every RequestCopy sends that same body
+  ([RetryTimer](#retrytimer)), so **a retry has the same deadline as the original request**.
+- A StallWindowRequest carries a deadline like any other request.
+
+Worked example, `run_start_unix_ns = 1_794_533_185_000_000_000`, `SLO = 300 ms`, `RETRY = 150 ms`, `R = 1`:
+
+| Copy | Sent at `t_send` (ms) | `deadline_unix_ns` | Check |
+|---|---|---|---|
+| 0 | 2.5 | 1_794_533_185_302_500_000 | 1_794_533_185_000_000_000 + 2_500_000 + 300_000_000 |
+| 1 (retry at 152.5 ms) | — | 1_794_533_185_302_500_000 | same body as copy 0, so the same deadline |
 
 ## RetryTimer
 

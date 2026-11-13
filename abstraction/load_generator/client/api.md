@@ -19,7 +19,7 @@ See [design.md#outcome-classification](design.md#outcome-classification), for `d
 
 ## Functions
 
-### `run_client(client_id: u32, conn: H2Connection, config: LoadGenConfig, rng: Rng, run_start) -> list of RequestRecord`
+### `run_client(client_id: u32, conn: H2Connection, config: LoadGenConfig, rng: Rng, run_start, run_start_unix_ns: u64) -> list of RequestRecord`
 
 Runs one SemiOpenLoopClient, with at most `n_waiting_requests` requests outstanding, until its schedule passes
 `duration_ns` and every request it sent has resolved. Returns its records ordered by `seq`. Called by the Run Controller
@@ -30,10 +30,12 @@ Runs one SemiOpenLoopClient, with at most `n_waiting_requests` requests outstand
 - `conn` (`H2Connection`) is an open h2c connection owned only by this client, opened by the Run
   Controller. It carries up to `n_waiting_requests × (1 + max_retries)` concurrent streams of unresolved requests
   ([design.md#retrytimer](design.md#retrytimer)).
-- `run_start` is the shared monotonic time origin ([../design.md#time-base](../design.md#time-base)).
+- `run_start` is the shared monotonic time origin ([../design.md#time-base](../design.md#time-base)), and
+  `run_start_unix_ns` its wall-clock reading, the origin of every RequestDeadline
+  ([design.md#requestdeadline](design.md#requestdeadline)).
 
 ## Uses
 
-- [../../protocol/api.md](../../protocol/api.md): `make_request_id`, `build_body`, `parse_body`, headers
+- [../../protocol/api.md](../../protocol/api.md): `make_request_id`, `build_request_body`, `parse_body`, headers
 - [../../sampling/api.md](../../sampling/api.md): `exponential_ns`
 - [../metrics/api.md](../metrics/api.md): `RequestRecord`
