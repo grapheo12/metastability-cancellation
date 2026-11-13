@@ -337,6 +337,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [SemiOpenLoopClient](#semiopenloopclient) | [client.go:51](../../../implementation/go/internal/loadgen/client.go#L51), [client_test.go:46](../../../implementation/go/internal/loadgen/client_test.go#L46) |
 | [GatedArrival](#gatedarrival) | [client.go:81](../../../implementation/go/internal/loadgen/client.go#L81), [client_test.go:78](../../../implementation/go/internal/loadgen/client_test.go#L78) |
 | [start_request](#start_request) | [client.go:126](../../../implementation/go/internal/loadgen/client.go#L126), [client.go:154](../../../implementation/go/internal/loadgen/client.go#L154) |
+| [RequestDeadline](#requestdeadline) |  |
 | [RetryTimer](#retrytimer) | [client.go:183](../../../implementation/go/internal/loadgen/client.go#L183), [client.go:223](../../../implementation/go/internal/loadgen/client.go#L223), [client_test.go:187](../../../implementation/go/internal/loadgen/client_test.go#L187) |
 | [StallWindow](#stallwindow) | [client.go:133](../../../implementation/go/internal/loadgen/client.go#L133), [client_test.go:287](../../../implementation/go/internal/loadgen/client_test.go#L287) |
 | [SLOCancellation](#slocancellation) | [client.go:136](../../../implementation/go/internal/loadgen/client.go#L136) |

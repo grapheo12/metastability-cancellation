@@ -257,7 +257,8 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 - `ParseError` is the sentinel `protocol.ErrParse`. `ParseBody` unmarshals into `map[string]json.RawMessage` (not a struct), so keys match case-sensitively as the design requires. Then it decodes `id` as a `string`. A JSON `null` decodes to `""` and is rejected by the empty check.
 - `BuildBody` panics if `k < 0`. This cannot happen once `ValidateBodySize` has passed.
 - `BuildCancelReply(finished, ok)` and `ParseCancelReply(body) (finished, ok, err)` stand for `u64 | none`: `ok == false` is none. `ParseCancelReply` detects `null` by the raw JSON value `null`. The digit-string checks are shared with `ParseBody` in the helper `parseDecimalString`.
-- Tests: `protocol_test.go` checks every worked example (including the CancelReplyBody byte lengths) and the parse rejection cases.
+- `BuildRequestBody` mirrors `BuildBody` with the 36-byte overhead and panics if `k < 0`, which `ValidateRequestBodySize` rules out. `ParseDeadline(body) (deadline, ok)` stands for `u64 | none` (`ok == false` is none) and reuses `parseDecimalString`; it unmarshals the body separately from `ParseBody`, so the server parses a `/ping` body twice (small bodies, accepted cost).
+- Tests: `protocol_test.go` checks every worked example (including the CancelReplyBody byte lengths) the parse rejection cases, and the PingRequestBody examples and `parse_deadline` table.
 
 ### Traceability
 
@@ -267,12 +268,13 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [RequestId](#requestid) | [protocol.go:36](../../implementation/go/internal/protocol/protocol.go#L36), [protocol.go:43](../../implementation/go/internal/protocol/protocol.go#L43), [protocol_test.go:7](../../implementation/go/internal/protocol/protocol_test.go#L7) |
-| [PaddedJsonBody](#paddedjsonbody) | [protocol.go:50](../../implementation/go/internal/protocol/protocol.go#L50), [protocol.go:55](../../implementation/go/internal/protocol/protocol.go#L55), [protocol_test.go:29](../../implementation/go/internal/protocol/protocol_test.go#L29) |
-| [Minimum body size](#minimum-body-size) | [protocol.go:75](../../implementation/go/internal/protocol/protocol.go#L75), [protocol_test.go:58](../../implementation/go/internal/protocol/protocol_test.go#L58) |
-| [CancelBody](#cancelbody) | [protocol.go:85](../../implementation/go/internal/protocol/protocol.go#L85), [protocol_test.go:50](../../implementation/go/internal/protocol/protocol_test.go#L50) |
-| [CancelReplyBody](#cancelreplybody) | [protocol.go:93](../../implementation/go/internal/protocol/protocol.go#L93), [protocol.go:104](../../implementation/go/internal/protocol/protocol.go#L104), [protocol_test.go:81](../../implementation/go/internal/protocol/protocol_test.go#L81), [protocol_test.go:106](../../implementation/go/internal/protocol/protocol_test.go#L106) |
-| [Parsing](#parsing) | [protocol.go:126](../../implementation/go/internal/protocol/protocol.go#L126), [protocol.go:150](../../implementation/go/internal/protocol/protocol.go#L150), [protocol_test.go:65](../../implementation/go/internal/protocol/protocol_test.go#L65) |
+| [RequestId](#requestid) | [protocol.go:37](../../implementation/go/internal/protocol/protocol.go#L37), [protocol.go:44](../../implementation/go/internal/protocol/protocol.go#L44), [protocol_test.go:10](../../implementation/go/internal/protocol/protocol_test.go#L10) |
+| [PaddedJsonBody](#paddedjsonbody) | [protocol.go:51](../../implementation/go/internal/protocol/protocol.go#L51), [protocol.go:56](../../implementation/go/internal/protocol/protocol.go#L56), [protocol_test.go:32](../../implementation/go/internal/protocol/protocol_test.go#L32) |
+| [PingRequestBody](#pingrequestbody) | [protocol.go:90](../../implementation/go/internal/protocol/protocol.go#L90), [protocol_test.go:124](../../implementation/go/internal/protocol/protocol_test.go#L124) |
+| [Minimum body size](#minimum-body-size) | [protocol.go:76](../../implementation/go/internal/protocol/protocol.go#L76), [protocol.go:113](../../implementation/go/internal/protocol/protocol.go#L113), [protocol_test.go:61](../../implementation/go/internal/protocol/protocol_test.go#L61), [protocol_test.go:147](../../implementation/go/internal/protocol/protocol_test.go#L147) |
+| [CancelBody](#cancelbody) | [protocol.go:123](../../implementation/go/internal/protocol/protocol.go#L123), [protocol_test.go:53](../../implementation/go/internal/protocol/protocol_test.go#L53) |
+| [CancelReplyBody](#cancelreplybody) | [protocol.go:131](../../implementation/go/internal/protocol/protocol.go#L131), [protocol.go:142](../../implementation/go/internal/protocol/protocol.go#L142), [protocol_test.go:84](../../implementation/go/internal/protocol/protocol_test.go#L84), [protocol_test.go:109](../../implementation/go/internal/protocol/protocol_test.go#L109) |
+| [Parsing](#parsing) | [protocol.go:164](../../implementation/go/internal/protocol/protocol.go#L164), [protocol.go:188](../../implementation/go/internal/protocol/protocol.go#L188), [protocol.go:205](../../implementation/go/internal/protocol/protocol.go#L205), [protocol_test.go:68](../../implementation/go/internal/protocol/protocol_test.go#L68), [protocol_test.go:154](../../implementation/go/internal/protocol/protocol_test.go#L154) |
 | [Status classification (load-generator client)](#status-classification-load-generator-client) | [client.go:246](../../implementation/go/internal/loadgen/client.go#L246) |
 | [Status classification (load canceller)](#status-classification-load-canceller) | [canceller.go:209](../../implementation/go/internal/ingress/canceller.go#L209) |
 <!-- trace:end -->

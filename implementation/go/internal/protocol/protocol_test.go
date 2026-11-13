@@ -1,7 +1,10 @@
-// Source: abstraction/protocol/design.md (protocol v0.3.1)
+// Source: abstraction/protocol/design.md (protocol v0.4.0)
 package protocol
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Design: abstraction/protocol/design.md#requestid
 func TestRequestIDWorkedExamples(t *testing.T) {
@@ -113,6 +116,60 @@ func TestParseCancelReplyTable(t *testing.T) {
 	for _, s := range []string{`{"finished":42}`, `{}`, ``, `null`, `{"finished":""}`, `{"finished":"4x"}`} {
 		if _, _, err := ParseCancelReply([]byte(s)); err == nil {
 			t.Errorf("ParseCancelReply(%q) accepted", s)
+		}
+	}
+}
+
+// Design: abstraction/protocol/design.md#pingrequestbody
+func TestBuildRequestBodyWorkedExamples(t *testing.T) {
+	const dl = 1794533185297574000
+	for _, tc := range []struct {
+		id, deadline uint64
+		total, k     int
+	}{{0, dl, 128, 72}, {12884901889, dl, 128, 62}, {18446744073709551615, 18446744073709551615, 76, 0}} {
+		b := BuildRequestBody(tc.id, tc.deadline, tc.total)
+		if len(b) != tc.total || strings.Count(string(b), "x") != tc.k {
+			t.Fatalf("id %d: len %d, k %d: %s", tc.id, len(b), strings.Count(string(b), "x"), b)
+		}
+		if id, err := ParseBody(b); err != nil || id != tc.id {
+			t.Fatalf("id round trip: %d %v", id, err)
+		}
+		if d, ok := ParseDeadline(b); !ok || d != tc.deadline {
+			t.Fatalf("deadline round trip: %d %v", d, ok)
+		}
+	}
+	if !strings.HasPrefix(string(BuildRequestBody(7, 1000, 76)), `{"id":"7","deadline":"1000","payload":"`) {
+		t.Fatal("key order and format")
+	}
+}
+
+// Design: abstraction/protocol/design.md#minimum-body-size
+func TestValidateRequestBodySize(t *testing.T) {
+	if ValidateRequestBodySize(75) == nil || ValidateRequestBodySize(76) != nil {
+		t.Fatal("request minimum is 76")
+	}
+}
+
+// Design: abstraction/protocol/design.md#parsing
+func TestParseDeadlineTable(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		want uint64
+		ok   bool
+	}{
+		{`{"id":"7","deadline":"1000","payload":""}`, 1000, true},
+		{`{"id":"7","payload":""}`, 0, false},
+		{`{"id":"7","deadline":1000}`, 0, false},
+		{`{"id":"7","deadline":"18446744073709551616"}`, 0, false},
+		{`{"id":"7","deadline":""}`, 0, false},
+		{`not json`, 0, false},
+	} {
+		got, ok := ParseDeadline([]byte(tc.body))
+		if got != tc.want || ok != tc.ok {
+			t.Fatalf("%s: %d %v", tc.body, got, ok)
+		}
+		if id, err := ParseBody([]byte(tc.body)); tc.body != "not json" && (err != nil || id != 7) {
+			t.Fatalf("%s: ParseBody must ignore the deadline", tc.body)
 		}
 	}
 }

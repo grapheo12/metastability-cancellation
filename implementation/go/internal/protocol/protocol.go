@@ -1,7 +1,7 @@
 // Package protocol implements the /ping and /cancel wire formats shared by
 // the server, the load generator and the load canceller.
 //
-// Source: abstraction/protocol/design.md (protocol v0.3.1)
+// Source: abstraction/protocol/design.md (protocol v0.4.0)
 package protocol
 
 import (
@@ -25,6 +25,7 @@ const (
 	StatusBadGateway       = 502 // sent only by an Ingress
 	RSTCodeCancel          = 0x8
 	MinBodyBytes           = 42
+	MinRequestBodyBytes    = 76 // PingRequestBody: 36 fixed + 20-digit id + 20-digit deadline
 )
 
 // ErrParse is returned by ParseBody for any body that does not carry a valid RequestId.
@@ -75,6 +76,43 @@ func BuildBody(id uint64, totalBytes int) []byte {
 func ValidateBodySize(totalBytes int) error {
 	if totalBytes < MinBodyBytes {
 		return errors.New("body size must be >= 42 bytes")
+	}
+	return nil
+}
+
+// requestBodyFixedOverhead is {"id":"  ","deadline":"  ","payload":"  "}: 7 + 14 + 13 + 2.
+const requestBodyFixedOverhead = 36
+
+// BuildRequestBody returns {"id":"<dec>","deadline":"<dl>","payload":"xxx..."} of
+// exactly totalBytes bytes: the PingRequestBody carrying the RequestDeadline.
+//
+// Design: abstraction/protocol/design.md#pingrequestbody
+func BuildRequestBody(id, deadlineUnixNs uint64, totalBytes int) []byte {
+	dec := strconv.FormatUint(id, 10)
+	dl := strconv.FormatUint(deadlineUnixNs, 10)
+	k := totalBytes - requestBodyFixedOverhead - len(dec) - len(dl)
+	if k < 0 {
+		panic("protocol: request body size below MinRequestBodyBytes")
+	}
+	b := make([]byte, 0, totalBytes)
+	b = append(b, `{"id":"`...)
+	b = append(b, dec...)
+	b = append(b, `","deadline":"`...)
+	b = append(b, dl...)
+	b = append(b, `","payload":"`...)
+	for i := 0; i < k; i++ {
+		b = append(b, 'x')
+	}
+	b = append(b, `"}`...)
+	return b
+}
+
+// ValidateRequestBodySize rejects request_bytes that cannot hold the longest id and deadline.
+//
+// Design: abstraction/protocol/design.md#minimum-body-size
+func ValidateRequestBodySize(totalBytes int) error {
+	if totalBytes < MinRequestBodyBytes {
+		return errors.New("request body size must be >= 76 bytes")
 	}
 	return nil
 }
@@ -157,4 +195,25 @@ func ParseBody(body []byte) (uint64, error) {
 		return 0, ErrParse
 	}
 	return parseDecimalString(raw)
+}
+
+// ParseDeadline leniently extracts the RequestDeadline from a PingRequestBody.
+// ok is false when the body is not a JSON object or "deadline" is missing or
+// malformed (the design's none); it never fails the request.
+//
+// Design: abstraction/protocol/design.md#parsing
+func ParseDeadline(body []byte) (deadline uint64, ok bool) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(body, &obj); err != nil || obj == nil {
+		return 0, false
+	}
+	raw, present := obj["deadline"]
+	if !present {
+		return 0, false
+	}
+	n, err := parseDecimalString(raw)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
