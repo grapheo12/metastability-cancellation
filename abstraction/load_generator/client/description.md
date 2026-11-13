@@ -10,6 +10,9 @@ Leaf component: the **SemiOpenLoopClient**. One instance simulates one user on i
 - Starts a **RetryTimer** of `retry_timeout_ms` for each send of a request (a **RequestCopy**). When it fires, the
   client sends another copy with the same RequestId and waits only for that copy, up to `max_retries` times; when
   the last copy's timer fires, the request is `dropped`.
+- Never retries a request first sent in the **StallWindow** (the first `initial_stall_ms` of the run, while the
+  servers' StallGate holds every request). Such a **StallWindowRequest** is flagged in its record and left out of
+  every metric.
 - Cancels each request with `RST_STREAM(CANCEL)` on every copy if it is not fully answered within `slo_ms` of its
   first send (**SLOCancellation**), and then stops waiting on it.
 - Stops sending at `duration_s`. Arrivals that were scheduled but not sent are recorded as `not_sent`.

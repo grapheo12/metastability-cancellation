@@ -2,7 +2,7 @@
 
 `now()` means `monotonic_now_ns() - run_start`. `D = config.duration_ns`, `SLO = config.slo_ns`,
 `λ = config.per_client_rate`, `W = config.n_waiting_requests`, `RETRY = config.retry_timeout_ns`,
-`R = config.max_retries`.
+`R = config.max_retries`, `STALL = config.initial_stall_ns`.
 
 ## SemiOpenLoopClient
 
@@ -105,6 +105,7 @@ procedure start_request(C, client_id, seq, t_sched, conn, config):
     body = protocol.build_body(id, config.request_bytes)
     t_send = now()                                    # first send: SLO and record clocks start here
     req = { id, seq, t_sched, t_send, client_id,
+            in_stall_window: boolean = (t_send < STALL),   # StallWindowRequest: never retries
             lock,                                     # guards current, streams, reset_all
             current: integer = 0,                     # index of the newest RequestCopy
             streams: list of stream = [],             # every copy opened so far
@@ -128,7 +129,8 @@ function settle(C, req, result):                      # first event wins
         Dropped:                     outcome = dropped;   status = none
         StreamError or ConnectionError: outcome = error; status = none
     C.events.push(Resolved(RequestRecord(req.id, req.client_id, req.seq, outcome, status,
-                                         req.t_sched, req.t_send, t_end, copies)))
+                                         req.t_sched, req.t_send, t_end, copies,
+                                         req.in_stall_window)))
     return true
 ```
 
@@ -158,6 +160,7 @@ procedure send_copy(C, req, k, conn, config, body):   # req.current == k already
     on stream.error():
         with req.lock: newest = (k == req.current)
         if newest: settle(C, req, StreamError)
+    if req.in_stall_window: return                    # StallWindow: no RetryTimer
     at timer t_copy + RETRY:                          # RetryTimer of copy k
         with req.lock:
             if req.settled or k != req.current: return
@@ -199,6 +202,33 @@ Worked examples, `RETRY = 150 ms`, `SLO = 300 ms`, `R = 1`, a request first sent
 With the defaults (`RETRY = 150`, `R = 1`) and `slo_ms = 300`, copy 1 is sent at 150 ms or later, so its
 RetryTimer is due at 300 ms or later. SLOCancellation fires first, or ties and then the first `settle` wins, so
 those runs record `cancelled` and almost never `dropped`. `dropped` is reliable only when `(1 + R) × RETRY < SLO`.
+
+## StallWindow
+
+The **StallWindow** is `[0, STALL)` of the client's time base, `STALL = initial_stall_ns`. It mirrors the servers'
+StallGate ([../../server/worker_pool/design.md](../../server/worker_pool/design.md#stallgate)), during which no
+`/ping` runs, so every request sent then is slow by construction. A request whose first send `t_send` is in the
+window (`t_send < STALL`) is a **StallWindowRequest**:
+
+- It sends only copy 0. `send_copy` returns before starting a RetryTimer, so it never retries and never ends
+  `dropped`; `copies` is always 1.
+- SLOCancellation still applies: it ends `ok`, `rejected`, `cancelled` or `error` as before retries existed.
+- It holds a GatedArrival slot like any other request.
+- Its RequestRecord has `in_stall_window = true`. Metrics leaves it out of every count, rate and latency statistic
+  ([../metrics/design.md#collection](../metrics/design.md#collection)), and Availability skips it.
+
+The window is approximate. A server's stall starts at its first *admitted* `/ping`, a little after `run_start`
+(network and Ingress delay), and its backlog drains only after the stall. So requests sent just after `STALL` can
+still be slow; they are counted normally. `STALL = 0` disables the window: no request is a StallWindowRequest.
+
+Worked examples, `STALL = 1000 ms`, `RETRY = 150 ms`, `SLO = 300 ms`, `R = 1`:
+
+| First send | `t_send < STALL` | Behavior |
+|---|---|---|
+| 0 ms | yes | copy 0 only; SLO at 300 ms → `cancelled` if unanswered; excluded from metrics |
+| 999 ms | yes | copy 0 only, although its SLO runs to 1299 ms |
+| 1000 ms | no | normal request: RetryTimer at 1150 ms, SLO at 1300 ms |
+| any, with `STALL = 0` | no | normal request |
 
 ## SLOCancellation
 
@@ -249,4 +279,5 @@ stateDiagram-v2
   NotSent --> [*]: receiver records it
 ```
 
-Events of copies older than the newest one never change the state.
+Events of copies older than the newest one never change the state. A StallWindowRequest never takes the two RetryTimer
+transitions.
