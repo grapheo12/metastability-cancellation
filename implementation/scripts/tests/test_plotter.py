@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.11.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.12.0)
 import csv
 import json
 import os
@@ -9,7 +9,7 @@ import unittest
 from benchrunner import plotter
 
 
-def write_point(out, pid, swept, done=True, ok=90):
+def write_point(out, pid, swept, done=True, ok=90, retries=True):
     pdir = os.path.join(out, "points", f"point_{pid:04d}")
     os.makedirs(pdir)
     with open(os.path.join(pdir, "params.json"), "w") as f:
@@ -22,6 +22,8 @@ def write_point(out, pid, swept, done=True, ok=90):
                "rates_per_s": {"offered": 50.0, "goodput": ok / 2},
                "e2e_latency_us": {"p50": 100.0, "p99": 900.5, "p999": None},
                "service_latency_us": {"p50": 80.0, "p99": 700.0}}
+    if retries:  # runs made before retries have neither count
+        summary["counts"].update(dropped=4, copies_sent=130)
     json.dump(summary, open(os.path.join(pdir, "loadgen.summary.json"), "w"))
     json.dump({"cancelled_before_processing": 7, "cancelled_during_processing": 3, "completed_before_cancel": 1},
               open(os.path.join(pdir, "server_counters.json"), "w"))
@@ -47,6 +49,18 @@ class PointTableTest(unittest.TestCase):
             cols = list(table[0])
             self.assertEqual(cols[cols.index("cx_accepted") + 1], "cx_offered_fraction")
             self.assertEqual(table[0]["cx_offered_fraction"], "")  # canceller disabled in this fixture
+            self.assertEqual((table[0]["lg_dropped"], table[0]["lg_copies_sent"]), ("4", "130"))
+            self.assertEqual(cols[cols.index("lg_cancelled") + 1], "lg_dropped")
+            self.assertEqual(cols[cols.index("lg_not_sent") + 1], "lg_copies_sent")
+
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#pointtable
+    def test_table_before_retries(self):
+        with tempfile.TemporaryDirectory() as out:
+            write_point(out, 0, {"load_gen.global_rate": 1000}, retries=False)
+            plotter.build_table(out)
+            with open(os.path.join(out, "all_points.csv")) as f:
+                row = next(csv.DictReader(f))
+            self.assertEqual((row["lg_dropped"], row["lg_copies_sent"]), ("", ""))
 
     # Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
     def test_plots(self):

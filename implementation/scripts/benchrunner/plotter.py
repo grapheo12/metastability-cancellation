@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.11.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.12.0)
 """PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot, QueueLengthPlot and ForwardTimelinePlots,
 drawn as interactive HTML FigurePages with plotly."""
 
@@ -15,8 +15,10 @@ METRIC_COLUMNS = [
     ("lg_ok", "loadgen.summary.json", ["counts", "ok"]),
     ("lg_rejected", "loadgen.summary.json", ["counts", "rejected"]),
     ("lg_cancelled", "loadgen.summary.json", ["counts", "cancelled"]),
+    ("lg_dropped", "loadgen.summary.json", ["counts", "dropped"]),
     ("lg_error", "loadgen.summary.json", ["counts", "error"]),
     ("lg_not_sent", "loadgen.summary.json", ["counts", "not_sent"]),
+    ("lg_copies_sent", "loadgen.summary.json", ["counts", "copies_sent"]),
     ("lg_offered_rate", "loadgen.summary.json", ["rates_per_s", "offered"]),
     ("lg_goodput", "loadgen.summary.json", ["rates_per_s", "goodput"]),
     ("e2e_p50_us", "loadgen.summary.json", ["e2e_latency_us", "p50"]),
@@ -51,7 +53,8 @@ FIGURES = [
     ("latency_e2e", "x_key", E2E, "log", None),
     ("goodput", "x_key", [("lg_goodput", _col("lg_goodput"))], "linear", None),
     ("outcomes", "x_key", [(f"{m} / lg_scheduled", _frac(m))
-                           for m in ("lg_ok", "lg_rejected", "lg_cancelled", "lg_error", "lg_not_sent")],
+                           for m in ("lg_ok", "lg_rejected", "lg_cancelled", "lg_dropped", "lg_error",
+                                     "lg_not_sent")],
      "linear", (0, 1)),
     ("server_counters", "x_key", [(m, _col(m)) for m in ("srv_cancelled_before_processing",
                                                          "srv_cancelled_during_processing",
