@@ -16,6 +16,7 @@ Leaf component: the **SemiOpenLoopClient**. One instance simulates one user on i
 - Cancels each request with `RST_STREAM(CANCEL)` on every copy if it is not fully answered within `slo_ms` of its
   first send (**SLOCancellation**), and then stops waiting on it.
 - Stops sending at `duration_s`. Arrivals that were scheduled but not sent are recorded as `not_sent`.
+- Puts a **RequestDeadline** (first send + `slo_ms`, in Unix ns) in every request body; retries reuse it.
 - Records one RequestRecord per scheduled arrival.
 
 Parent: [../design.md](../design.md). API: [api.md](api.md). Design: [design.md](design.md).

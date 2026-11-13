@@ -9,7 +9,7 @@ Same as [../api.md#load-generator-parameters](../api.md#load-generator-parameter
 | `target` | `host:port` | `127.0.0.1:8080` |
 | `num_clients` (`N`) | integer, `1 ..= 2^32-1` | required |
 | `global_rate` | float, requests/s, `> 0` | required |
-| `request_bytes` | integer, bytes, `>= 42` | required |
+| `request_bytes` | integer, bytes, `>= 76` | required |
 | `slo_ms` | float, ms, `> 0` | required |
 | `duration_s` | float, s, `> 0` | required |
 | `seed` | u64 | `0` |
