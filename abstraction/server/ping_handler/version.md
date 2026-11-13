@@ -10,3 +10,4 @@
 | 0.5.0 | 2026-11-10T00:00:00Z | `run_ping` calls `registry_start` when a worker starts a request and passes `counters` to `finish(completed)`; the `last_completed_id` section is removed; outcome table shows what a later `/cancel` counts |
 | 0.6.0 | 2026-11-12T00:00:00Z | MessageWork for `workload = message_buffer`: create messages with checks after each, then push_messages; `run_ping` takes the MessageBuffer; ServiceTime drawn only for `cpu_burn`; worked example |
 | 0.7.0 | 2026-11-12T00:00:00Z | MessageWork creates MessageTrees with `make_tree` from a per-request Rng derived from the seed and the RequestId (STREAM_SERVER_MESSAGES); worked example updated |
+| 0.8.0 | 2026-11-13T00:00:00Z | `admit_ping` reads the RequestDeadline (`protocol.parse_deadline`; missing or malformed = `NO_DEADLINE = 2^64 - 1`, never a rejection) into `PingJob.deadline_unix_ns` |
