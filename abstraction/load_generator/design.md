@@ -17,7 +17,7 @@ flowchart TD
 | Subcomponent | Responsibility | Spec |
 |---|---|---|
 | Run Controller | Validate config, open connections, start clients, wait through DrainPhase, close, write outputs | [run_controller/description.md](run_controller/description.md) |
-| Client | SemiOpenLoopClient: schedule, sender and receiver, GatedArrival, SLOCancellation, record | [client/description.md](client/description.md) |
+| Client | SemiOpenLoopClient: schedule, sender and receiver, GatedArrival, RetryTimer, SLOCancellation, record | [client/description.md](client/description.md) |
 | Metrics | RequestRecord schema, aggregation, CSV and summary output | [metrics/description.md](metrics/description.md) |
 
 ## Time base
@@ -40,8 +40,8 @@ merged only after every client has returned. Timers and sleeps must use the same
 
 1. **Setup:** validate, open N connections. Any failure aborts with a non-zero exit.
 2. **Active phase** `[0, duration_ns)`: clients send requests.
-3. **DrainPhase:** clients send nothing new. Their outstanding requests (up to `n_waiting_requests` each) resolve
-   within `slo_ns`.
+3. **DrainPhase:** clients send no new arrivals (a RetryTimer may still send a RequestCopy of an outstanding
+   request). Their outstanding requests (up to `n_waiting_requests` each) resolve within `slo_ns` of their first send.
 4. **Teardown:** close connections, aggregate, write files.
 
 Details: [run_controller/design.md](run_controller/design.md).

@@ -14,6 +14,8 @@ Same as [../api.md#load-generator-parameters](../api.md#load-generator-parameter
 | `duration_s` | float, s, `> 0` | required |
 | `seed` | u64 | `0` |
 | `n_waiting_requests` | integer, `1 ..= MAX_WAITING_REQUESTS` (1000) | `100` |
+| `retry_timeout_ms` | float, ms, `> 0` | `150` |
+| `max_retries` | integer, `>= 0`, `n_waiting_requests × (1 + max_retries) <= MAX_WAITING_REQUESTS` | `1` |
 | `output_path` | path prefix | `results` |
 
 ## Types
@@ -28,6 +30,7 @@ plus derived values:
 |---|---|
 | `per_client_rate` | `global_rate / N` (requests/s) |
 | `slo_ns` | `round(slo_ms * 1e6)` |
+| `retry_timeout_ns` | `round(retry_timeout_ms * 1e6)` |
 | `duration_ns` | `round(duration_s * 1e9)` |
 
 ## Outputs

@@ -37,10 +37,12 @@ CancelCounters ([Server outputs](#server-outputs)).
 | `num_clients` (`N`) | integer, `1 ..= 2^32-1` | required | Number of simulated clients. Each gets its own connection |
 | `global_rate` | float, requests/s, `> 0` | required | Total offered rate. Each client's arrival rate is `global_rate / N` |
 | `request_bytes` | integer, bytes, `>= 42` | required | Exact byte length of every request body |
-| `slo_ms` | float, ms, `> 0` | required | A request not fully answered within `slo_ms` of being sent is cancelled |
+| `slo_ms` | float, ms, `> 0` | required | A request not fully answered within `slo_ms` of its first send is cancelled, with every RequestCopy ([load_generator/client/design.md](load_generator/client/design.md#slocancellation)) |
 | `duration_s` | float, s, `> 0` | required | Length of the active phase. No request is sent at or after this time |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for arrival sampling |
 | `n_waiting_requests` | integer, `1 ..= MAX_WAITING_REQUESTS` (`1000`) | `100` | Most requests one client keeps outstanding at once. An arrival that comes due at the cap waits for a slot. `1` is a closed loop ([load_generator/client/design.md](load_generator/client/design.md#semiopenloopclient)) |
+| `retry_timeout_ms` | float, ms, `> 0` | `150` | RetryTimer of each RequestCopy, from that copy's send. When it fires the client sends the next RequestCopy, or drops the request after the last one ([load_generator/client/design.md](load_generator/client/design.md#retrytimer)) |
+| `max_retries` | integer, `>= 0`, with `n_waiting_requests × (1 + max_retries) <= MAX_WAITING_REQUESTS` | `1` | RequestCopies sent after the first. `0` disables retries |
 | `output_path` | path prefix | `results` | Outputs go to `<output_path>.requests.csv` and `<output_path>.summary.json` |
 
 The minimum body size of 42 bytes comes from [protocol/design.md](protocol/design.md#minimum-body-size).
@@ -67,7 +69,8 @@ The Ingress's constants, outputs and lifecycle are in [ingress/api.md](ingress/a
 Transport is HTTP/2 over cleartext TCP with prior knowledge (h2c, no HTTP/1.1 upgrade). Full
 details are in [protocol/api.md](protocol/api.md).
 
-- **Concurrent streams.** A client keeps up to `n_waiting_requests` streams open on its connection. Every program
+- **Concurrent streams.** A client keeps up to `n_waiting_requests × (1 + max_retries)` streams of unresolved
+  requests open on its connection (each request may have every RequestCopy open). Every program
   that accepts `/ping` connections (the server and the Ingress) must advertise
   `SETTINGS_MAX_CONCURRENT_STREAMS >= MAX_WAITING_REQUESTS` (`1000`), and the Ingress's upstream connections carry
   the same streams on to the servers. Otherwise the HTTP/2 layer would hold back streams, delaying sends without

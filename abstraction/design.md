@@ -46,7 +46,7 @@ flowchart LR
 | Protocol | RequestId encoding, PaddedJsonBody and CancelBody, status codes | [protocol/description.md](protocol/description.md) |
 | Sampling | Seeded RNG, exponential and uniform-integer samplers, per-stream seed derivation | [sampling/description.md](sampling/description.md) |
 | Server | Accepts connections, serves `/ping` with a CPU-bound cost, applies RST and `/cancel` cancellation | [server/description.md](server/description.md) |
-| Load Generator | Simulates N clients, applies SLOCancellation, records latency | [load_generator/description.md](load_generator/description.md) |
+| Load Generator | Simulates N clients, retries on RetryTimer, applies SLOCancellation, records latency | [load_generator/description.md](load_generator/description.md) |
 | Ingress | Load-balances `/ping` across server instances, relays answers, and cancels in-flight requests from inside (Load Canceller) | [ingress/description.md](ingress/description.md) |
 | Benchmark Runner | Sets up two machines, runs a parameter sweep of the three programs, downloads and plots results | [benchmark_runner/description.md](benchmark_runner/description.md) |
 
@@ -67,7 +67,9 @@ parameters, their output files and the server's `listening on` and CancelCounter
 1. Client `i`'s sender reaches scheduled arrival `seq` (a GatedArrival: it waits while `n_waiting_requests` of
    its requests are unresolved).
 2. Client builds RequestId `(i << 32) | seq` and a PaddedJsonBody of `request_bytes`, then sends
-   `POST /ping` on its own connection to the Ingress and starts an SLO timer.
+   `POST /ping` on its own connection to the Ingress and starts an SLO timer and a RetryTimer. If the RetryTimer
+   fires first, the client sends another RequestCopy (same id and body, new stream) with its own RetryTimer and
+   from then on waits only for that copy's answer; the earlier copy is left running and its answer ignored.
    The Ingress's ForwardTask picks a backend, records the request in the InFlightMap, and forwards it unchanged on
    its connection for client `i` and that backend. Everything below happens on that backend, and the answer (or a
    reset) travels back the same way.
@@ -80,7 +82,9 @@ parameters, their output files and the server's `listening on` and CancelCounter
    - The burn completes. The server answers `202` and the client records `ok` (if within the SLO).
    - A matching `/cancel` is seen at a CancelCheckPoint (`cooperative` mode). The server stops, counts
      it, and answers `503`. The client records `rejected`.
-   - The SLO fires first. The client sends `RST_STREAM(CANCEL)` and records `cancelled`. On the
+   - The last RequestCopy's RetryTimer fires first. The client abandons the request without a reset and records
+     `dropped`.
+   - The SLO fires first. The client sends `RST_STREAM(CANCEL)` on every RequestCopy and records `cancelled`. On the
      server, in `cooperative` mode, the worker skips or stops the request and writes nothing. In
      `ignore` mode the server burns the full time and its response is dropped.
 5. The client's receiver records the outcome and frees the request's slot. The sender does not wait for steps
@@ -113,7 +117,7 @@ finish. See
 ## Time bounds of a run
 
 The active phase is `[0, duration_s)` from the run start. The DrainPhase that follows lasts at
-most `slo_ms`, because every in-flight request is resolved by its response or its SLO timer. See
+most `slo_ms`, because every in-flight request is resolved by its response, a RetryTimer or its SLO timer. See
 [load_generator/run_controller/design.md](load_generator/run_controller/design.md#drainphase).
 The Ingress's Load Canceller starts at the Ingress's first `/ping` and has its own `duration_s` and drain timeout
 ([ingress/load_canceller/design.md](ingress/load_canceller/design.md#cancellerdrain)). The operator starts the
