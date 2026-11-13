@@ -14,6 +14,7 @@ function aggregate(records, config, run_end_ns, run_start_unix_ns):
     counts.scheduled = len(records)
     counts[o] = number of records with outcome o, for each outcome o
     counts.sent = counts.scheduled - counts.not_sent
+    counts.copies_sent = sum of r.copies over records     # RequestCopies, >= counts.sent
     rates.offered = counts.scheduled / D_s
     rates.sent    = counts.sent / D_s
     rates.goodput = counts.ok / D_s
@@ -27,6 +28,9 @@ function aggregate(records, config, run_end_ns, run_start_unix_ns):
 ## Summary
 
 - Rates divide by the configured `duration_s` (the active phase), not by `run_end_s`.
+- **One record per logical request.** RequestCopies are not counted as requests: `sent` counts requests,
+  `copies_sent` counts copies, and `copies_sent - sent` is the number of retries. A request's latency runs from
+  its first send to the answer of its newest copy.
 - `run_start_unix_ns` is passed through unchanged from the Run Controller; it is only reported.
 - **Latency statistics cover only `ok` requests.** Cancelled requests end at about `slo_ms` by
   construction, so their share is reported through `counts.cancelled` instead. All per-request
