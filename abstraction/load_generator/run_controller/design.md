@@ -12,11 +12,20 @@ function validate(params):
     seed parses as u64                       else error
     target parses as host:port               else error
     1 <= n_waiting_requests <= MAX_WAITING_REQUESTS   else error     # MAX_WAITING_REQUESTS = 1000
+    retry_timeout_ms > 0                     else error             # default 150
+    max_retries is an integer >= 0           else error             # default 1
+    n_waiting_requests * (1 + max_retries) <= MAX_WAITING_REQUESTS  else error   # exact integer arithmetic
     return LoadGenConfig(params,
                          per_client_rate = global_rate / num_clients,
                          slo_ns = round(slo_ms * 1e6),
+                         retry_timeout_ns = round(retry_timeout_ms * 1e6),
                          duration_ns = round(duration_s * 1e9))
 ```
+
+The last retry check keeps every client's streams of unresolved requests within the `SETTINGS_MAX_CONCURRENT_STREAMS`
+that servers and the Ingress advertise ([../client/design.md#retrytimer](../client/design.md#retrytimer)). Examples:
+`n_waiting_requests = 100`, `max_retries = 1` gives 200 (valid); `500` and `1` gives 1000 (valid, the maximum);
+`1000` and `1` gives 2000 (error); `1` and `999` gives 1000 (valid).
 
 ## Startup
 
