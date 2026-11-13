@@ -15,6 +15,7 @@
 | `send_ns` | integer or empty | When the request's first RequestCopy was sent. Empty for `not_sent` |
 | `end_ns` | integer or empty | When the request resolved. Empty for `not_sent` |
 | `copies` | u32 | RequestCopies the client started, `1 ..= 1 + max_retries`; `0` for `not_sent` ([../client/design.md#retrytimer](../client/design.md#retrytimer)) |
+| `in_stall_window` | boolean | First sent in the StallWindow (`send_ns < initial_stall_ns`); always false for `not_sent` ([../client/design.md#stallwindow](../client/design.md#stallwindow)) |
 
 Derived: `e2e_latency_ns = end_ns - scheduled_ns` and `service_latency_ns = end_ns - send_ns`,
 both empty for `not_sent`. See [design.md#requestrecord](design.md#requestrecord).
@@ -26,7 +27,8 @@ The record written as [Summary JSON](#summary-json). See [design.md#summary](des
 ## Functions
 
 ### `aggregate(records, config, run_end_ns, run_start_unix_ns: u64) -> SummaryReport`
-Counts outcomes, computes rates over `duration_s`, and computes latency statistics over `ok` records. See
+Leaves out StallWindowRequests (counting them in `counts.stall_window`), counts outcomes, computes rates over
+`duration_s - initial_stall_ms / 1000`, and computes latency statistics over `ok` records. See
 [design.md#collection](design.md#collection), [design.md#summary](design.md#summary) and
 [design.md#percentiles](design.md#percentiles).
 
@@ -44,10 +46,11 @@ Writes [Summary JSON](#summary-json). See [design.md#summary](design.md#summary)
 UTF-8, comma-separated, `\n` line endings, one header line, rows sorted by `(client_id, seq)`:
 
 ```
-request_id,client_id,seq,outcome,http_status,scheduled_ns,send_ns,end_ns,e2e_latency_ns,service_latency_ns,copies
+request_id,client_id,seq,outcome,http_status,scheduled_ns,send_ns,end_ns,e2e_latency_ns,service_latency_ns,copies,in_stall_window
 ```
 
-`copies` is last, so readers that find columns by header name keep working.
+`copies` and `in_stall_window` are last, so readers that find columns by header name keep working.
+`in_stall_window` is written `1` or `0`.
 
 Integers are written in decimal. Empty fields are written as nothing between the commas. One row
 per [design.md#requestrecord](design.md#requestrecord).
@@ -60,7 +63,7 @@ per [design.md#requestrecord](design.md#requestrecord).
   "run_end_s": float,
   "run_start_unix_ns": integer,
   "counts":   { "scheduled", "sent", "ok", "rejected", "cancelled", "dropped", "error", "not_sent",
-                "copies_sent" },
+                "copies_sent", "stall_window" },
   "rates_per_s": { "offered", "sent", "goodput" },
   "e2e_latency_us":     { "count", "mean", "p50", "p90", "p99", "p999", "max" },
   "service_latency_us": { "count", "mean", "p50", "p90", "p99", "p999", "max" }

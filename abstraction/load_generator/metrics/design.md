@@ -10,7 +10,9 @@ records are sorted by `(client_id, seq)`.
 
 ```
 function aggregate(records, config, run_end_ns, run_start_unix_ns):
-    D_s = config.duration_s
+    D_s = config.duration_s - config.initial_stall_ms / 1000.0      # measured_s, > 0 by validation
+    counts.stall_window = number of records with r.in_stall_window   # StallWindowRequests
+    records = records with not r.in_stall_window                     # everything below ignores them
     counts.scheduled = len(records)
     counts[o] = number of records with outcome o, for each outcome o
     counts.sent = counts.scheduled - counts.not_sent
@@ -27,7 +29,12 @@ function aggregate(records, config, run_end_ns, run_start_unix_ns):
 
 ## Summary
 
-- Rates divide by the configured `duration_s` (the active phase), not by `run_end_s`.
+- Rates divide by **`measured_s = duration_s - initial_stall_ms / 1000`**: the active phase minus the StallWindow,
+  not `run_end_s`. With `initial_stall_ms = 0` this is `duration_s`.
+- **The StallWindow is left out.** StallWindowRequests
+  ([../client/design.md#stallwindow](../client/design.md#stallwindow)) count only in `counts.stall_window`; every
+  other count, every rate and both latency statistics use the remaining records. Their rows stay in the Requests
+  CSV, flagged by `in_stall_window`. A request gated during the window but sent after it is counted normally.
 - **One record per logical request.** RequestCopies are not counted as requests: `sent` counts requests,
   `copies_sent` counts copies, and `copies_sent - sent` is the number of retries. A request's latency runs from
   its first send to the answer of its newest copy.
