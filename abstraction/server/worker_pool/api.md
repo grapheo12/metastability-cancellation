@@ -6,6 +6,7 @@
 |---|---|---|---|
 | `n_worker_threads` | integer, `1 ..= 2^32-1` | `1` | Number of workers. Same as [../../api.md#server-parameters](../../api.md#server-parameters) |
 | `initial_stall_ms` | integer, ms, `>= 0` | `1000` | StallGate: no job is popped until this long after the first push. `0`: no stall. Same as [../../api.md#server-parameters](../../api.md#server-parameters) |
+| `queue_discipline` | `fifo` \| `edf` | `fifo` | QueueDiscipline of the WorkQueue: push order, or EarliestDeadlineFirst ([design.md#earliestdeadlinefirst](design.md#earliestdeadlinefirst)). Same as [../../api.md#server-parameters](../../api.md#server-parameters) |
 | `queue_sample_interval_ms` | integer, ms, `>= 1` | `10` | Time between QueueLengthLog samples. Same as [../../api.md#server-parameters](../../api.md#server-parameters) |
 
 ## Types
@@ -21,13 +22,15 @@ One admitted `POST /ping`, ready to run. Built by the Connection Handler when it
 | `request_id` | u64 | The RequestId parsed from the body |
 | `client_id` | u32 | `request_id >> 32`, equal to the connection's bound client id |
 | `service_us` | u64, µs | The ServiceTime drawn for this request when it was admitted |
+| `deadline_unix_ns` | u64, Unix ns | The RequestDeadline from the body, or `NO_DEADLINE = 2^64 - 1` if it had none. Read only by the `edf` QueueDiscipline |
 | `reply` | one-shot slot of `Response` or `Aborted` | Filled exactly once, by the worker that ran the job or by `queue_close`. The stream waits on it |
 
 See [design.md#pingjob](design.md#pingjob).
 
 ### `WorkQueue`
 
-Process-wide unbounded FIFO of PingJobs, safe for any number of concurrent `queue_push` and `queue_pop` callers.
+Process-wide unbounded queue of PingJobs, popped in push order (`fifo`) or by earliest RequestDeadline (`edf`), safe
+for any number of concurrent `queue_push` and `queue_pop` callers.
 See [design.md#workqueue](design.md#workqueue).
 
 ### `WorkerPool`
@@ -36,17 +39,17 @@ The set of `n_worker_threads` running workers. See [design.md#workerpool](design
 
 ## Functions
 
-### `queue_new(initial_stall_ms: u64) -> WorkQueue`
-Creates an empty, open queue whose StallGate opens `initial_stall_ms` after the first push. Called once per process by the Listener
+### `queue_new(initial_stall_ms: u64, discipline: fifo | edf) -> WorkQueue`
+Creates an empty, open queue with the given QueueDiscipline, whose StallGate opens `initial_stall_ms` after the first push. Called once per process by the Listener
 ([../design.md#listener](../design.md#listener)). See [design.md#workqueue](design.md#workqueue).
 
 ### `queue_push(queue, job: PingJob) -> ok | Closed`
-Appends `job` at the tail. Never blocks. The first successful push arms the StallGate
+Adds `job`: at the tail (`fifo`) or by its `(deadline_unix_ns, push_seq)` key (`edf`). Never blocks. The first successful push arms the StallGate
 ([design.md#stallgate](design.md#stallgate)). Returns `Closed`, and leaves `job.reply` untouched, if the queue has
 been closed. Called by Connection Handlers. See [design.md#workqueue](design.md#workqueue).
 
 ### `queue_pop(queue) -> PingJob | None`
-Removes and returns the head job, waiting while the queue is empty or the StallGate is not yet open, and the
+Removes and returns the next job in the discipline's order, waiting while the queue is empty or the StallGate is not yet open, and the
 queue is open. Returns `None` once the queue is
 closed. Called by workers only. See [design.md#workqueue](design.md#workqueue).
 

@@ -15,6 +15,7 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 | `seed` | u64 | `0` |
 | `n_worker_threads` | integer, `1 ..= 2^32-1` | `1` |
 | `initial_stall_ms` | integer, ms, `>= 0` | `1000` |
+| `queue_discipline` | `fifo` \| `edf` | `fifo` |
 | `queue_log_path` | path, or empty | empty |
 | `queue_sample_interval_ms` | integer, ms, `>= 1` | `10` |
 | `window_size` | integer, `1 ..= 2^32-1` | `200000` |
@@ -40,8 +41,8 @@ shared by all Connection Handlers and workers.
 
 - Speaks HTTP/2 over cleartext TCP with prior knowledge. Does not support HTTP/1.1.
 - Serves `/ping` and `/cancel` as described in [../protocol/api.md](../protocol/api.md).
-- Starts `/ping` requests from all connections in one global order, the order in which they were fully received
-  (END_STREAM) and admitted, and runs up to `n_worker_threads` of them at once
+- Starts `/ping` requests from all connections in one global order: with `queue_discipline = fifo`, the order in
+  which they were fully received (END_STREAM) and admitted; with `edf`, earliest RequestDeadline first. It runs up to `n_worker_threads` of them at once
   ([worker_pool/design.md#ordering](worker_pool/design.md#ordering)).
 - Answers `/cancel` without queuing it behind any `/ping`.
 - Runs no `/ping` until `initial_stall_ms` after the first admitted `/ping`; until then requests are only queued

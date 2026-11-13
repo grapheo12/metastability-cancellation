@@ -3,7 +3,7 @@
 ## PingJob
 
 ```
-PingJob: { task, request_id: u64, client_id: u32, service_us: u64, reply: OneShot }
+PingJob: { task, request_id: u64, client_id: u32, service_us: u64, deadline_unix_ns: u64, reply: OneShot }
 
 OneShot: a slot written exactly once and read by one waiter
     put(value)      # first and only write; never blocks
@@ -11,23 +11,40 @@ OneShot: a slot written exactly once and read by one waiter
 ```
 
 A PingJob is created only for a `POST /ping` whose body parses and whose client id matches the connection's
-binding. Its ServiceTime is already drawn, so a worker never touches a connection's Rng. Every PingJob that was
+binding. Its ServiceTime is already drawn, so a worker never touches a connection's Rng. `deadline_unix_ns` is the
+request's RequestDeadline, or `NO_DEADLINE = 2^64 - 1` if the body had none; only the `edf` QueueDiscipline reads
+it ([EarliestDeadlineFirst](#earliestdeadlinefirst)). Every PingJob that was
 pushed successfully gets exactly one `reply.put`: from the worker that ran it ([WorkerPool](#workerpool)), or from
 `queue_close` if it was still queued ([WorkQueue](#workqueue)). A job whose push returned `Closed` gets none, and
 its pusher answers the stream itself.
 
 ## WorkQueue
 
-An unbounded multi-producer, multi-consumer FIFO. The reference design is one lock and one condition variable.
-An implementation may use any library queue with the same four properties: FIFO order, `push` never blocks,
-`pop` blocks while empty and open, and `close` wakes every blocked `pop`.
+An unbounded multi-producer, multi-consumer queue whose pop order is set by its **QueueDiscipline**: `fifo` (push
+order) or `edf` ([EarliestDeadlineFirst](#earliestdeadlinefirst)). The reference design is one lock and one
+condition variable. An implementation may use any library queue with the same four properties: pop order as the
+discipline says, `push` never blocks, `pop` blocks while empty and open, and `close` wakes every blocked `pop`.
 
 ```
-WorkQueue: { lock, not_empty: condition variable, items: FIFO of PingJob (unbounded), closed: boolean = false,
+WorkQueue: { lock, not_empty: condition variable, discipline: fifo | edf,
+             items: FIFO of PingJob                                         # fifo
+                    or min-priority queue of (deadline_unix_ns, push_seq, PingJob),   # edf, smallest key first
+             next_seq: u64 = 0,                                              # edf: push_seq of the next push
+             closed: boolean = false,
              stall_ns: u64, open_at_ns: u64 or none = none }      # StallGate, see below
 
-function queue_new(initial_stall_ms):
-    return WorkQueue(stall_ns = initial_stall_ms * 1_000_000)
+function queue_new(initial_stall_ms, discipline):
+    return WorkQueue(discipline = discipline, stall_ns = initial_stall_ms * 1_000_000)
+
+function add_item(q, job):                       # caller holds q.lock
+    if q.discipline == fifo: q.items.push_back(job)
+    else:
+        q.items.insert((job.deadline_unix_ns, q.next_seq, job))
+        q.next_seq = q.next_seq + 1              # u64; 2^64 pushes are out of reach
+
+function take_item(q):                           # caller holds q.lock; q.items is not empty
+    if q.discipline == fifo: return q.items.pop_front()
+    return q.items.pop_min().job                 # smallest (deadline_unix_ns, push_seq)
 
 function queue_push(q, job):
     with q.lock:
@@ -35,7 +52,7 @@ function queue_push(q, job):
         if q.open_at_ns is none:                 # StallGate: the first push arms it
             q.open_at_ns = monotonic_now_ns() + q.stall_ns
             if q.stall_ns > 0: schedule q.not_empty.notify_all() at q.open_at_ns
-        q.items.push_back(job)
+        add_item(q, job)
         q.not_empty.notify_one()
     return ok
 
@@ -44,14 +61,14 @@ function queue_pop(q):
         loop:
             if q.closed: return None             # closed wins over queued items
             if q.items is not empty and monotonic_now_ns() >= q.open_at_ns:
-                return q.items.pop_front()
+                return take_item(q)
             q.not_empty.wait()                   # woken by a push, the gate opening, or close
 
 procedure queue_close(q):
     with q.lock:
         if q.closed: return
         q.closed = true
-        dropped = q.items.take_all()             # in FIFO order
+        dropped = take_item(q) repeatedly until q.items is empty   # in pop order
         q.not_empty.notify_all()
     for job in dropped: job.reply.put(Aborted)    # outside the lock
 ```
@@ -63,8 +80,8 @@ procedure queue_close(q):
   and not yet popped. `queue_close` has already answered that job with `Aborted`.
 - **StallGate.** Workers pop nothing until the gate opens ([StallGate](#stallgate)). Pushes, `queue_len` and
   `queue_close` are not affected by it.
-- **No reordering.** A job is never pushed back or skipped. If its stream was reset while it was queued, it is
-  still popped in turn, and the Ping Handler's CancelCheckPoint 1 sees the RST flag
+- **No reordering after the push.** A job's place is fixed when it is pushed (its key, for `edf`). It is never
+  pushed back or skipped. If its stream was reset while it was queued, it is still popped in turn, and the Ping Handler's CancelCheckPoint 1 sees the RST flag
   ([../ping_handler/design.md#cancelcheckpoints](../ping_handler/design.md#cancelcheckpoints)).
 
 ## StallGate
@@ -95,7 +112,7 @@ Worked example, `initial_stall_ms = 1000`, times in ms since the server started:
 | `/cancel` at 100 | none | answered `202`, nothing popped | the gate is not armed by `/cancel` |
 | first `/ping` pushed at 250 | 1250 | queue 1, no pop | 250 + 1000 |
 | 9 more pushed until 1200 | 1250 | queue 10, no pop | the gate is still closed |
-| 1250 | 1250 | workers pop in push order | 1250 >= 1250 |
+| 1250 | 1250 | workers pop in the discipline's order | 1250 >= 1250 |
 | `initial_stall_ms = 0`, first push at 250 | 250 | popped at once | 250 + 0 |
 | `queue_close` at 600, stall 1000 | 1250 | queued jobs `Aborted`, workers return | close wins |
 
@@ -126,10 +143,47 @@ The client's cancellation state lives in the CancelRegistry
 ([../cancel_tracker/design.md#cancelregistry](../cancel_tracker/design.md#cancelregistry)). The response is
 written by the stream, not by the worker ([../connection_handler/design.md](../connection_handler/design.md)).
 
+## EarliestDeadlineFirst
+
+With `queue_discipline = edf`, the WorkQueue is a min-priority queue: a worker pops the queued job with the
+**earliest RequestDeadline**. This is **EarliestDeadlineFirst** (EDF).
+
+- **Key.** `(deadline_unix_ns, push_seq)`, compared as a pair of unsigned 64-bit integers. `push_seq` counts
+  successful pushes from 0, so equal deadlines pop in push order. Retry copies of one request carry the same
+  deadline ([../../load_generator/client/design.md#requestdeadline](../../load_generator/client/design.md#requestdeadline))
+  and therefore pop in the order they arrived.
+- **No deadline.** A job whose body had no valid deadline gets `NO_DEADLINE = 2^64 - 1`. It pops after every job
+  with a deadline, and such jobs pop among themselves in push order. With no deadlines at all, `edf` pops exactly
+  like `fifo`.
+- **Ordering only.** The server never compares a deadline with its own clock: a job whose deadline has passed is
+  not dropped or demoted, only ordered. Deadlines are wall-clock values of the client's machine; the server uses
+  them only to compare jobs with each other.
+- **Starvation is accepted.** A job with a late deadline waits as long as jobs with earlier deadlines keep
+  arriving. The client's SLOCancellation and the CancelCheckPoints bound what that costs.
+- **Cost.** Push and pop take `O(log n)` for `n` queued jobs, under the same one lock.
+
+Worked example, `edf`, one worker, the StallGate closed while jobs are pushed in the order shown (deadlines in ms
+of Unix time, `-` for none):
+
+| Push order (`push_seq`) | Job | Deadline | Key | Pop order |
+|---|---|---|---|---|
+| 0 | A | 300 | (300, 0) | 4 |
+| 1 | B | 100 | (100, 1) | 1 |
+| 2 | C | 200 | (200, 2) | 3 |
+| 3 | D | - | (2^64 - 1, 3) | 5 |
+| 4 | B' (retry copy of B) | 100 | (100, 4) | 2 |
+
+Check: sorting the keys gives (100,1), (100,4), (200,2), (300,0), (2^64-1,3), so the pop order is
+**B, B', C, A, D**. B and B' tie on the deadline and `push_seq` puts the original first; D has no deadline and
+goes last. With `fifo` the same pushes pop A, B, C, D, B'.
+
 ## Ordering
 
-- Jobs **start** in push order: the `k`-th job popped is the `k`-th job pushed, whatever `n_worker_threads` is.
-- With `n_worker_threads = 1`, jobs also **finish** in push order, one at a time.
+- Jobs **start** in pop order, whatever `n_worker_threads` is. With `fifo` that is push order: the `k`-th job
+  popped is the `k`-th job pushed. With `edf` it is the order of `(deadline_unix_ns, push_seq)` among the jobs
+  queued at each pop ([EarliestDeadlineFirst](#earliestdeadlinefirst)); a job pushed later with an earlier deadline
+  starts before older queued jobs.
+- With `n_worker_threads = 1`, jobs also **finish** in pop order, one at a time.
 - With `n_worker_threads > 1`, up to `n_worker_threads` jobs run at once, and a job that started later can finish
   earlier.
 - One connection pushes its jobs in the order it admits them, which is the order their requests were fully
@@ -139,8 +193,8 @@ written by the stream, not by the worker ([../connection_handler/design.md](../c
   `/cancel` to its request by id
   ([../cancel_tracker/design.md#out-of-order-requests](../cancel_tracker/design.md#out-of-order-requests)).
 
-Worked example: jobs `A`, `B`, `C` pushed at `t = 0` in that order, with `service_us` 300, 100 and 100, no
-cancellation:
+Worked example (`fifo`): jobs `A`, `B`, `C` pushed at `t = 0` in that order, with `service_us` 300, 100 and 100,
+no cancellation:
 
 | `n_worker_threads` | Runs (worker: job [start, end) µs) | Finish order | Check |
 |---|---|---|---|
@@ -227,7 +281,7 @@ The WorkQueue lock is held only to move one job in or out. A worker never holds 
 | Push after `queue_close` | `Closed`. The Connection Handler answers the stream with `Aborted` (reset) |
 | `queue_close` while workers wait in `queue_pop` | All wake and return `None`; the workers return |
 | `queue_close` while a worker burns | The burn runs to its end (or its CancelCheckPoint). The worker fills `reply`, then pops `None` and returns |
-| `queue_close` with jobs queued | Each gets `reply.put(Aborted)`, in FIFO order. They are not counted anywhere |
+| `queue_close` with jobs queued | Each gets `reply.put(Aborted)`, in pop order. They are not counted anywhere |
 | Stream reset while its job is queued | The job stays in place. At its turn, `cooperative` mode skips it at CancelCheckPoint 1; `ignore` mode burns it fully |
 | Connection closed while its jobs are queued or running | The jobs stay in place. The Connection Handler sets their RST flags when it closes ([../connection_handler/design.md#connection-close](../connection_handler/design.md#connection-close)), so they behave like reset streams; their writes are dropped |
 | `queue_close` called twice | The second call does nothing |
