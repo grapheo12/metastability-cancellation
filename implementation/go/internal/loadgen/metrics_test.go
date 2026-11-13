@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/metrics/design.md (metrics v0.3.0)
+// Source: abstraction/load_generator/metrics/design.md (metrics v0.4.0)
 package loadgen
 
 import (
@@ -48,5 +48,31 @@ func TestClassify(t *testing.T) {
 		classify(500, body, 7) != OutcomeError || classify(202, body, 8) != OutcomeError ||
 		classify(protocol.StatusBadGateway, nil, 7) != OutcomeError { // 502 from an Ingress
 		t.Fatal("classification table")
+	}
+}
+
+// StallWindowRequests count only in counts.stall_window; every other count,
+// the rates (over duration_s - initial_stall_ms / 1000) and the latency
+// statistics leave them out.
+//
+// Design: abstraction/load_generator/metrics/design.md#collection
+// Design: abstraction/load_generator/metrics/design.md#summary
+func TestAggregateLeavesOutStallWindow(t *testing.T) {
+	recs := []RequestRecord{
+		{Outcome: OutcomeOK, ScheduledNs: 0, SendNs: 0, EndNs: 900_000, Sent: true, Copies: 1, InStallWindow: true},
+		{Outcome: OutcomeCancelled, Sent: true, Copies: 1, InStallWindow: true},
+		{Outcome: OutcomeOK, ScheduledNs: 0, SendNs: 1000, EndNs: 3000, Sent: true, Copies: 2},
+		{Outcome: OutcomeDropped, Sent: true, Copies: 2},
+	}
+	r := Aggregate(recs, Config{DurationS: 3, InitialStallMs: 1000}, 3e9, 0)
+	c := r.Counts
+	if c.StallWindow != 2 || c.Scheduled != 2 || c.Sent != 2 || c.OK != 1 || c.Cancelled != 0 || c.Dropped != 1 || c.CopiesSent != 4 {
+		t.Fatalf("%+v", c)
+	}
+	if r.RatesPerS.Offered != 1 || r.RatesPerS.Goodput != 0.5 { // over 3 - 1 = 2 s
+		t.Fatalf("%+v", r.RatesPerS)
+	}
+	if r.E2ELatencyUs.Count != 1 || *r.E2ELatencyUs.Max != 3 {
+		t.Fatal("latency over the measured ok records only")
 	}
 }

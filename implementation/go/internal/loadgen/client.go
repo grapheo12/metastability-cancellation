@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/client/design.md (client v0.4.0)
+// Source: abstraction/load_generator/client/design.md (client v0.5.0)
 package loadgen
 
 import (
@@ -110,6 +110,7 @@ type pendingRequest struct {
 	runStart time.Time
 	events   chan<- clientEvent
 	sloTimer *time.Timer
+	stall    bool // StallWindowRequest: first sent before initial_stall_ns, never retries
 
 	mu       sync.Mutex           // guards current, cancels, resetAll
 	current  uint32               // index of the newest RequestCopy
@@ -128,6 +129,9 @@ func startRequest(clientID, seq uint32, tSched int64, conn *h2client.Conn, cfg C
 		runStart: runStart, events: events,
 		rec: RequestRecord{RequestID: id, ClientID: clientID, Seq: seq, ScheduledNs: tSched, Sent: true}}
 	r.rec.SendNs = nowNs(runStart)
+	// Design: abstraction/load_generator/client/design.md#stallwindow
+	r.stall = r.rec.SendNs < cfg.InitialStallNs
+	r.rec.InStallWindow = r.stall
 	// Design: abstraction/load_generator/client/design.md#slocancellation
 	r.sloTimer = time.AfterFunc(time.Duration(r.rec.SendNs+cfg.SloNs-nowNs(runStart)), func() {
 		if !r.settle(OutcomeCancelled, 0) {
@@ -211,6 +215,9 @@ func (r *pendingRequest) sendCopy(k uint32) {
 		}
 		r.settle(classify(resp.StatusCode, b, r.id), resp.StatusCode)
 	}()
+	if r.stall {
+		return // StallWindowRequest: no RetryTimer
+	}
 	// RetryTimer of copy k.
 	// Design: abstraction/load_generator/client/design.md#retrytimer
 	time.AfterFunc(time.Duration(tCopy+r.cfg.RetryTimeoutNs-nowNs(r.runStart)), func() {

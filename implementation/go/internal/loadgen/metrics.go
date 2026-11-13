@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/metrics/design.md (metrics v0.3.0)
+// Source: abstraction/load_generator/metrics/design.md (metrics v0.4.0)
 package loadgen
 
 import (
@@ -14,16 +14,17 @@ import (
 //
 // Design: abstraction/load_generator/metrics/design.md#requestrecord
 type RequestRecord struct {
-	RequestID   uint64
-	ClientID    uint32
-	Seq         uint32
-	Outcome     Outcome
-	HTTPStatus  int
-	ScheduledNs int64
-	SendNs      int64
-	EndNs       int64
-	Sent        bool
-	Copies      uint32 // RequestCopies started; 0 for not_sent
+	RequestID     uint64
+	ClientID      uint32
+	Seq           uint32
+	Outcome       Outcome
+	HTTPStatus    int
+	ScheduledNs   int64
+	SendNs        int64
+	EndNs         int64
+	Sent          bool
+	Copies        uint32 // RequestCopies started; 0 for not_sent
+	InStallWindow bool   // StallWindowRequest: left out of the summary
 }
 
 // LatencyStats uses pointers so that an empty set serializes as null.
@@ -48,19 +49,21 @@ type summaryConfig struct {
 	NWaitingRequests uint32  `json:"n_waiting_requests"`
 	RetryTimeoutMs   float64 `json:"retry_timeout_ms"`
 	MaxRetries       uint32  `json:"max_retries"`
+	InitialStallMs   uint64  `json:"initial_stall_ms"`
 	OutputPath       string  `json:"output_path"`
 }
 
 type summaryCounts struct {
-	Scheduled  int `json:"scheduled"`
-	Sent       int `json:"sent"`
-	OK         int `json:"ok"`
-	Rejected   int `json:"rejected"`
-	Cancelled  int `json:"cancelled"`
-	Dropped    int `json:"dropped"`
-	Error      int `json:"error"`
-	NotSent    int `json:"not_sent"`
-	CopiesSent int `json:"copies_sent"`
+	Scheduled   int `json:"scheduled"`
+	Sent        int `json:"sent"`
+	OK          int `json:"ok"`
+	Rejected    int `json:"rejected"`
+	Cancelled   int `json:"cancelled"`
+	Dropped     int `json:"dropped"`
+	Error       int `json:"error"`
+	NotSent     int `json:"not_sent"`
+	CopiesSent  int `json:"copies_sent"`
+	StallWindow int `json:"stall_window"`
 }
 
 type summaryRates struct {
@@ -88,11 +91,17 @@ type SummaryReport struct {
 // Design: abstraction/load_generator/metrics/design.md#summary
 func Aggregate(records []RequestRecord, cfg Config, runEndNs int64, runStartUnixNs uint64) SummaryReport {
 	var r SummaryReport
-	r.Config = summaryConfig{cfg.Target, cfg.NumClients, cfg.GlobalRate, cfg.RequestBytes, cfg.SloMs, cfg.DurationS, cfg.Seed, cfg.NWaitingRequests, cfg.RetryTimeoutMs, cfg.MaxRetries, cfg.OutputPath}
+	r.Config = summaryConfig{cfg.Target, cfg.NumClients, cfg.GlobalRate, cfg.RequestBytes, cfg.SloMs, cfg.DurationS, cfg.Seed, cfg.NWaitingRequests, cfg.RetryTimeoutMs, cfg.MaxRetries, cfg.InitialStallMs, cfg.OutputPath}
 	r.RunEndS = float64(runEndNs) / 1e9
 	r.RunStartUnixNs = runStartUnixNs
 	var e2e, service []float64
+	measured := 0 // records outside the StallWindow
 	for _, rec := range records {
+		if rec.InStallWindow {
+			r.Counts.StallWindow++
+			continue
+		}
+		measured++
 		r.Counts.CopiesSent += int(rec.Copies)
 		switch rec.Outcome {
 		case OutcomeOK:
@@ -111,12 +120,13 @@ func Aggregate(records []RequestRecord, cfg Config, runEndNs int64, runStartUnix
 			r.Counts.NotSent++
 		}
 	}
-	r.Counts.Scheduled = len(records)
+	r.Counts.Scheduled = measured
 	r.Counts.Sent = r.Counts.Scheduled - r.Counts.NotSent
+	measuredS := cfg.DurationS - float64(cfg.InitialStallMs)/1000 // > 0 by validation
 	r.RatesPerS = summaryRates{
-		Offered: float64(r.Counts.Scheduled) / cfg.DurationS,
-		Sent:    float64(r.Counts.Sent) / cfg.DurationS,
-		Goodput: float64(r.Counts.OK) / cfg.DurationS,
+		Offered: float64(r.Counts.Scheduled) / measuredS,
+		Sent:    float64(r.Counts.Sent) / measuredS,
+		Goodput: float64(r.Counts.OK) / measuredS,
 	}
 	r.E2ELatencyUs = latencyStats(e2e)
 	r.ServiceLatencyUs = latencyStats(service)
@@ -162,9 +172,12 @@ func WriteRequestsCSV(path string, records []RequestRecord) error {
 		return err
 	}
 	w := bufio.NewWriter(f)
-	w.WriteString("request_id,client_id,seq,outcome,http_status,scheduled_ns,send_ns,end_ns,e2e_latency_ns,service_latency_ns,copies\n")
+	w.WriteString("request_id,client_id,seq,outcome,http_status,scheduled_ns,send_ns,end_ns,e2e_latency_ns,service_latency_ns,copies,in_stall_window\n")
 	for _, r := range sorted {
-		status, send, end, e2e, svc := "", "", "", "", ""
+		status, send, end, e2e, svc, stall := "", "", "", "", "", "0"
+		if r.InStallWindow {
+			stall = "1"
+		}
 		if r.HTTPStatus != 0 {
 			status = strconv.Itoa(r.HTTPStatus)
 		}
@@ -175,7 +188,7 @@ func WriteRequestsCSV(path string, records []RequestRecord) error {
 		w.WriteString(strconv.FormatUint(r.RequestID, 10) + "," + strconv.FormatUint(uint64(r.ClientID), 10) + "," +
 			strconv.FormatUint(uint64(r.Seq), 10) + "," + string(r.Outcome) + "," + status + "," +
 			strconv.FormatInt(r.ScheduledNs, 10) + "," + send + "," + end + "," + e2e + "," + svc + "," +
-			strconv.FormatUint(uint64(r.Copies), 10) + "\n")
+			strconv.FormatUint(uint64(r.Copies), 10) + "," + stall + "\n")
 	}
 	if err := w.Flush(); err != nil {
 		f.Close()

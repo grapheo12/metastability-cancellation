@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/run_controller/design.md (run_controller v0.4.0)
+// Source: abstraction/load_generator/run_controller/design.md (run_controller v0.5.0)
 package loadgen
 
 import (
@@ -67,10 +67,16 @@ func Validate(p Params) (Config, error) {
 		return c, errors.New("n_waiting_requests * (1 + max_retries) must be <= 1000")
 	}
 	c.MaxRetries = uint32(mr)
+	st, err := strconv.ParseUint(p.InitialStallMs, 10, 64)
+	if err != nil || !(float64(st) < c.DurationS*1000) {
+		return c, errors.New("initial_stall_ms must be an integer >= 0 and < duration_s * 1000")
+	}
+	c.InitialStallMs = st
 	c.OutputPath = p.OutputPath
 	c.PerClientRate = c.GlobalRate / float64(c.NumClients)
 	c.SloNs = int64(math.Round(c.SloMs * 1e6))
 	c.RetryTimeoutNs = int64(math.Round(c.RetryTimeoutMs * 1e6))
+	c.InitialStallNs = int64(c.InitialStallMs) * 1_000_000 // < duration_ns, so it fits
 	c.DurationNs = int64(math.Round(c.DurationS * 1e9))
 	return c, nil
 }
