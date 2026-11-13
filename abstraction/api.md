@@ -43,6 +43,7 @@ CancelCounters ([Server outputs](#server-outputs)).
 | `n_waiting_requests` | integer, `1 ..= MAX_WAITING_REQUESTS` (`1000`) | `100` | Most requests one client keeps outstanding at once. An arrival that comes due at the cap waits for a slot. `1` is a closed loop ([load_generator/client/design.md](load_generator/client/design.md#semiopenloopclient)) |
 | `retry_timeout_ms` | float, ms, `> 0` | `150` | RetryTimer of each RequestCopy, from that copy's send. When it fires the client sends the next RequestCopy, or drops the request after the last one ([load_generator/client/design.md](load_generator/client/design.md#retrytimer)) |
 | `max_retries` | integer, `>= 0`, with `n_waiting_requests × (1 + max_retries) <= MAX_WAITING_REQUESTS` | `1` | RequestCopies sent after the first. `0` disables retries |
+| `initial_stall_ms` | integer, ms, `>= 0`, `< duration_s × 1000` | `1000` | StallWindow: a request first sent within this long of the load generator's start never retries and is left out of every count, rate, latency statistic and Availability (its row is flagged). The BenchmarkRunner copies `server.initial_stall_ms` here. `0`: no window ([load_generator/client/design.md](load_generator/client/design.md#stallwindow)) |
 | `output_path` | path prefix | `results` | Outputs go to `<output_path>.requests.csv` and `<output_path>.summary.json` |
 
 The minimum body size of 42 bytes comes from [protocol/design.md](protocol/design.md#minimum-body-size).

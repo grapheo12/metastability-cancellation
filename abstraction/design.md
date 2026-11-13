@@ -70,6 +70,8 @@ parameters, their output files and the server's `listening on` and CancelCounter
    `POST /ping` on its own connection to the Ingress and starts an SLO timer and a RetryTimer. If the RetryTimer
    fires first, the client sends another RequestCopy (same id and body, new stream) with its own RetryTimer and
    from then on waits only for that copy's answer; the earlier copy is left running and its answer ignored.
+   A request first sent in the StallWindow (the first `initial_stall_ms` of the load generator's run) gets no
+   RetryTimer and is left out of the load generator's metrics.
    The Ingress's ForwardTask picks a backend, records the request in the InFlightMap, and forwards it unchanged on
    its connection for client `i` and that backend. Everything below happens on that backend, and the answer (or a
    reset) travels back the same way.
