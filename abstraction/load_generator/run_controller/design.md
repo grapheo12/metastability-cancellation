@@ -15,10 +15,13 @@ function validate(params):
     retry_timeout_ms > 0                     else error             # default 150
     max_retries is an integer >= 0           else error             # default 1
     n_waiting_requests * (1 + max_retries) <= MAX_WAITING_REQUESTS  else error   # exact integer arithmetic
+    initial_stall_ms is an integer >= 0      else error             # default 1000
+    initial_stall_ms < duration_s * 1000     else error             # measured_s > 0
     return LoadGenConfig(params,
                          per_client_rate = global_rate / num_clients,
                          slo_ns = round(slo_ms * 1e6),
                          retry_timeout_ns = round(retry_timeout_ms * 1e6),
+                         initial_stall_ns = initial_stall_ms * 1_000_000,
                          duration_ns = round(duration_s * 1e9))
 ```
 
@@ -26,6 +29,10 @@ The last retry check keeps every client's streams of unresolved requests within 
 that servers and the Ingress advertise ([../client/design.md#retrytimer](../client/design.md#retrytimer)). Examples:
 `n_waiting_requests = 100`, `max_retries = 1` gives 200 (valid); `500` and `1` gives 1000 (valid, the maximum);
 `1000` and `1` gives 2000 (error); `1` and `999` gives 1000 (valid).
+
+`initial_stall_ms` must leave part of the active phase to measure: with `duration_s = 60`, `59999` is valid and
+`60000` is an error; with `duration_s = 0.5`, the default `1000` is an error, so a short run must set it lower (or to
+`0`).
 
 ## Startup
 
