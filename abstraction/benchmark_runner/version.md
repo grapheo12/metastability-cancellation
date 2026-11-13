@@ -41,3 +41,4 @@
 | 0.2.25 | 2026-11-12T00:00:00Z | Child bump: result_plotter 0.11.0 |
 | 0.2.26 | 2026-11-12T00:00:00Z | Child bump: config 0.13.0 (`retry_timeout_ms`, `max_retries`) |
 | 0.2.27 | 2026-11-12T00:00:00Z | Child bump: result_plotter 0.12.0 (`lg_dropped`, `lg_copies_sent`) |
+| 0.2.28 | 2026-11-12T00:00:00Z | Child bump: config 0.14.0 (`initial_stall_ms` copied to the load generator) |
