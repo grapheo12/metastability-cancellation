@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.7.3)
+// Source: abstraction/server/design.md (server v0.8.1)
 package server
 
 import (
@@ -55,7 +55,7 @@ func Listen(cfg Config) (*Server, error) {
 		registry: NewCancelRegistry(CancelRegistryCapacity),
 		counters: &CancelCounters{},
 		// Design: abstraction/server/design.md#why-one-shared-workqueue
-		queue:    NewWorkQueue(cfg.InitialStallMs),
+		queue:    NewWorkQueue(cfg.InitialStallMs, cfg.QueueDiscipline),
 		h2s:      &http2.Server{MaxConcurrentStreams: maxConcurrentStreams},
 		base:     &http.Server{},
 		handlers: map[*connectionHandler]struct{}{},

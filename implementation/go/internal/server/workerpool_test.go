@@ -1,4 +1,4 @@
-// Source: abstraction/server/worker_pool/design.md (worker_pool v0.4.0)
+// Source: abstraction/server/worker_pool/design.md (worker_pool v0.5.0)
 package server
 
 import (
@@ -15,7 +15,76 @@ import (
 
 func testJob(seq uint32, serviceUs uint64) *PingJob {
 	id := protocol.MakeRequestID(seq, 0)
-	return newPingJob(&StreamTask{}, id, 0, serviceUs)
+	return newPingJob(&StreamTask{}, id, 0, serviceUs, NoDeadline)
+}
+
+func deadlineJob(seq uint32, deadline uint64) *PingJob {
+	return newPingJob(&StreamTask{}, protocol.MakeRequestID(seq, 0), 0, 0, deadline)
+}
+
+// The EarliestDeadlineFirst worked example: A=300, B=100, C=200, D=none,
+// B'=100 (retry copy of B) pushed in that order pop B, B', C, A, D under edf
+// and in push order under fifo; Close aborts in pop order; with no deadlines
+// edf pops like fifo.
+//
+// Design: abstraction/server/worker_pool/design.md#earliestdeadlinefirst
+func TestWorkQueueEDFWorkedExample(t *testing.T) {
+	names := []string{"A", "B", "C", "D", "B'"}
+	deadlines := []uint64{300, 100, 200, NoDeadline, 100}
+	order := func(disc QueueDiscipline) string {
+		q := NewWorkQueue(0, disc)
+		byJob := map[*PingJob]string{}
+		for i, d := range deadlines {
+			j := deadlineJob(uint32(i), d)
+			byJob[j] = names[i]
+			if err := q.Push(j); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if q.Len() != 5 {
+			t.Fatalf("len %d", q.Len())
+		}
+		got := ""
+		for i := 0; i < 5; i++ {
+			got += byJob[q.Pop()] + " "
+		}
+		return got
+	}
+	if got := order(QueueEDF); got != "B B' C A D " {
+		t.Fatalf("edf pop order %q", got)
+	}
+	if got := order(QueueFIFO); got != "A B C D B' " {
+		t.Fatalf("fifo pop order %q", got)
+	}
+
+	q := NewWorkQueue(0, QueueEDF) // close order is pop order
+	a, b, c := deadlineJob(0, 30), deadlineJob(1, 10), deadlineJob(2, 20)
+	for _, j := range []*PingJob{a, b, c} {
+		q.Push(j)
+	}
+	done := make(chan *PingJob, 3)
+	for _, j := range []*PingJob{a, b, c} {
+		go func(j *PingJob) { j.Reply(); done <- j }(j)
+	}
+	q.Close()
+	for i := 0; i < 3; i++ {
+		<-done
+	}
+	if q.Len() != 0 || q.Pop() != nil {
+		t.Fatal("closed queue is empty and pops nil")
+	}
+
+	q = NewWorkQueue(0, QueueEDF) // no deadlines at all: push order
+	var jobs []*PingJob
+	for i := 0; i < 4; i++ {
+		jobs = append(jobs, testJob(uint32(i), 0))
+		q.Push(jobs[i])
+	}
+	for i := 0; i < 4; i++ {
+		if q.Pop() != jobs[i] {
+			t.Fatalf("no-deadline jobs must pop in push order (at %d)", i)
+		}
+	}
 }
 
 // Jobs leave the queue in push order; Close answers the rest Aborted and
@@ -23,7 +92,7 @@ func testJob(seq uint32, serviceUs uint64) *PingJob {
 //
 // Design: abstraction/server/worker_pool/design.md#workqueue
 func TestWorkQueueFIFOAndClose(t *testing.T) {
-	q := NewWorkQueue(0)
+	q := NewWorkQueue(0, QueueFIFO)
 	jobs := []*PingJob{testJob(0, 0), testJob(1, 0), testJob(2, 0)}
 	for _, j := range jobs {
 		if err := q.Push(j); err != nil {
@@ -52,7 +121,7 @@ func TestWorkQueueFIFOAndClose(t *testing.T) {
 //
 // Design: abstraction/server/worker_pool/design.md#failure-and-edge-cases
 func TestWorkerPoolJoinAfterClose(t *testing.T) {
-	q := NewWorkQueue(0)
+	q := NewWorkQueue(0, QueueFIFO)
 	p := StartWorkerPool(4, q, Config{CancelMode: CancelCooperative, ResponseBytes: 64, CancelCheckIntervalUs: 50}, NewCancelRegistry(16), &CancelCounters{}, nil)
 	q.Close()
 	done := make(chan struct{})
@@ -74,7 +143,7 @@ func TestWorkerPoolOrdering(t *testing.T) {
 		n    uint32
 		want []uint32
 	}{{1, []uint32{0, 1, 2}}, {2, []uint32{1, 2, 0}}} {
-		q := NewWorkQueue(0)
+		q := NewWorkQueue(0, QueueFIFO)
 		jobs := []*PingJob{testJob(0, 300_000), testJob(1, 100_000), testJob(2, 100_000)}
 		for _, j := range jobs {
 			_ = q.Push(j)
@@ -112,7 +181,7 @@ func TestWorkerPoolOrdering(t *testing.T) {
 //
 // Design: abstraction/server/worker_pool/design.md#failure-and-edge-cases
 func TestResetWhileQueued(t *testing.T) {
-	q := NewWorkQueue(0)
+	q := NewWorkQueue(0, QueueFIFO)
 	reg := NewCancelRegistry(16)
 	j := testJob(9, 3_600_000_000) // an hour: must not run
 	j.Task.Cancelled.Store(true)
@@ -144,7 +213,7 @@ func TestNextSampleIndexWorkedExample(t *testing.T) {
 //
 // Design: abstraction/server/worker_pool/design.md#queuelengthlog
 func TestQueueSamplerRows(t *testing.T) {
-	q := NewWorkQueue(0)
+	q := NewWorkQueue(0, QueueFIFO)
 	for i := uint32(0); i < 3; i++ {
 		_ = q.Push(testJob(i, 0))
 	}
@@ -187,7 +256,7 @@ func TestQueueSamplerRows(t *testing.T) {
 //
 // Design: abstraction/server/worker_pool/design.md#stallgate
 func TestStallGateOpensAfterStall(t *testing.T) {
-	q := NewWorkQueue(200)
+	q := NewWorkQueue(200, QueueFIFO)
 	start := time.Now()
 	_ = q.Push(testJob(0, 0))
 	time.Sleep(50 * time.Millisecond)
@@ -206,7 +275,7 @@ func TestStallGateOpensAfterStall(t *testing.T) {
 		t.Fatal("open gate: second job must pop at once")
 	}
 
-	q0 := NewWorkQueue(0)
+	q0 := NewWorkQueue(0, QueueFIFO)
 	_ = q0.Push(testJob(0, 0))
 	done := make(chan struct{})
 	go func() { q0.Pop(); close(done) }()
@@ -221,7 +290,7 @@ func TestStallGateOpensAfterStall(t *testing.T) {
 //
 // Design: abstraction/server/worker_pool/design.md#stallgate
 func TestStallGateCloseDuringStall(t *testing.T) {
-	q := NewWorkQueue(60_000)
+	q := NewWorkQueue(60_000, QueueFIFO)
 	j := testJob(0, 0)
 	_ = q.Push(j)
 	p := StartWorkerPool(2, q, Config{CancelMode: CancelCooperative, ResponseBytes: 64, CancelCheckIntervalUs: 50}, NewCancelRegistry(16), &CancelCounters{}, nil)

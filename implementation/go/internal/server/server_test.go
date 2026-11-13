@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.7.3)
+// Source: abstraction/server/design.md (server v0.8.1)
 package server
 
 import (
@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -469,6 +470,73 @@ func TestInitialStallEndToEnd(t *testing.T) {
 		t.Fatalf("cancelled_before_processing %d, want 1", bp)
 	}
 	s.Shutdown()
+}
+
+// End to end, one worker behind a 300 ms StallGate: four requests admitted in
+// order with descending RequestDeadlines finish in ascending deadline order
+// under edf and in admission order under fifo.
+//
+// Design: abstraction/server/worker_pool/design.md#earliestdeadlinefirst
+// Design: abstraction/server/ping_handler/design.md#admit_ping
+func TestEDFEndToEnd(t *testing.T) {
+	for _, tc := range []struct {
+		disc QueueDiscipline
+		want string
+	}{{QueueEDF, "3210"}, {QueueFIFO, "0123"}} {
+		// ResponseRate 20: ServiceTimes of tens of ms (fixed by seed 0), so each finish is well
+		// separated from the next and the order in which the clients see 202s is the pop order.
+		s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: 20, ResponseBytes: 64,
+			CancelMode: CancelCooperative, CancelCheckIntervalUs: 50, NWorkerThreads: 1, InitialStallMs: 300,
+			QueueDiscipline: tc.disc})
+		if err != nil {
+			t.Fatal(err)
+		}
+		go s.Serve()
+		addr := s.Addr().String()
+		var mu sync.Mutex
+		finished := ""
+		var wg sync.WaitGroup
+		for i := 0; i < 4; i++ {
+			c := dialTest(t, addr)
+			id := protocol.MakeRequestID(0, uint32(i))
+			body := protocol.BuildRequestBody(id, uint64(4000-1000*i), 128) // deadlines 4000, 3000, 2000, 1000
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				if st, _ := c.do(t, "POST", "/ping", body); st != 202 {
+					t.Errorf("request %d: %d", i, st)
+				}
+				mu.Lock()
+				finished += string(rune('0' + i))
+				mu.Unlock()
+			}(i)
+			time.Sleep(20 * time.Millisecond) // admission order 0, 1, 2, 3, all within the stall
+		}
+		wg.Wait()
+		s.Shutdown()
+		if finished != tc.want {
+			t.Fatalf("discipline %d: finish order %s, want %s", tc.disc, finished, tc.want)
+		}
+	}
+}
+
+// queue_discipline: fifo (default) or edf.
+//
+// Design: abstraction/server/design.md#configuration-validation
+func TestValidateQueueDiscipline(t *testing.T) {
+	p := DefaultParams()
+	p.ResponseRate, p.ResponseBytes = "100", "64"
+	if c, err := Validate(p); err != nil || c.QueueDiscipline != QueueFIFO {
+		t.Fatalf("default: %+v %v", c, err)
+	}
+	p.QueueDiscipline = "edf"
+	if c, err := Validate(p); err != nil || c.QueueDiscipline != QueueEDF {
+		t.Fatalf("edf: %v", err)
+	}
+	p.QueueDiscipline = "lifo"
+	if _, err := Validate(p); err == nil {
+		t.Fatal("unknown discipline must be rejected")
+	}
 }
 
 // Design: abstraction/server/design.md#processstart

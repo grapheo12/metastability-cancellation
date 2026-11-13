@@ -1,8 +1,9 @@
-// Source: abstraction/server/worker_pool/design.md (worker_pool v0.4.0)
+// Source: abstraction/server/worker_pool/design.md (worker_pool v0.5.0)
 package server
 
 import (
 	"bufio"
+	"container/heap"
 	"errors"
 	"fmt"
 	"io"
@@ -24,42 +25,92 @@ type PingJob struct {
 	RequestID uint64
 	ClientID  uint32
 	ServiceUs uint64
-	reply     chan Response
+	// DeadlineUnixNs is the RequestDeadline, or NoDeadline; read only under edf.
+	DeadlineUnixNs uint64
+	reply          chan Response
 }
 
-func newPingJob(task *StreamTask, requestID uint64, clientID uint32, serviceUs uint64) *PingJob {
-	return &PingJob{Task: task, RequestID: requestID, ClientID: clientID, ServiceUs: serviceUs, reply: make(chan Response, 1)}
+// NoDeadline is NO_DEADLINE = 2^64 - 1: a job without a RequestDeadline pops
+// after every job with one under edf.
+const NoDeadline = ^uint64(0)
+
+func newPingJob(task *StreamTask, requestID uint64, clientID uint32, serviceUs, deadlineUnixNs uint64) *PingJob {
+	return &PingJob{Task: task, RequestID: requestID, ClientID: clientID, ServiceUs: serviceUs,
+		DeadlineUnixNs: deadlineUnixNs, reply: make(chan Response, 1)}
+}
+
+// QueueDiscipline is the WorkQueue's pop order.
+//
+// Design: abstraction/server/worker_pool/design.md#workqueue
+type QueueDiscipline int
+
+const (
+	QueueFIFO QueueDiscipline = iota // push order
+	QueueEDF                         // EarliestDeadlineFirst
+)
+
+// edfItem is one edf entry, keyed by (deadline, seq).
+type edfItem struct {
+	deadline, seq uint64
+	job           *PingJob
+}
+
+// edfHeap is a container/heap min-heap of edfItems: the smallest
+// (deadline, seq) pair is at index 0.
+//
+// Design: abstraction/server/worker_pool/design.md#earliestdeadlinefirst
+type edfHeap []edfItem
+
+func (h edfHeap) Len() int { return len(h) }
+func (h edfHeap) Less(i, j int) bool {
+	if h[i].deadline != h[j].deadline {
+		return h[i].deadline < h[j].deadline
+	}
+	return h[i].seq < h[j].seq // equal deadlines (retry copies, no deadline) pop in push order
+}
+func (h edfHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
+func (h *edfHeap) Push(x interface{}) { *h = append(*h, x.(edfItem)) }
+func (h *edfHeap) Pop() interface{} {
+	old := *h
+	it := old[len(old)-1]
+	old[len(old)-1] = edfItem{} // let the GC reclaim the job once answered
+	*h = old[:len(old)-1]
+	return it
 }
 
 // Reply blocks until the job's result is available (OneShot take).
 func (j *PingJob) Reply() Response { return <-j.reply }
 
-// WorkQueue is the process-wide unbounded MPMC FIFO: one mutex, one condition
-// variable and a slice used as a FIFO (Go channels are bounded). armed/openAt
+// WorkQueue is the process-wide unbounded MPMC queue: one mutex, one condition
+// variable, and a slice used as a FIFO (fifo) or a container/heap min-heap
+// (edf); Go channels are bounded. armed/openAt
 // are the StallGate, guarded by mu like everything else.
 //
 // Design: abstraction/server/worker_pool/design.md#workqueue
 type WorkQueue struct {
 	mu       sync.Mutex
 	notEmpty *sync.Cond
-	items    []*PingJob
+	disc     QueueDiscipline
+	items    []*PingJob // fifo
+	edf      edfHeap    // edf
+	nextSeq  uint64     // edf: push_seq of the next push
 	closed   bool
 	stall    time.Duration
 	armed    bool
 	openAt   time.Time // monotonic reading; valid once armed
 }
 
-// NewWorkQueue returns an empty, open queue whose StallGate opens
-// initialStallMs after the first push.
+// NewWorkQueue returns an empty, open queue with the given QueueDiscipline
+// whose StallGate opens initialStallMs after the first push.
 //
 // Design: abstraction/server/worker_pool/design.md#workqueue
-func NewWorkQueue(initialStallMs uint64) *WorkQueue {
-	q := &WorkQueue{stall: time.Duration(initialStallMs) * time.Millisecond}
+func NewWorkQueue(initialStallMs uint64, disc QueueDiscipline) *WorkQueue {
+	q := &WorkQueue{stall: time.Duration(initialStallMs) * time.Millisecond, disc: disc}
 	q.notEmpty = sync.NewCond(&q.mu)
 	return q
 }
 
-// Push appends job at the tail. It never blocks; after Close it returns
+// Push adds job (at the tail for fifo, by (deadline, push seq) for edf). It never blocks; after Close it returns
 // ErrQueueClosed and leaves job.reply untouched.
 //
 // Design: abstraction/server/worker_pool/design.md#workqueue
@@ -72,10 +123,40 @@ func (q *WorkQueue) Push(job *PingJob) error {
 	if !q.armed { // StallGate: the first push arms it
 		q.arm()
 	}
-	q.items = append(q.items, job)
+	q.addItem(job)
 	q.notEmpty.Signal()
 	return nil
 }
+
+// addItem adds job in the discipline's order. Called with mu held.
+//
+// Design: abstraction/server/worker_pool/design.md#workqueue
+// Design: abstraction/server/worker_pool/design.md#earliestdeadlinefirst
+func (q *WorkQueue) addItem(job *PingJob) {
+	if q.disc == QueueFIFO {
+		q.items = append(q.items, job)
+		return
+	}
+	heap.Push(&q.edf, edfItem{deadline: job.DeadlineUnixNs, seq: q.nextSeq, job: job})
+	q.nextSeq++
+}
+
+// takeItem removes the next job in the discipline's order. Called with mu
+// held and the queue not empty.
+//
+// Design: abstraction/server/worker_pool/design.md#workqueue
+func (q *WorkQueue) takeItem() *PingJob {
+	if q.disc == QueueFIFO {
+		job := q.items[0]
+		q.items[0] = nil // let the GC reclaim the job once answered
+		q.items = q.items[1:]
+		return job
+	}
+	return heap.Pop(&q.edf).(edfItem).job
+}
+
+// lenLocked is the number of queued jobs. Called with mu held.
+func (q *WorkQueue) lenLocked() int { return len(q.items) + len(q.edf) }
 
 // arm sets the StallGate's opening time. With a stall, a timer wakes every
 // waiting worker at openAt; time.AfterFunc fires no earlier than that, and Pop
@@ -94,7 +175,7 @@ func (q *WorkQueue) arm() {
 	}
 }
 
-// Pop removes and returns the head job, waiting while the queue is empty or
+// Pop removes and returns the next job in the discipline's order, waiting while the queue is empty or
 // the StallGate is closed, and the queue is open. It returns nil once the
 // queue is closed (closed wins over items).
 //
@@ -103,19 +184,16 @@ func (q *WorkQueue) arm() {
 func (q *WorkQueue) Pop() *PingJob {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	for !q.closed && (len(q.items) == 0 || time.Now().Before(q.openAt)) {
+	for !q.closed && (q.lenLocked() == 0 || time.Now().Before(q.openAt)) {
 		q.notEmpty.Wait() // woken by a push, the gate's timer, or Close
 	}
 	if q.closed {
 		return nil
 	}
-	job := q.items[0]
-	q.items[0] = nil // let the GC reclaim the job once answered
-	q.items = q.items[1:]
-	return job
+	return q.takeItem()
 }
 
-// Close closes the queue, answers every queued job Aborted in FIFO order
+// Close closes the queue, answers every queued job Aborted in pop order
 // (outside the lock) and wakes every waiting worker. Idempotent.
 //
 // Design: abstraction/server/worker_pool/design.md#workqueue
@@ -126,8 +204,10 @@ func (q *WorkQueue) Close() {
 		return
 	}
 	q.closed = true
-	dropped := q.items
-	q.items = nil
+	var dropped []*PingJob
+	for q.lenLocked() > 0 {
+		dropped = append(dropped, q.takeItem())
+	}
 	q.notEmpty.Broadcast()
 	q.mu.Unlock()
 	for _, job := range dropped {
@@ -186,7 +266,7 @@ func (p *WorkerPool) Join() { p.wg.Wait() }
 func (q *WorkQueue) Len() uint64 {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	return uint64(len(q.items))
+	return uint64(q.lenLocked())
 }
 
 // QueueSampler writes the QueueLengthLog on its own goroutine.

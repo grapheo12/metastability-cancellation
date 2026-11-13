@@ -1,4 +1,4 @@
-// Source: abstraction/server/ping_handler/design.md (ping_handler v0.7.0)
+// Source: abstraction/server/ping_handler/design.md (ping_handler v0.8.0)
 package server
 
 import (
@@ -33,7 +33,12 @@ func admitPing(task *StreamTask, cfg Config, rng *sampling.Rng, st *ConnectionCa
 	if cfg.Workload == WorkloadCPUBurn {
 		serviceUs = rng.ExponentialUs(cfg.ResponseRate)
 	}
-	return newPingJob(task, id, clientID, serviceUs), Response{}
+	// RequestDeadline for the edf QueueDiscipline; missing or malformed is NoDeadline, never a 400.
+	deadline, ok := protocol.ParseDeadline(task.Body)
+	if !ok {
+		deadline = NoDeadline
+	}
+	return newPingJob(task, id, clientID, serviceUs, deadline), Response{}
 }
 
 // runPing runs one admitted /ping on a worker. Any worker may run any

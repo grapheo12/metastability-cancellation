@@ -1,7 +1,7 @@
 // Package server implements the HTTP/2 /ping + /cancel server. Each file maps
 // to one component of abstraction/server.
 //
-// Source: abstraction/server/design.md (server v0.7.3)
+// Source: abstraction/server/design.md (server v0.8.1)
 package server
 
 import (
@@ -50,6 +50,7 @@ type Config struct {
 	QueueLogPath          string // empty: no QueueLengthLog
 	QueueSampleIntervalMs uint64
 	InitialStallMs        uint64 // StallGate; 0: no stall
+	QueueDiscipline       QueueDiscipline
 	Workload              Workload
 	WindowSize            uint32 // MessageBuffer slots
 	NGCBinaryTreeSize     int    // nodes per MessageTree
@@ -68,6 +69,7 @@ type Params struct {
 	QueueLogPath          string
 	QueueSampleIntervalMs string
 	InitialStallMs        string
+	QueueDiscipline       string
 	Workload              string
 	WindowSize            string
 	NGCBinaryTreeSize     string
@@ -84,6 +86,7 @@ func DefaultParams() Params {
 		NWorkerThreads:        "1",
 		QueueSampleIntervalMs: "10",
 		InitialStallMs:        "1000",
+		QueueDiscipline:       "fifo",
 		Workload:              "cpu_burn",
 		WindowSize:            "200000",
 		NGCBinaryTreeSize:     "15",
@@ -160,6 +163,14 @@ func Validate(p Params) (Config, error) {
 		return c, errors.New("initial_stall_ms must be an integer >= 0")
 	}
 	c.InitialStallMs = st
+	switch p.QueueDiscipline {
+	case "fifo":
+		c.QueueDiscipline = QueueFIFO
+	case "edf":
+		c.QueueDiscipline = QueueEDF
+	default:
+		return c, errors.New("queue_discipline must be fifo or edf")
+	}
 	ws, err := strconv.ParseUint(p.WindowSize, 10, 32)
 	if err != nil || ws < 1 {
 		return c, errors.New("window_size must be an integer in 1..=4294967295")
