@@ -379,6 +379,10 @@ centred on `t`:
 
 - **Finished:** the row has an `end_ns` (`ok`, `rejected`, `cancelled`, `dropped`, `error`); `not_sent` rows are
   ignored. A row is one logical request however many RequestCopies it sent, so retries are never counted twice.
+- **StallWindowRequests are skipped:** a row with `in_stall_window = 1` is neither finished nor under the SLO
+  ([../../load_generator/client/design.md#stallwindow](../../load_generator/client/design.md#stallwindow)). A CSV
+  without that column (made before the StallWindow existed) has no such rows. Windows that hold only skipped rows
+  are empty and are not drawn.
 - **Under the SLO:** `outcome == ok` and `end_ns - send_ns <= slo_ms × 1_000_000`, the clock the client's SLO
   cancellation uses (`send_ns` is the first copy's send). A cancelled, dropped, rejected or failed request is
   finished but never under the SLO.
@@ -390,6 +394,7 @@ function read_requests(path):                      # -> list of (end_ns, send_ns
     for each line after the header:
         split into the Requests CSV columns; stop at a line without all of them (e.g. a truncated last line)
         if end_ns is empty: continue                # not_sent
+        if the in_stall_window column exists and is "1": continue   # StallWindowRequest
         rows.append((end_ns, send_ns, outcome == "ok"))
     return rows
 
