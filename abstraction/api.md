@@ -36,7 +36,7 @@ CancelCounters ([Server outputs](#server-outputs)).
 | `target` | `host:port` | `127.0.0.1:8080` | Server address, or an Ingress address (the wire contract is the same) |
 | `num_clients` (`N`) | integer, `1 ..= 2^32-1` | required | Number of simulated clients. Each gets its own connection |
 | `global_rate` | float, requests/s, `> 0` | required | Total offered rate. Each client's arrival rate is `global_rate / N` |
-| `request_bytes` | integer, bytes, `>= 42` | required | Exact byte length of every request body |
+| `request_bytes` | integer, bytes, `>= 76` | required | Exact byte length of every `/ping` request body (a PingRequestBody) |
 | `slo_ms` | float, ms, `> 0` | required | A request not fully answered within `slo_ms` of its first send is cancelled, with every RequestCopy ([load_generator/client/design.md](load_generator/client/design.md#slocancellation)) |
 | `duration_s` | float, s, `> 0` | required | Length of the active phase. No request is sent at or after this time |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for arrival sampling |
@@ -46,7 +46,8 @@ CancelCounters ([Server outputs](#server-outputs)).
 | `initial_stall_ms` | integer, ms, `>= 0`, `< duration_s × 1000` | `1000` | StallWindow: a request first sent within this long of the load generator's start never retries and is left out of every count, rate, latency statistic and Availability (its row is flagged). The BenchmarkRunner copies `server.initial_stall_ms` here. `0`: no window ([load_generator/client/design.md](load_generator/client/design.md#stallwindow)) |
 | `output_path` | path prefix | `results` | Outputs go to `<output_path>.requests.csv` and `<output_path>.summary.json` |
 
-The minimum body size of 42 bytes comes from [protocol/design.md](protocol/design.md#minimum-body-size).
+The minimum body sizes, 76 bytes for a request and 42 for a response, come from
+[protocol/design.md](protocol/design.md#minimum-body-size).
 
 ## Ingress parameters
 
@@ -77,8 +78,9 @@ details are in [protocol/api.md](protocol/api.md).
   the same streams on to the servers. Otherwise the HTTP/2 layer would hold back streams, delaying sends without
   the client knowing.
 
-- **Request:** `POST /ping`, `content-type: application/json`, body is a PaddedJsonBody of exactly
-  `request_bytes` bytes carrying the RequestId.
+- **Request:** `POST /ping`, `content-type: application/json`, body is a PingRequestBody of exactly
+  `request_bytes` bytes carrying the RequestId and the RequestDeadline
+  ([protocol/design.md](protocol/design.md#pingrequestbody)). A body without a valid deadline is still accepted.
 - **Response:** status `202` (completed) or `503` (cancelled by `/cancel`), `content-type:
   application/json`, body is a PaddedJsonBody of exactly `response_bytes` bytes echoing the same
   RequestId.

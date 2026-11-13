@@ -38,8 +38,9 @@ Worked examples:
 
 ## PaddedJsonBody
 
-`/ping` request and response bodies use the same exact serialization. There is no whitespace, the
-keys appear in this order, and everything is ASCII:
+`/ping` response bodies (`202` and `503`) use this exact serialization; `/ping` requests use the
+[PingRequestBody](#pingrequestbody), which adds a RequestDeadline. There is no whitespace, the keys appear in this
+order, and everything is ASCII:
 
 ```
 {"id":"<DEC>","payload":"<PAD>"}
@@ -73,14 +74,61 @@ Worked examples:
 | `12884901889` | 11 | 128 | 95 | 22 + 11 + 95 = 128 |
 | `18446744073709551615` (max) | 20 | 42 | 0 | 22 + 20 + 0 = 42 |
 
-## Minimum body size
+## PingRequestBody
 
-The longest possible `<DEC>` has 20 digits, so `MIN_BODY_BYTES = 22 + 20 = 42`. Any configured size
-of at least 42 can be padded exactly for every possible id.
+A `/ping` request body carries the request's **RequestDeadline**, `deadline_unix_ns`: Unix wall-clock nanoseconds
+by which the client wants the answer (its first send plus the SLO; the load-generator client sets it). A server
+with the `edf` QueueDiscipline orders queued work by it; the Protocol only defines how it is written and read.
+Same rules as PaddedJsonBody (no whitespace, this key order, ASCII):
 
 ```
-function validate_body_size(total_bytes):
+{"id":"<DEC>","deadline":"<DL>","payload":"<PAD>"}
+```
+
+- `<DEC>` is the decimal RequestId; `<DL>` is the decimal `deadline_unix_ns` (u64, 1 to 20 digits, no leading
+  zeros except `0` itself); `<PAD>` is `k` copies of `x`.
+
+| Fragment | Bytes |
+|---|---|
+| `{"id":"` | 7 |
+| `","deadline":"` | 14 |
+| `","payload":"` | 13 |
+| `"}` | 2 |
+| **Total fixed** | **36** |
+
+```
+function build_request_body(id, deadline_unix_ns, total_bytes):
+    dec = decimal_string(id)
+    dl  = decimal_string(deadline_unix_ns)
+    k = total_bytes - 36 - length(dec) - length(dl)
+    assert k >= 0                       # guaranteed when total_bytes >= MIN_REQUEST_BODY_BYTES
+    return "{\"id\":\"" + dec + "\",\"deadline\":\"" + dl + "\",\"payload\":\"" + repeat("x", k) + "\"}"
+```
+
+Worked examples:
+
+| id | `len(dec)` | deadline_unix_ns | `len(dl)` | total_bytes | k | check |
+|---|---|---|---|---|---|---|
+| `0` | 1 | `1794533185297574000` | 19 | 128 | 72 | 36 + 1 + 19 + 72 = 128 |
+| `12884901889` | 11 | `1794533185297574000` | 19 | 128 | 62 | 36 + 11 + 19 + 62 = 128 |
+| `18446744073709551615` (max) | 20 | `18446744073709551615` (max) | 20 | 76 | 0 | 36 + 20 + 20 + 0 = 76 |
+
+A body without a valid `"deadline"` (an older client, or any other JSON client) is still a valid `/ping`: its
+RequestDeadline is `none` ([Parsing](#parsing)).
+
+## Minimum body size
+
+The longest possible `<DEC>` has 20 digits, so a response needs `MIN_BODY_BYTES = 22 + 20 = 42`. A request also
+holds a deadline of up to 20 digits, so `MIN_REQUEST_BODY_BYTES = 36 + 20 + 20 = 76`. Any configured size at least
+as large can be padded exactly for every possible id and deadline.
+
+```
+function validate_body_size(total_bytes):            # response_bytes
     if total_bytes < 42: return ConfigError("body size must be >= 42 bytes")
+    return ok
+
+function validate_request_body_size(total_bytes):    # request_bytes
+    if total_bytes < 76: return ConfigError("request body size must be >= 76 bytes")
     return ok
 ```
 
@@ -159,7 +207,26 @@ function parse_body(body):
     n = parse_unsigned_decimal(s)
     if n > 2^64 - 1:                                   return ParseError
     return n                                          # "payload" and other fields are ignored
+
+function parse_deadline(body):                         # -> u64 | none; never an error
+    value = json_parse(body)
+    if value is not an object or "deadline" not in value or value["deadline"] is not string: return none
+    s = value["deadline"]
+    if s is empty or contains a non-digit or has more than 20 chars: return none
+    n = parse_unsigned_decimal(s)
+    if n > 2^64 - 1: return none
+    return n
 ```
+
+`parse_deadline` is as lenient as `parse_body`: a missing or malformed deadline makes the request deadline-less,
+not invalid. Callers parse the id first; a body whose id is invalid is rejected before its deadline matters.
+
+| Body | `parse_body` | `parse_deadline` |
+|---|---|---|
+| `{"id":"7","deadline":"1000","payload":""}` | 7 | 1000 |
+| `{"id":"7","payload":""}` | 7 | none |
+| `{"id":"7","deadline":1000}` (number, not string) | 7 | none |
+| `{"id":"7","deadline":"18446744073709551616"}` (2^64) | 7 | none |
 
 ## Status classification (load-generator client)
 

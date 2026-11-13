@@ -43,7 +43,7 @@ flowchart LR
 
 | Component | Role | Spec |
 |---|---|---|
-| Protocol | RequestId encoding, PaddedJsonBody and CancelBody, status codes | [protocol/description.md](protocol/description.md) |
+| Protocol | RequestId encoding, PingRequestBody, PaddedJsonBody and CancelBody, status codes | [protocol/description.md](protocol/description.md) |
 | Sampling | Seeded RNG, exponential and uniform-integer samplers, per-stream seed derivation | [sampling/description.md](sampling/description.md) |
 | Server | Accepts connections, serves `/ping` with a CPU-bound cost, applies RST and `/cancel` cancellation | [server/description.md](server/description.md) |
 | Load Generator | Simulates N clients, retries on RetryTimer, applies SLOCancellation, records latency | [load_generator/description.md](load_generator/description.md) |
@@ -66,7 +66,7 @@ parameters, their output files and the server's `listening on` and CancelCounter
 
 1. Client `i`'s sender reaches scheduled arrival `seq` (a GatedArrival: it waits while `n_waiting_requests` of
    its requests are unresolved).
-2. Client builds RequestId `(i << 32) | seq` and a PaddedJsonBody of `request_bytes`, then sends
+2. Client builds RequestId `(i << 32) | seq` and a PingRequestBody of `request_bytes` carrying the RequestDeadline, then sends
    `POST /ping` on its own connection to the Ingress and starts an SLO timer and a RetryTimer. If the RetryTimer
    fires first, the client sends another RequestCopy (same id and body, new stream) with its own RetryTimer and
    from then on waits only for that copy's answer; the earlier copy is left running and its answer ignored.

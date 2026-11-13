@@ -121,3 +121,4 @@
 | 0.11.3 | 2026-11-12T00:00:00Z | Load generator parameter `initial_stall_ms`; glossary StallWindow and StallWindowRequest; request flow line. Child bump: load_generator 0.4.3 |
 | 0.11.4 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.28 (config 0.14.0) |
 | 0.11.5 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.29 (result_plotter 0.13.0) |
+| 0.12.0 | 2026-11-13T00:00:00Z | `/ping` request body is a PingRequestBody with the RequestDeadline; `request_bytes >= 76`; glossary PingRequestBody, RequestDeadline. Child bump: protocol 0.4.0 |

@@ -16,7 +16,8 @@
 | `STATUS_METHOD_NOT_ALLOWED` | `405` | Wrong method for the path. Empty body | [../api.md#wire-contract-ping](../api.md#wire-contract-ping), [../api.md#wire-contract-cancel](../api.md#wire-contract-cancel) |
 | `STATUS_BAD_GATEWAY` | `502` | Sent only by an Ingress: the backend could not be reached or its stream failed. Empty body | [design.md#status-classification-load-generator-client](design.md#status-classification-load-generator-client) |
 | `RST_CODE_CANCEL` | `0x8` | HTTP/2 error code the client uses in `RST_STREAM` to cancel | [../load_generator/client/design.md#slocancellation](../load_generator/client/design.md#slocancellation) |
-| `MIN_BODY_BYTES` | `42` | Smallest allowed `request_bytes` / `response_bytes` | [design.md#minimum-body-size](design.md#minimum-body-size) |
+| `MIN_BODY_BYTES` | `42` | Smallest allowed `response_bytes` | [design.md#minimum-body-size](design.md#minimum-body-size) |
+| `MIN_REQUEST_BODY_BYTES` | `76` | Smallest allowed `request_bytes` (a PingRequestBody) | [design.md#minimum-body-size](design.md#minimum-body-size) |
 
 ## Functions
 
@@ -29,8 +30,13 @@ Inverse of `make_request_id`: `client_id = id >> 32`, `seq = id & 0xFFFFFFFF`. S
 
 ### `build_body(id: u64, total_bytes: integer) -> bytes`
 Returns a PaddedJsonBody whose length is exactly `total_bytes`. Precondition:
-`total_bytes >= MIN_BODY_BYTES`. Used for `/ping` requests and responses (both `202` and `503`). See
+`total_bytes >= MIN_BODY_BYTES`. Used for `/ping` responses (both `202` and `503`). See
 [design.md#paddedjsonbody](design.md#paddedjsonbody).
+
+### `build_request_body(id: u64, deadline_unix_ns: u64, total_bytes: integer) -> bytes`
+Returns a PingRequestBody carrying the RequestDeadline, exactly `total_bytes` long. Precondition:
+`total_bytes >= MIN_REQUEST_BODY_BYTES`. Used by the load-generator client for every `/ping` request. See
+[design.md#pingrequestbody](design.md#pingrequestbody).
 
 ### `build_cancel_body(id: u64) -> bytes`
 Returns the CancelBody `{"id":"<dec>"}`. See [design.md#cancelbody](design.md#cancelbody).
@@ -44,11 +50,18 @@ Pulls the FinishedWatermark out of a CancelReplyBody: a u64, or none for `null`.
 every `202`. See [design.md#cancelreplybody](design.md#cancelreplybody).
 
 ### `parse_body(body: bytes) -> u64 | ParseError`
-Pulls the RequestId out of a PaddedJsonBody or a CancelBody. See [design.md#parsing](design.md#parsing).
+Pulls the RequestId out of a PingRequestBody, a PaddedJsonBody or a CancelBody. See [design.md#parsing](design.md#parsing).
+
+### `parse_deadline(body: bytes) -> u64 | none`
+Pulls the RequestDeadline out of a PingRequestBody; `none` if it is missing or malformed (never an error). The
+server's Ping Handler calls it when admitting a `/ping`. See [design.md#parsing](design.md#parsing).
 
 ### `validate_body_size(total_bytes: integer) -> ok | ConfigError`
-Returns `ConfigError` if `total_bytes < MIN_BODY_BYTES`. The server and the load generator call
-this at startup. See [design.md#minimum-body-size](design.md#minimum-body-size).
+Returns `ConfigError` if `total_bytes < MIN_BODY_BYTES`. The server calls it for `response_bytes` at startup.
+
+### `validate_request_body_size(total_bytes: integer) -> ok | ConfigError`
+Returns `ConfigError` if `total_bytes < MIN_REQUEST_BODY_BYTES`. The load generator calls it for `request_bytes` at
+startup. See [design.md#minimum-body-size](design.md#minimum-body-size).
 
 ## Request headers (client or canceller → server)
 
