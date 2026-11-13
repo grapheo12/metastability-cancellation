@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/client/design.md (client v0.3.0)
+// Source: abstraction/load_generator/client/design.md (client v0.4.0)
 package loadgen
 
 import (
@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -26,6 +27,7 @@ const (
 	OutcomeOK        Outcome = "ok"
 	OutcomeRejected  Outcome = "rejected"
 	OutcomeCancelled Outcome = "cancelled"
+	OutcomeDropped   Outcome = "dropped"
 	OutcomeError     Outcome = "error"
 	OutcomeNotSent   Outcome = "not_sent"
 )
@@ -97,56 +99,137 @@ func RunClient(clientID uint32, conn *h2client.Conn, cfg Config, rng *sampling.R
 	return records
 }
 
-// startRequest opens one POST /ping stream and returns at once. The response
-// goroutine and the SLO timer race through settle; the first wins.
+// pendingRequest is one sent logical request: its RequestCopies, the newest
+// copy's index and the first-event-wins flag.
+type pendingRequest struct {
+	id       uint64
+	body     []byte
+	rec      RequestRecord // id, client, seq, scheduled and first-send times
+	conn     *h2client.Conn
+	cfg      Config
+	runStart time.Time
+	events   chan<- clientEvent
+	sloTimer *time.Timer
+
+	mu       sync.Mutex           // guards current, cancels, resetAll
+	current  uint32               // index of the newest RequestCopy
+	cancels  []context.CancelFunc // per copy opened: cancelling sends RST_STREAM(CANCEL)
+	resetAll bool                 // SLOCancellation has reset every copy
+	settled  atomic.Bool
+}
+
+// startRequest sends copy 0 of one request and returns at once. Responses,
+// RetryTimers and the SLO timer race through settle; the first wins.
 //
 // Design: abstraction/load_generator/client/design.md#start_request
 func startRequest(clientID, seq uint32, tSched int64, conn *h2client.Conn, cfg Config, runStart time.Time, events chan<- clientEvent) {
 	id := protocol.MakeRequestID(seq, clientID)
-	body := protocol.BuildBody(id, cfg.RequestBytes)
-	rec := RequestRecord{RequestID: id, ClientID: clientID, Seq: seq, ScheduledNs: tSched, Sent: true}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	req, _ := http.NewRequestWithContext(ctx, protocol.PingMethod, "http://"+conn.Authority+protocol.PingPath, bytes.NewReader(body))
-	req.Header.Set("content-type", protocol.ContentTypeJSON)
-	req.Header.Set("content-length", strconv.Itoa(len(body)))
-	req.ContentLength = int64(len(body))
-
-	var settled atomic.Bool
-	settle := func(outcome Outcome, status int) bool {
-		if !settled.CompareAndSwap(false, true) {
-			return false
-		}
-		r := rec
-		r.EndNs, r.Outcome, r.HTTPStatus = nowNs(runStart), outcome, status
-		events <- clientEvent{rec: r, resolved: true}
-		return true
-	}
-
-	rec.SendNs = nowNs(runStart)
+	r := &pendingRequest{id: id, body: protocol.BuildBody(id, cfg.RequestBytes), conn: conn, cfg: cfg,
+		runStart: runStart, events: events,
+		rec: RequestRecord{RequestID: id, ClientID: clientID, Seq: seq, ScheduledNs: tSched, Sent: true}}
+	r.rec.SendNs = nowNs(runStart)
 	// Design: abstraction/load_generator/client/design.md#slocancellation
-	timer := time.AfterFunc(time.Duration(rec.SendNs+cfg.SloNs-nowNs(runStart)), func() {
-		if settle(OutcomeCancelled, 0) {
-			cancel() // x/net/http2 sends RST_STREAM(CANCEL) for the open stream
+	r.sloTimer = time.AfterFunc(time.Duration(r.rec.SendNs+cfg.SloNs-nowNs(runStart)), func() {
+		if !r.settle(OutcomeCancelled, 0) {
+			return
+		}
+		r.mu.Lock()
+		r.resetAll = true
+		cancels := append([]context.CancelFunc(nil), r.cancels...)
+		r.mu.Unlock()
+		for _, cancel := range cancels {
+			cancel() // x/net/http2 sends RST_STREAM(CANCEL) for each open copy
 		}
 	})
+	r.sendCopy(0)
+}
+
+// settle records the request once; later calls return false.
+//
+// Design: abstraction/load_generator/client/design.md#start_request
+func (r *pendingRequest) settle(outcome Outcome, status int) bool {
+	if !r.settled.CompareAndSwap(false, true) {
+		return false
+	}
+	rec := r.rec
+	rec.EndNs, rec.Outcome, rec.HTTPStatus = nowNs(r.runStart), outcome, status
+	r.mu.Lock()
+	rec.Copies = r.current + 1
+	r.mu.Unlock()
+	if outcome != OutcomeCancelled {
+		r.sloTimer.Stop()
+	}
+	r.events <- clientEvent{rec: rec, resolved: true}
+	return true
+}
+
+// newest reports whether copy k is still the copy whose answer counts.
+func (r *pendingRequest) newest(k uint32) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return k == r.current
+}
+
+// sendCopy opens RequestCopy k (r.current == k already) and starts its
+// RetryTimer. Called without r.mu. RoundTrip opens the stream and waits for
+// the response on the copy's own goroutine; an earlier copy's answer or error
+// is ignored, and its stream stays open until it ends or SLOCancellation.
+//
+// Design: abstraction/load_generator/client/design.md#retrytimer
+func (r *pendingRequest) sendCopy(k uint32) {
+	tCopy := nowNs(r.runStart)
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, protocol.PingMethod, "http://"+r.conn.Authority+protocol.PingPath, bytes.NewReader(r.body))
+	req.Header.Set("content-type", protocol.ContentTypeJSON)
+	req.Header.Set("content-length", strconv.Itoa(len(r.body)))
+	req.ContentLength = int64(len(r.body))
+	r.mu.Lock()
+	r.cancels = append(r.cancels, cancel)
+	late := r.resetAll
+	r.mu.Unlock()
+	if late { // SLOCancellation already ran
+		cancel()
+		return
+	}
 	go func() {
 		defer cancel()
-		resp, err := conn.CC.RoundTrip(req)
+		resp, err := r.conn.CC.RoundTrip(req)
 		if err != nil {
-			settle(OutcomeError, 0)
+			if r.newest(k) {
+				r.settle(OutcomeError, 0)
+			}
 			return
 		}
 		b, err := io.ReadAll(resp.Body) // full response: up to END_STREAM
 		resp.Body.Close()
+		if !r.newest(k) {
+			return // superseded copy: ignored
+		}
 		if err != nil {
-			settle(OutcomeError, 0)
+			r.settle(OutcomeError, 0)
 			return
 		}
-		if settle(classify(resp.StatusCode, b, id), resp.StatusCode) {
-			timer.Stop()
-		}
+		r.settle(classify(resp.StatusCode, b, r.id), resp.StatusCode)
 	}()
+	// RetryTimer of copy k.
+	// Design: abstraction/load_generator/client/design.md#retrytimer
+	time.AfterFunc(time.Duration(tCopy+r.cfg.RetryTimeoutNs-nowNs(r.runStart)), func() {
+		r.mu.Lock()
+		if r.settled.Load() || k != r.current {
+			r.mu.Unlock()
+			return
+		}
+		last := k == r.cfg.MaxRetries
+		if !last {
+			r.current = k + 1
+		}
+		r.mu.Unlock()
+		if last {
+			r.settle(OutcomeDropped, 0) // no reset: the copies are abandoned
+		} else {
+			r.sendCopy(k + 1)
+		}
+	})
 }
 
 // classify maps a full /ping response to an Outcome.

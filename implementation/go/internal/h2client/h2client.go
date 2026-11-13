@@ -2,7 +2,7 @@
 // connections: the open_h2c_connection primitive of the load generator, the
 // Ingress Upstream Pool and the Ingress Load Canceller.
 //
-// Source: abstraction/load_generator/run_controller/design.md (run_controller v0.3.0),
+// Source: abstraction/load_generator/run_controller/design.md (run_controller v0.4.0),
 // abstraction/ingress/upstream_pool/design.md (upstream_pool v0.1.2),
 // abstraction/ingress/load_canceller/design.md (load_canceller v0.5.0)
 package h2client

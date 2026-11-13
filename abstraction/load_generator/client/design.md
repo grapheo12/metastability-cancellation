@@ -260,12 +260,13 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 ### Go choices
 
 - File `internal/loadgen/client.go`.
-- Each client owns an `*h2client.Conn` that wraps one `http2.ClientConn` (one TCP connection, never pooled). Up to `n_waiting_requests` concurrent `RoundTrip`s share it. If the peer advertised fewer concurrent streams, x/net/http2 waits for a free stream (`awaitOpenSlotForStreamLocked`) rather than failing. Every peer here advertises at least 1000.
+- Each client owns an `*h2client.Conn` that wraps one `http2.ClientConn` (one TCP connection, never pooled). Up to `n_waiting_requests × (1 + max_retries)` concurrent `RoundTrip`s of unresolved requests (plus ignored copies still running) share it. If the peer advertised fewer concurrent streams, x/net/http2 waits for a free stream (`awaitOpenSlotForStreamLocked`) rather than failing. Every peer here advertises at least 1000.
 - The sender is the goroutine that calls `RunClient`; the receiver is a goroutine started by it. `outstanding` is the fill level of `slots`, a buffered channel of size `n_waiting_requests` used as a counting semaphore. Sending into it is the GatedArrival wait, and the receiver takes from it once per resolved request. The sender only increments and the receiver only decrements, as in the design.
 - `C.events` is a buffered channel of size `n_waiting_requests + 1`. It cannot be unbounded in Go, but the receiver always drains it, so a send waits at most until the receiver's next iteration. Records are appended by the receiver only and sorted by `seq` with `sort.Slice` at the end.
-- `start_request` builds the request, starts a `time.AfterFunc` for the SLO, and runs `RoundTrip` plus reading the body to EOF (END_STREAM) in its own goroutine. `settle` is a closure with an `atomic.Bool` `CompareAndSwap`, which is the first-event-wins rule. A winning SLO timer cancels the request context, and x/net/http2 then sends `RST_STREAM(CANCEL)` for the stream. A winning response stops the timer.
+- `start_request` builds a `pendingRequest` (the design's `req`: a `sync.Mutex` for `current`, the per-copy `context.CancelFunc`s and `resetAll`, plus an `atomic.Bool` `settled`), starts a `time.AfterFunc` for the SLO and calls `sendCopy(0)`. `settle` is a method doing the `CompareAndSwap` (first event wins), reading `current` under the mutex for `copies`, and stopping the SLO timer unless the SLO itself won. A winning SLO timer cancels every copy's context, and x/net/http2 then sends `RST_STREAM(CANCEL)` for each open stream.
+- `sendCopy(k)` is the design's `send_copy`. `open_stream` plus waiting for the full response is one `RoundTrip` and a read of the body to EOF (END_STREAM) on the copy's own goroutine, so a failed open shows up as that goroutine's error (an `error` outcome when the copy is newest, as the design's `ConnectionError`). A superseded copy's goroutine keeps reading until its stream ends and then does nothing; its context is cancelled only by SLOCancellation or when the response ends. The RetryTimer is a `time.AfterFunc` per copy; it does nothing once the request has settled or a newer copy exists.
 - Schedule times saturate at `math.MaxInt64` (`addGap`) instead of overflowing.
-- Tests: `client_test.go` runs a client against a one-worker server with a 200 ms StallGate. With a cap of 10, at least 2 and at most 10 requests are outstanding at once and records come back in `seq` order. With a cap of 1, each send waits for the previous request (closed loop).
+- Tests: `client_test.go` runs a client against a one-worker server with a 200 ms StallGate. With a cap of 10, at least 2 and at most 10 requests are outstanding at once and records come back in `seq` order. With a cap of 1, each send waits for the previous request (closed loop). Those two set a 10 s RetryTimer, so they never retry. `TestRetryTimerWorkedExamples` drives `startRequest` against a scripted prior-knowledge h2c server (`http2.Server.ServeConn`) that delays each copy of an id by a per-copy duration and reports whether the copy was answered or reset; it checks the design's worked examples (fast answer, retry answered, late original ignored, SLO resetting both copies, `dropped` without resets, `R = 0`) with times scaled down.
 
 ### Traceability
 
@@ -275,10 +276,11 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [SemiOpenLoopClient](#semiopenloopclient) | [client.go:49](../../../implementation/go/internal/loadgen/client.go#L49), [client_test.go:39](../../../implementation/go/internal/loadgen/client_test.go#L39) |
-| [GatedArrival](#gatedarrival) | [client.go:79](../../../implementation/go/internal/loadgen/client.go#L79), [client_test.go:71](../../../implementation/go/internal/loadgen/client_test.go#L71) |
-| [start_request](#start_request) | [client.go:104](../../../implementation/go/internal/loadgen/client.go#L104) |
-| [SLOCancellation](#slocancellation) | [client.go:128](../../../implementation/go/internal/loadgen/client.go#L128) |
-| [Outcome classification](#outcome-classification) | [client.go:156](../../../implementation/go/internal/loadgen/client.go#L156), [metrics_test.go:43](../../../implementation/go/internal/loadgen/metrics_test.go#L43) |
-| [State machine](#state-machine) | [client.go:49](../../../implementation/go/internal/loadgen/client.go#L49) |
+| [SemiOpenLoopClient](#semiopenloopclient) | [client.go:51](../../../implementation/go/internal/loadgen/client.go#L51), [client_test.go:46](../../../implementation/go/internal/loadgen/client_test.go#L46) |
+| [GatedArrival](#gatedarrival) | [client.go:81](../../../implementation/go/internal/loadgen/client.go#L81), [client_test.go:78](../../../implementation/go/internal/loadgen/client_test.go#L78) |
+| [start_request](#start_request) | [client.go:125](../../../implementation/go/internal/loadgen/client.go#L125), [client.go:150](../../../implementation/go/internal/loadgen/client.go#L150) |
+| [RetryTimer](#retrytimer) | [client.go:179](../../../implementation/go/internal/loadgen/client.go#L179), [client.go:216](../../../implementation/go/internal/loadgen/client.go#L216), [client_test.go:187](../../../implementation/go/internal/loadgen/client_test.go#L187) |
+| [SLOCancellation](#slocancellation) | [client.go:132](../../../implementation/go/internal/loadgen/client.go#L132) |
+| [Outcome classification](#outcome-classification) | [client.go:239](../../../implementation/go/internal/loadgen/client.go#L239), [metrics_test.go:45](../../../implementation/go/internal/loadgen/metrics_test.go#L45) |
+| [State machine](#state-machine) | [client.go:51](../../../implementation/go/internal/loadgen/client.go#L51) |
 <!-- trace:end -->

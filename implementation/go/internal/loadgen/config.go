@@ -1,7 +1,7 @@
 // Package loadgen implements the load generator: one file per component of
 // abstraction/load_generator.
 //
-// Source: abstraction/load_generator/design.md (load_generator v0.2.3)
+// Source: abstraction/load_generator/design.md (load_generator v0.3.3)
 package loadgen
 
 import (
@@ -22,8 +22,11 @@ type Config struct {
 	Seed             uint64
 	OutputPath       string
 	NWaitingRequests uint32  // most requests one client keeps outstanding
+	RetryTimeoutMs   float64 // RetryTimer of each RequestCopy
+	MaxRetries       uint32  // RequestCopies after the first
 	PerClientRate    float64 // global_rate / N
 	SloNs            int64   // round(slo_ms * 1e6)
+	RetryTimeoutNs   int64   // round(retry_timeout_ms * 1e6)
 	DurationNs       int64   // round(duration_s * 1e9)
 }
 
@@ -38,11 +41,14 @@ type Params struct {
 	Seed             string
 	OutputPath       string
 	NWaitingRequests string
+	RetryTimeoutMs   string
+	MaxRetries       string
 }
 
 // DefaultParams returns the defaults from abstraction/load_generator/api.md#program-parameters.
 func DefaultParams() Params {
-	return Params{Target: "127.0.0.1:8080", Seed: "0", OutputPath: "results", NWaitingRequests: "100"}
+	return Params{Target: "127.0.0.1:8080", Seed: "0", OutputPath: "results", NWaitingRequests: "100",
+		RetryTimeoutMs: "150", MaxRetries: "1"}
 }
 
 // nowNs is monotonic nanoseconds since runStart (time.Time keeps a monotonic reading).

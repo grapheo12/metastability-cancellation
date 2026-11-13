@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/metrics/design.md (metrics v0.2.0)
+// Source: abstraction/load_generator/metrics/design.md (metrics v0.3.0)
 package loadgen
 
 import (
@@ -23,6 +23,7 @@ type RequestRecord struct {
 	SendNs      int64
 	EndNs       int64
 	Sent        bool
+	Copies      uint32 // RequestCopies started; 0 for not_sent
 }
 
 // LatencyStats uses pointers so that an empty set serializes as null.
@@ -45,17 +46,21 @@ type summaryConfig struct {
 	DurationS        float64 `json:"duration_s"`
 	Seed             uint64  `json:"seed"`
 	NWaitingRequests uint32  `json:"n_waiting_requests"`
+	RetryTimeoutMs   float64 `json:"retry_timeout_ms"`
+	MaxRetries       uint32  `json:"max_retries"`
 	OutputPath       string  `json:"output_path"`
 }
 
 type summaryCounts struct {
-	Scheduled int `json:"scheduled"`
-	Sent      int `json:"sent"`
-	OK        int `json:"ok"`
-	Rejected  int `json:"rejected"`
-	Cancelled int `json:"cancelled"`
-	Error     int `json:"error"`
-	NotSent   int `json:"not_sent"`
+	Scheduled  int `json:"scheduled"`
+	Sent       int `json:"sent"`
+	OK         int `json:"ok"`
+	Rejected   int `json:"rejected"`
+	Cancelled  int `json:"cancelled"`
+	Dropped    int `json:"dropped"`
+	Error      int `json:"error"`
+	NotSent    int `json:"not_sent"`
+	CopiesSent int `json:"copies_sent"`
 }
 
 type summaryRates struct {
@@ -83,11 +88,12 @@ type SummaryReport struct {
 // Design: abstraction/load_generator/metrics/design.md#summary
 func Aggregate(records []RequestRecord, cfg Config, runEndNs int64, runStartUnixNs uint64) SummaryReport {
 	var r SummaryReport
-	r.Config = summaryConfig{cfg.Target, cfg.NumClients, cfg.GlobalRate, cfg.RequestBytes, cfg.SloMs, cfg.DurationS, cfg.Seed, cfg.NWaitingRequests, cfg.OutputPath}
+	r.Config = summaryConfig{cfg.Target, cfg.NumClients, cfg.GlobalRate, cfg.RequestBytes, cfg.SloMs, cfg.DurationS, cfg.Seed, cfg.NWaitingRequests, cfg.RetryTimeoutMs, cfg.MaxRetries, cfg.OutputPath}
 	r.RunEndS = float64(runEndNs) / 1e9
 	r.RunStartUnixNs = runStartUnixNs
 	var e2e, service []float64
 	for _, rec := range records {
+		r.Counts.CopiesSent += int(rec.Copies)
 		switch rec.Outcome {
 		case OutcomeOK:
 			r.Counts.OK++
@@ -97,6 +103,8 @@ func Aggregate(records []RequestRecord, cfg Config, runEndNs int64, runStartUnix
 			r.Counts.Rejected++
 		case OutcomeCancelled:
 			r.Counts.Cancelled++
+		case OutcomeDropped:
+			r.Counts.Dropped++
 		case OutcomeError:
 			r.Counts.Error++
 		case OutcomeNotSent:
@@ -154,7 +162,7 @@ func WriteRequestsCSV(path string, records []RequestRecord) error {
 		return err
 	}
 	w := bufio.NewWriter(f)
-	w.WriteString("request_id,client_id,seq,outcome,http_status,scheduled_ns,send_ns,end_ns,e2e_latency_ns,service_latency_ns\n")
+	w.WriteString("request_id,client_id,seq,outcome,http_status,scheduled_ns,send_ns,end_ns,e2e_latency_ns,service_latency_ns,copies\n")
 	for _, r := range sorted {
 		status, send, end, e2e, svc := "", "", "", "", ""
 		if r.HTTPStatus != 0 {
@@ -166,7 +174,8 @@ func WriteRequestsCSV(path string, records []RequestRecord) error {
 		}
 		w.WriteString(strconv.FormatUint(r.RequestID, 10) + "," + strconv.FormatUint(uint64(r.ClientID), 10) + "," +
 			strconv.FormatUint(uint64(r.Seq), 10) + "," + string(r.Outcome) + "," + status + "," +
-			strconv.FormatInt(r.ScheduledNs, 10) + "," + send + "," + end + "," + e2e + "," + svc + "\n")
+			strconv.FormatInt(r.ScheduledNs, 10) + "," + send + "," + end + "," + e2e + "," + svc + "," +
+			strconv.FormatUint(uint64(r.Copies), 10) + "\n")
 	}
 	if err := w.Flush(); err != nil {
 		f.Close()

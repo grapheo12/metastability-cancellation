@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/metrics/design.md (metrics v0.2.0)
+// Source: abstraction/load_generator/metrics/design.md (metrics v0.3.0)
 package loadgen
 
 import (
@@ -22,16 +22,18 @@ func TestPercentileWorkedExample(t *testing.T) {
 // Design: abstraction/load_generator/metrics/design.md#collection
 func TestAggregateCounts(t *testing.T) {
 	recs := []RequestRecord{
-		{Outcome: OutcomeOK, ScheduledNs: 0, SendNs: 1000, EndNs: 3000, Sent: true},
-		{Outcome: OutcomeRejected, Sent: true},
-		{Outcome: OutcomeCancelled, Sent: true},
+		{Outcome: OutcomeOK, ScheduledNs: 0, SendNs: 1000, EndNs: 3000, Sent: true, Copies: 2},
+		{Outcome: OutcomeRejected, Sent: true, Copies: 1},
+		{Outcome: OutcomeCancelled, Sent: true, Copies: 2},
+		{Outcome: OutcomeDropped, Sent: true, Copies: 2},
 		{Outcome: OutcomeNotSent},
 	}
 	r := Aggregate(recs, Config{DurationS: 2}, 2e9, 1_700_000_000_000_000_000)
 	if r.RunStartUnixNs != 1_700_000_000_000_000_000 {
 		t.Fatal("run_start_unix_ns is passed through")
 	}
-	if r.Counts.Scheduled != 4 || r.Counts.Sent != 3 || r.Counts.OK != 1 || r.RatesPerS.Offered != 2 || r.RatesPerS.Goodput != 0.5 {
+	if r.Counts.Scheduled != 5 || r.Counts.Sent != 4 || r.Counts.OK != 1 || r.Counts.Dropped != 1 || r.Counts.CopiesSent != 7 ||
+		r.RatesPerS.Offered != 2.5 || r.RatesPerS.Goodput != 0.5 {
 		t.Fatalf("%+v", r.Counts)
 	}
 	if *r.E2ELatencyUs.P50 != 3 || *r.ServiceLatencyUs.P50 != 2 {
