@@ -110,3 +110,4 @@
 | 0.9.44 | 2026-11-12T00:00:00Z | Child bump: benchmark_runner 0.2.25 (result_plotter 0.11.0) |
 | 0.9.45 | 2026-11-12T00:00:00Z | Glossary: Availability is over 200 ms windows |
 | 0.10.0 | 2026-11-12T00:00:00Z | Child bump: load_generator 0.3.0 (client 0.4.0, RetryTimer) |
+| 0.10.1 | 2026-11-12T00:00:00Z | Load generator parameters `retry_timeout_ms` and `max_retries`; glossary RetryTimer and RequestCopy; request flow, time bounds and concurrent-stream bound with retries. Child bump: load_generator 0.3.1 |
