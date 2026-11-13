@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.12.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.13.0)
 import csv
 import json
 import os
@@ -394,6 +394,23 @@ class AvailabilityPlotTest(unittest.TestCase):
             table, keys = plotter.build_table(out)
             (label, s, gc, color), = plotter.availability_lines(out, table, keys)
             self.assertEqual((label, gc, color), ("load_gen.global_rate=500", None, 0))   # no run_start: no overlay
+
+    # Old CSVs (no in_stall_window column, as in test_worked_example) keep every
+    # row; a current CSV skips the flagged StallWindowRequests.
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
+    def test_stall_window_rows_are_skipped(self):
+        with tempfile.TemporaryDirectory() as out:
+            path = os.path.join(out, "loadgen.requests.csv")
+            with open(path, "w") as f:
+                f.write(REQ_HEADER + ",copies,in_stall_window\n")
+                f.write("0,0,0,cancelled,,0,0,300000000,,,1,1\n")        # StallWindowRequest
+                f.write("1,0,1,ok,202,0,50000000,60000000,,,1,1\n")     # StallWindowRequest
+                f.write("2,0,2,ok,202,0,1000000000,1010000000,,,1,0\n")
+                f.write("3,0,3,dropped,,0,1050000000,1350000000,,,2,0\n")
+                f.write("4,0,4,not_sent,,0,,,,,0,0\n")
+            rows = plotter.read_requests(path)
+            self.assertEqual(rows, [(1010000000, 1000000000, True), (1350000000, 1050000000, False)])
+            self.assertEqual(plotter.availability_series(rows, 300_000_000), [(1.1, 1.0), (1.3, 0.0)])
 
     # Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
     # Design: abstraction/benchmark_runner/result_plotter/design.md#gcoverlay

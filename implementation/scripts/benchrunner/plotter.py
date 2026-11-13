@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.12.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.13.0)
 """PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot, QueueLengthPlot and ForwardTimelinePlots,
 drawn as interactive HTML FigurePages with plotly."""
 
@@ -545,7 +545,8 @@ def add_gc_overlay(fig, col, events, label, color, ys):
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
 def read_requests(path):
-    """[(end_ns, send_ns, ok)] of the finished rows of a Requests CSV, or None if the file is missing."""
+    """[(end_ns, send_ns, ok)] of the finished rows of a Requests CSV, or None if the file is missing.
+    StallWindowRequests (in_stall_window = 1) are skipped; a CSV without that column has none."""
     if not os.path.exists(path):
         return None
     rows = []
@@ -555,6 +556,7 @@ def read_requests(path):
             i_out, i_send, i_end = header.index("outcome"), header.index("send_ns"), header.index("end_ns")
         except ValueError:
             return []
+        i_stall = header.index("in_stall_window") if "in_stall_window" in header else None
         for line in f:
             parts = line.rstrip("\n").split(",")
             if len(parts) != len(header):
@@ -562,6 +564,8 @@ def read_requests(path):
             end = parts[i_end]
             if not end:
                 continue  # not_sent
+            if i_stall is not None and parts[i_stall] == "1":
+                continue  # StallWindowRequest
             try:
                 rows.append((int(end), int(parts[i_send]), parts[i_out] == "ok"))
             except ValueError:
