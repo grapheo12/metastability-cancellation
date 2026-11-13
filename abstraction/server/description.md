@@ -11,7 +11,7 @@ coroutine or thread. A connection is bound to a client id by its first `/ping` (
   creates `n_messages_per_request` messages, each a random binary tree of `n_gc_binary_tree_size` nodes, and writes
   them into a **MessageBuffer** filled at startup, to stress the garbage collector. The Connection Handler (for `cpu_burn`, after drawing the ServiceTime) puts the
   request on one process-wide, unbounded **WorkQueue**. A **WorkerPool** of `n_worker_threads` workers takes
-  requests off it in arrival order and does the work. The server then answers `202` with a PaddedJsonBody of `response_bytes`, or `503` with the
+  requests off it in arrival order, or by earliest RequestDeadline with the `edf` **QueueDiscipline**, and does the work. The server then answers `202` with a PaddedJsonBody of `response_bytes`, or `503` with the
   same kind of body if a `/cancel` stopped it.
 - **`/cancel`** is never queued. The Connection Handler records the RequestId in the global
   **CancelRegistry** under its client id and answers `202` straight away.

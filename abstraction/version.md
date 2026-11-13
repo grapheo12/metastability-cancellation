@@ -124,3 +124,4 @@
 | 0.12.0 | 2026-11-13T00:00:00Z | `/ping` request body is a PingRequestBody with the RequestDeadline; `request_bytes >= 76`; glossary PingRequestBody, RequestDeadline. Child bump: protocol 0.4.0 |
 | 0.12.1 | 2026-11-13T00:00:00Z | Child bump: load_generator 0.5.0 (client 0.6.0, RequestDeadline) |
 | 0.12.2 | 2026-11-13T00:00:00Z | Child bump: load_generator 0.5.1 (run_controller 0.6.0) |
+| 0.12.3 | 2026-11-13T00:00:00Z | Child bump: server 0.8.0 (worker_pool 0.5.0, EarliestDeadlineFirst) |
