@@ -9,6 +9,7 @@ The program is `bench`, with one command per invocation ([../api.md#benchmark-ru
 | `bench run <config.toml>` | load config → SourcePin → setup both machines → every SweepPoint → plot |
 | `bench setup <config.toml>` | load config → SourcePin → setup both machines |
 | `bench plot <output_dir>` | PointTable and SweepPlots from the points already in `<output_dir>` |
+| `bench retry-timeout --workers K --mean_service_ms S RATE [RATE ...]` | RetryTimeoutCalculator only: no config, no machines ([retry_timeout/api.md](retry_timeout/api.md#outputs)) |
 
 `run` resumes: SweepPoints that already have a `done` marker in the output directory are skipped. To resume a run,
 set `[run] output_dir` to that run's directory.
@@ -17,9 +18,9 @@ set `[run] output_dir` to that run's directory.
 
 | Status | When |
 |---|---|
-| `0` | Every SweepPoint is `done` (for `run`), or setup succeeded (for `setup`), or plots were written (for `plot`) |
+| `0` | Every SweepPoint is `done` (for `run`), or setup succeeded (for `setup`), or plots were written (for `plot`), or every rate was solved (for `retry-timeout`) |
 | `1` | At least one SweepPoint `failed` (outputs and plots of the other points are still written) |
-| `2` | Config error, SourcePin error, setup failure, or usage error. Nothing was run |
+| `2` | Config error, SourcePin error, setup failure, usage error, or (for `retry-timeout`) a validation error. Nothing was run |
 
 ## Output directory
 
@@ -70,3 +71,4 @@ File meanings are defined in [experiment_executor/design.md](experiment_executor
 | Remote Setup | [remote_setup/api.md](remote_setup/api.md) |
 | Experiment Executor | [experiment_executor/api.md](experiment_executor/api.md) |
 | Result Plotter | [result_plotter/api.md](result_plotter/api.md) |
+| Retry Timeout | [retry_timeout/api.md](retry_timeout/api.md) |
