@@ -1,0 +1,45 @@
+# Standing queue, 1 retry, retry timeout per rate from the RetryTimeoutCalculator with the per-server
+# M/M/10 model (each of the 2 servers gets half the rate):
+#   bench retry-timeout --workers 10 --mean_service_ms 200 30 35 40 45
+#   60 -> 189.519, 70 -> 260.339, 80 -> 381.685, 90 -> 702.181 ms (linked to global_rate)
+# cpu_burn with 200 ms mean service time (response_rate = 5 per worker), 10 workers per server, 2 servers,
+# SLO 5 s, no initial stall, n_waiting_requests 500, 120 s per point. Sweep rate x [fifo, edf].
+[repo]
+url = "https://github.com/grapheo12/metastability-cancellation.git"
+
+[machines.server]
+host = "metafail-exp-1"
+data_addr = "172.31.23.63"
+
+[machines.client]
+host = "metafail-exp-2"
+
+[server]
+listen_port = 8080
+instances = 2
+workload = "cpu_burn"
+response_rate = 5   # per worker: 200 ms mean
+initial_stall_ms = 0
+n_worker_threads = 10
+queue_discipline = ["fifo", "edf"]
+response_bytes = 128
+
+[load_gen]
+num_clients = 16
+global_rate = [60, 70, 80, 90]
+request_bytes = 128
+slo_ms = 5000
+duration_s = 120
+n_waiting_requests = 500
+retry_timeout_ms = [189.519, 260.339, 381.685, 702.181]   # linked to global_rate
+max_retries = 1
+
+[ingress]
+machine = "server"   # Ingress next to the server on metafail-exp-1
+listen_port = 9090
+lb_policy = "ewma"
+
+[run]
+sweep_order = ["load_gen.global_rate", "server.queue_discipline"]
+link = { "load_gen.retry_timeout_ms" = "load_gen.global_rate" }
+cooldown_s = 2
