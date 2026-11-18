@@ -147,6 +147,7 @@ time, one row every `queue_sample_interval_ms`. See [server/api.md](server/api.m
 | `bench run <config.toml>` | Setup both machines, run every SweepPoint, then plot |
 | `bench setup <config.toml>` | Setup both machines only |
 | `bench plot <output_dir>` | Rebuild the PointTable and plots from a finished or partial run |
+| `bench retry-timeout --workers K --mean_service_ms S RATE [RATE ...]` | Print the RetryTimeout of each rate from a pooled M/M/k model ([benchmark_runner/retry_timeout/api.md](benchmark_runner/retry_timeout/api.md#outputs)) |
 
 The config format is in [benchmark_runner/config/api.md](benchmark_runner/config/api.md). The output
 directory layout is in [benchmark_runner/api.md](benchmark_runner/api.md#output-directory). Produced by
