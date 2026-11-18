@@ -25,3 +25,4 @@
 | 0.7.3 | 2026-11-12T00:00:00Z | Child bump: message_buffer 0.2.1 |
 | 0.8.0 | 2026-11-13T00:00:00Z | Parameter `queue_discipline` (`fifo` \| `edf`, default `fifo`), validated and passed to `queue_new`; wire behavior names both start orders. Child bump: worker_pool 0.5.0 (EarliestDeadlineFirst) |
 | 0.8.1 | 2026-11-13T00:00:00Z | Child bump: ping_handler 0.8.0 (RequestDeadline into the PingJob) |
+| 0.9.0 | 2026-11-18T00:00:00Z | ServerWorkload `sleep` (validation: `response_rate` required; cancellation semantics at each wake-up; ServiceTime sampled as for `cpu_burn`). New subcomponent Sleeper 0.1.0 (QuantumSleep) |

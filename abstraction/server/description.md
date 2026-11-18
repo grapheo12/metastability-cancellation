@@ -1,6 +1,6 @@
 # Server — Description
 
-Subcomponents: Connection Handler, Worker Pool, Ping Handler, CPU Burner, Message Buffer, Cancel Tracker.
+Subcomponents: Connection Handler, Worker Pool, Ping Handler, CPU Burner, Message Buffer, Sleeper, Cancel Tracker.
 
 An HTTP/2 (h2c, prior knowledge) server with two endpoints, `POST /ping` and `DELETE /cancel`. It
 accepts connections and gives each one its own **Connection Handler**, which runs as its own
@@ -9,7 +9,8 @@ coroutine or thread. A connection is bound to a client id by its first `/ping` (
 - **`/ping`** does the work of the **ServerWorkload** named by `workload`. With `cpu_burn` (the default) it
   costs a random amount of pure CPU time (the ServiceTime, `Exp(response_rate)`). With `message_buffer` it
   creates `n_messages_per_request` messages, each a random binary tree of `n_gc_binary_tree_size` nodes, and writes
-  them into a **MessageBuffer** filled at startup, to stress the garbage collector. The Connection Handler (for `cpu_burn`, after drawing the ServiceTime) puts the
+  them into a **MessageBuffer** filled at startup, to stress the garbage collector. With `sleep` it waits out the
+  same ServiceTime without using CPU, sleeping in 20 ms quanta (**QuantumSleep**). The Connection Handler (for `cpu_burn`, after drawing the ServiceTime) puts the
   request on one process-wide, unbounded **WorkQueue**. A **WorkerPool** of `n_worker_threads` workers takes
   requests off it in arrival order, or by earliest RequestDeadline with the `edf` **QueueDiscipline**, and does the work. The server then answers `202` with a PaddedJsonBody of `response_bytes`, or `503` with the
   same kind of body if a `/cancel` stopped it.

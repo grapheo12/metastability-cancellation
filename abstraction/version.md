@@ -134,3 +134,4 @@
 | 0.14.2 | 2026-11-18T00:00:00Z | Glossary: LinkedSweep; SweepExpansion leaves out linked keys |
 | 0.14.3 | 2026-11-18T00:00:00Z | Child bump: benchmark_runner 0.3.0 (Retry Timeout) |
 | 0.15.0 | 2026-11-18T00:00:00Z | Benchmark runner command `bench retry-timeout`; glossary RetryTimeoutCalculator and RetryTimeout |
+| 0.15.1 | 2026-11-18T00:00:00Z | Child bump: server 0.9.0 (Sleeper, `workload = sleep`) |
