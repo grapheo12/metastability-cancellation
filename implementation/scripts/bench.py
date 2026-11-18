@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/design.md (benchmark_runner v0.2.31)
+# Source: abstraction/benchmark_runner/design.md (benchmark_runner v0.3.0)
 """bench: the BenchmarkRunner.
 
 Usage (from anywhere inside an impl/<lang> checkout):
     python3 implementation/scripts/bench.py run   <config.toml>   # setup, every SweepPoint, plots
     python3 implementation/scripts/bench.py setup <config.toml>   # setup both machines only
     python3 implementation/scripts/bench.py plot  <output_dir>    # rebuild table and plots
+    python3 implementation/scripts/bench.py retry-timeout --workers K --mean_service_ms S RATE [RATE ...]
+                                                                  # RetryTimeout per rate (pooled M/M/k)
 
 Exit status: 0 all good, 1 some SweepPoint failed, 2 config/pin/setup/usage error.
 Plotting needs plotly: python3 -m pip install -r implementation/scripts/requirements.txt
@@ -22,7 +24,7 @@ import sys
 import time
 
 from benchrunner import config as cfgmod
-from benchrunner import executor, plotter, remote_setup, transport
+from benchrunner import executor, plotter, remote_setup, retry_timeout, transport
 
 RUNNER_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -143,13 +145,31 @@ def bench_plot(output_dir):
     return 0
 
 
+# Design: abstraction/benchmark_runner/design.md#run-flow
+# Design: abstraction/benchmark_runner/retry_timeout/design.md#failure-and-edge-cases
+def bench_retry_timeout(workers, mean_service_ms, rates):
+    try:
+        results = [retry_timeout.retry_timeout(workers, mean_service_ms, r) for r in rates]
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    sys.stdout.write(retry_timeout.format_results(results))
+    return 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
     for name in ("run", "setup"):
         sub.add_parser(name).add_argument("config")
     sub.add_parser("plot").add_argument("output_dir")
+    rt = sub.add_parser("retry-timeout", help="RetryTimeout per offered rate from a pooled M/M/k model")
+    rt.add_argument("--workers", type=int, required=True, help="total workers k (instances x n_worker_threads)")
+    rt.add_argument("--mean_service_ms", type=float, required=True, help="mean exponential service time")
+    rt.add_argument("rates", type=float, nargs="+", metavar="RATE", help="offered rate of the whole system, req/s")
     args = p.parse_args(argv)
+    if args.command == "retry-timeout":
+        return bench_retry_timeout(args.workers, args.mean_service_ms, args.rates)
     if args.command == "plot":
         if not os.path.isdir(args.output_dir):
             print(f"error: no such directory {args.output_dir}", file=sys.stderr)

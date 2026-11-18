@@ -128,3 +128,35 @@ Boundary and closed-form cases:
 - No rate given, or a flag missing, is a usage error of the command (exit `2`), reported before any computation.
 - A rate that fails validation stops the command before anything is printed, even if other rates are valid.
 - Very large `workers` (thousands) are fine: the Erlang B recursion is `O(k)` and stays in `[0, 1]`.
+
+## Design specific to Python
+
+Shared tool `implementation/scripts/` (tooling language Python 3.11+; see `AGENTS.md` "Shared tooling"). Standard
+library only (`math`), so `bench retry-timeout` runs without plotly.
+Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts`.
+
+### Python choices
+
+- File `benchrunner/retry_timeout.py`. `RetryTimeoutResult` is a `dataclass`. `erlang_c`, `sojourn_tail`, `validate`, `retry_timeout` and `format_results` follow the design's functions; `BISECTION_STEPS = 200` and `THETA_EQ_MU_REL = 1e-12` name its constants.
+- Python floats are IEEE 754 doubles; `math.exp` is the exponential. `fixed(x, d)` is the format spec `.{d}f`, which rounds the double's exact value correctly. `shortest(x)` is `repr(x)`, or `str(int(x))` for integral values; `round(x, 3)` is Python's `round`.
+- `workers` must be an `int` that is not a `bool`; numbers are `int` or `float` (not `bool`) and finite.
+- `bench.py` adds the argparse subcommand `retry-timeout` (`--workers` as `int`, `--mean_service_ms` and the rates as `float`, `nargs="+"`). Argparse reports usage errors with exit `2`. `bench_retry_timeout` computes every rate before printing anything and turns a `ValueError` into `error: <message>` on stderr with exit `2`.
+- Tests: `tests/test_retry_timeout.py` checks the worked examples (to ±0.0005 ms and the defining equation), M/M/1 against `−ln(1 − ρ)/(μ − λ)`, the `theta = mu` branch and its neighbors, the low-load limit and monotonic tail, a large `k`, every validation message, and the exact CLI output and error exit.
+
+### Traceability
+
+Generated from the `# Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Python --ext .py --comment '#' --impl implementation/scripts --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [Model](#model) | [retry_timeout.py:68](../../../implementation/scripts/benchrunner/retry_timeout.py#L68) |
+| [ErlangC](#erlangc) | [retry_timeout.py:23](../../../implementation/scripts/benchrunner/retry_timeout.py#L23), [test_retry_timeout.py:53](../../../implementation/scripts/tests/test_retry_timeout.py#L53) |
+| [SojournTail](#sojourntail) | [retry_timeout.py:32](../../../implementation/scripts/benchrunner/retry_timeout.py#L32), [test_retry_timeout.py:30](../../../implementation/scripts/tests/test_retry_timeout.py#L30), [test_retry_timeout.py:37](../../../implementation/scripts/tests/test_retry_timeout.py#L37) |
+| [TimeoutSolve](#timeoutsolve) | [retry_timeout.py:13](../../../implementation/scripts/benchrunner/retry_timeout.py#L13), [retry_timeout.py:68](../../../implementation/scripts/benchrunner/retry_timeout.py#L68), [test_retry_timeout.py:46](../../../implementation/scripts/tests/test_retry_timeout.py#L46) |
+| [Validation](#validation) | [retry_timeout.py:53](../../../implementation/scripts/benchrunner/retry_timeout.py#L53), [test_retry_timeout.py:58](../../../implementation/scripts/tests/test_retry_timeout.py#L58) |
+| [Output format](#output-format) | [retry_timeout.py:88](../../../implementation/scripts/benchrunner/retry_timeout.py#L88), [test_retry_timeout.py:72](../../../implementation/scripts/tests/test_retry_timeout.py#L72) |
+| [Worked examples](#worked-examples) | [test_retry_timeout.py:17](../../../implementation/scripts/tests/test_retry_timeout.py#L17) |
+| [Failure and edge cases](#failure-and-edge-cases) | [bench.py:150](../../../implementation/scripts/bench.py#L150) |
+<!-- trace:end -->
