@@ -56,3 +56,28 @@ Worked examples, times from the start of the sleep, an on-time OS (each quantum 
   deadline.
 - A worker that is sleeping still occupies its WorkerPool slot: the pool's concurrency is `n_worker_threads`
   whatever the workload.
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- File `internal/server/sleeper.go`. `sleep` is `Sleep`, returning the CPU Burner's `BurnOutcome` values (`BurnCompleted`, `BurnCancelledRST`, `BurnCancelledID`). `SLEEP_QUANTUM_US` is `SleepQuantumUs`.
+- The clock is the burner's `monotonicNowNs` (`time.Since(clockBase)`); `sleep_thread` is `time.Sleep`, which parks only the calling goroutine, so the Go scheduler keeps running Connection Handlers and other workers on the freed OS thread.
+- `Sleep` calls `quantumSleep`, which takes the clock and the sleep function as arguments so tests replay the worked examples with a fake clock. `NONE` is `nil` for the flag pointer and `idCheck`.
+- Tests: `TestQuantumSleepWorkedExamples` replays every worked-example row with a fake clock (quanta asked for, the times `idCheck` runs, outcome and end time, including the late wake-up). `TestSleepRealClock` checks a real 50 ms sleep lasts at least 50 ms and that an RST set at 30 ms stops a 5 s sleep.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [QuantumSleep](#quantumsleep) | [sleeper.go:13](../../../implementation/go/internal/server/sleeper.go#L13), [sleeper.go:20](../../../implementation/go/internal/server/sleeper.go#L20), [sleeper.go:33](../../../implementation/go/internal/server/sleeper.go#L33), [sleeper_test.go:36](../../../implementation/go/internal/server/sleeper_test.go#L36) |
+| [Timing](#timing) | [sleeper.go:27](../../../implementation/go/internal/server/sleeper.go#L27), [sleeper_test.go:99](../../../implementation/go/internal/server/sleeper_test.go#L99) |
+<!-- trace:end -->
