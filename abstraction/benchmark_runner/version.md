@@ -45,3 +45,4 @@
 | 0.2.29 | 2026-11-12T00:00:00Z | Child bump: result_plotter 0.13.0 (Availability skips StallWindowRequests) |
 | 0.2.30 | 2026-11-13T00:00:00Z | Child bump: config 0.15.0 (`queue_discipline`) |
 | 0.2.31 | 2026-11-18T00:00:00Z | Child bump: config 0.16.0 (LinkedSweep) |
+| 0.3.0 | 2026-11-18T00:00:00Z | New subcomponent Retry Timeout (RetryTimeoutCalculator 0.1.0) and the command `bench retry-timeout` |

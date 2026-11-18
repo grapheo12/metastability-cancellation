@@ -1,6 +1,6 @@
 # Benchmark Runner — Description
 
-Subcomponents: Config, Remote Transport, Remote Setup, Experiment Executor, Result Plotter.
+Subcomponents: Config, Remote Transport, Remote Setup, Experiment Executor, Result Plotter, Retry Timeout.
 
 The **BenchmarkRunner** runs on an operator machine (e.g. a laptop) and turns one TOML file into a complete,
 reproducible experiment on two remote machines:
@@ -18,6 +18,8 @@ reproducible experiment on two remote machines:
   against the Ingress, stops the Ingress and then the servers with an interrupt so they write their outputs and
   CancelCounters, and downloads every output.
 - **Result Plotter** builds the **PointTable** of all points and draws the **SweepPlots** over every swept value.
+- **Retry Timeout** is a stand-alone calculator, the **RetryTimeoutCalculator**: it picks a `retry_timeout_ms` for
+  each offered rate from a pooled M/M/k model, before an experiment is configured.
 
 Setup happens once per run. Only the experiment repeats per SweepPoint.
 

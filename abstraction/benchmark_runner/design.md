@@ -13,7 +13,10 @@ flowchart TD
   SS -.uses.- T[(Remote Transport)]
   SC -.uses.- T
   EX -.uses.- T
+  RT[Retry Timeout: RetryTimeoutCalculator]
 ```
+
+The Retry Timeout calculator stands alone: `bench retry-timeout` uses no config, machines or Transport.
 
 | Subcomponent | Responsibility | Spec |
 |---|---|---|
@@ -22,6 +25,7 @@ flowchart TD
 | Remote Setup | SourcePin, clone/checkout, tool check, build via the BuildManifest | [remote_setup/description.md](remote_setup/description.md) |
 | Experiment Executor | One SweepPoint: server lifecycle, client run, download | [experiment_executor/description.md](experiment_executor/description.md) |
 | Result Plotter | PointTable and SweepPlots | [result_plotter/description.md](result_plotter/description.md) |
+| Retry Timeout | RetryTimeoutCalculator: a `retry_timeout_ms` per offered rate from a pooled M/M/k model | [retry_timeout/description.md](retry_timeout/description.md) |
 
 ## Run flow
 
@@ -70,7 +74,9 @@ because the manifest is known from the SourcePin. A missing pinning tool is only
 with their thread counts applied, and each point's `placement.json` records what was actually used.
 
 `bench setup` runs everything up to and including the parallel setup. `bench plot` runs only
-`result_plotter.plot`.
+`result_plotter.plot`. `bench retry-timeout` calls `retry_timeout.retry_timeout` once per rate, in the order given,
+and prints `retry_timeout.format_results` of all of them; any ValueError exits `2` before printing
+([retry_timeout/design.md](retry_timeout/design.md#timeoutsolve)).
 
 `prepare_output_dir` creates the directory if needed, then writes `config.toml` (a byte copy) and `run.json`. If
 the directory already has a `run.json` with a different `commit`, it stops with a SourcePin error, because a resumed

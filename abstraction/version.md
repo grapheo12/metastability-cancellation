@@ -132,3 +132,4 @@
 | 0.14.0 | 2026-11-17T00:00:00Z | RetryTimer wording in the parameter table, glossary and request flow: the last RequestCopy waits for its answer or the SLO; the request flow no longer lists `dropped` |
 | 0.14.1 | 2026-11-18T00:00:00Z | Child bump: benchmark_runner 0.2.31 (config 0.16.0: LinkedSweep) |
 | 0.14.2 | 2026-11-18T00:00:00Z | Glossary: LinkedSweep; SweepExpansion leaves out linked keys |
+| 0.14.3 | 2026-11-18T00:00:00Z | Child bump: benchmark_runner 0.3.0 (Retry Timeout) |
