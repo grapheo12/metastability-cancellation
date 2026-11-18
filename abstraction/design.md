@@ -85,8 +85,6 @@ parameters, their output files and the server's `listening on` and CancelCounter
    - The burn completes. The server answers `202` and the client records `ok` (if within the SLO).
    - A matching `/cancel` is seen at a CancelCheckPoint (`cooperative` mode). The server stops, counts
      it, and answers `503`. The client records `rejected`.
-   - The last RequestCopy's RetryTimer fires first. The client abandons the request without a reset and records
-     `dropped`.
    - The SLO fires first. The client sends `RST_STREAM(CANCEL)` on every RequestCopy and records `cancelled`. On the
      server, in `cooperative` mode, the worker skips or stops the request and writes nothing. In
      `ignore` mode the server burns the full time and its response is dropped.
