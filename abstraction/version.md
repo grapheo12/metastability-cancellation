@@ -139,3 +139,4 @@
 | 0.16.0 | 2026-11-18T00:00:00Z | Server parameter `workload` gains `sleep` (`response_rate` required); glossary QuantumSleep, ServerWorkload |
 | 0.16.1 | 2026-11-18T00:00:00Z | Child bump: benchmark_runner 0.4.0 (retry_timeout 0.2.0: EtaSlack, RetryFeedback, MaxStableEta) |
 | 0.17.0 | 2026-11-18T00:00:00Z | Command `bench stable-eta` and `retry-timeout --eta`; glossary EtaSlack, RetryFeedback, StableLoad, TippingLoad, MaxStableEta |
+| 0.17.1 | 2026-11-18T00:00:00Z | Child bump: benchmark_runner 0.4.1 (retry_timeout 0.3.0: Convergence, Lean proofs) |
