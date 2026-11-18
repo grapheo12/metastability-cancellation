@@ -9,7 +9,8 @@ The program is `bench`, with one command per invocation ([../api.md#benchmark-ru
 | `bench run <config.toml>` | load config → SourcePin → setup both machines → every SweepPoint → plot |
 | `bench setup <config.toml>` | load config → SourcePin → setup both machines |
 | `bench plot <output_dir>` | PointTable and SweepPlots from the points already in `<output_dir>` |
-| `bench retry-timeout --workers K --mean_service_ms S RATE [RATE ...]` | RetryTimeoutCalculator only: no config, no machines ([retry_timeout/api.md](retry_timeout/api.md#outputs)) |
+| `bench retry-timeout --workers K --mean_service_ms S [--eta E] RATE [RATE ...]` | RetryTimeoutCalculator only: RetryTimeout and RetryFeedback per rate; no config, no machines ([retry_timeout/api.md](retry_timeout/api.md#outputs)) |
+| `bench stable-eta --workers K --mean_service_ms S RATE [RATE ...]` | RetryTimeoutCalculator only: MaxStableEta per rate; no config, no machines ([retry_timeout/api.md](retry_timeout/api.md#outputs)) |
 
 `run` resumes: SweepPoints that already have a `done` marker in the output directory are skipped. To resume a run,
 set `[run] output_dir` to that run's directory.
@@ -18,9 +19,9 @@ set `[run] output_dir` to that run's directory.
 
 | Status | When |
 |---|---|
-| `0` | Every SweepPoint is `done` (for `run`), or setup succeeded (for `setup`), or plots were written (for `plot`), or every rate was solved (for `retry-timeout`) |
+| `0` | Every SweepPoint is `done` (for `run`), or setup succeeded (for `setup`), or plots were written (for `plot`), or every rate was solved (for `retry-timeout` and `stable-eta`) |
 | `1` | At least one SweepPoint `failed` (outputs and plots of the other points are still written) |
-| `2` | Config error, SourcePin error, setup failure, usage error, or (for `retry-timeout`) a validation error. Nothing was run |
+| `2` | Config error, SourcePin error, setup failure, usage error, or (for `retry-timeout` and `stable-eta`) a validation error. Nothing was run |
 
 ## Output directory
 
