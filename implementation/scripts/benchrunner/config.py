@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.15.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.16.0)
 """BenchConfig loading and validation, SweepExpansion, argument formatting."""
 
 import datetime
@@ -73,6 +73,7 @@ class RunOptions:
     stop_timeout_s: float
     client_timeout_margin_s: float
     setup_timeout_s: float
+    link: dict = None  # LinkedSweep: linked key -> driver key, file order; {} when unset
 
 
 @dataclass
@@ -93,7 +94,8 @@ class BenchConfig:
     def swept_keys(self):
         if self.run.sweep_order is not None:
             return list(self.run.sweep_order)
-        return list(self.file_swept or [])
+        # Design: abstraction/benchmark_runner/config/design.md#linkedsweep
+        return [k for k in (self.file_swept or []) if k not in (self.run.link or {})]
 
     def lookup(self, key):
         if key == "ingress.cancel_rate_fraction":
@@ -264,7 +266,7 @@ def load_config(path, runner_dir, now=None):
 
     run = doc.get("run", {})
     _check_keys(run, {"output_dir", "sweep_order", "cooldown_s", "on_failure", "server_ready_timeout_s",
-                      "stop_timeout_s", "client_timeout_margin_s", "setup_timeout_s"}, "run")
+                      "stop_timeout_s", "client_timeout_margin_s", "setup_timeout_s", "link"}, "run")
     now = now or datetime.datetime.now(datetime.timezone.utc)
     output_dir = run.get("output_dir", os.path.join(runner_dir, "results", now.strftime("%Y%m%dT%H%M%SZ")))
     if not isinstance(output_dir, str) or not output_dir:
@@ -284,13 +286,36 @@ def load_config(path, runner_dir, now=None):
         stop_timeout_s=_positive(run, "stop_timeout_s", 30.0),
         client_timeout_margin_s=_positive(run, "client_timeout_margin_s", 60.0),
         setup_timeout_s=_positive(run, "setup_timeout_s", 900.0),
+        link=_link_table(run.get("link", {})),
     )
     config = BenchConfig(repo_url, machines, params, ports["server"], instances, ports["ingress"], ingress_machine,
                          options, placement, fraction, file_swept, gc_trace)
+    swept = [k for k in file_swept if k not in options.link]
     if sweep_order is not None:
-        if sorted(sweep_order) != sorted(file_swept) or len(set(sweep_order)) != len(sweep_order):
+        if sorted(sweep_order) != sorted(swept) or len(set(sweep_order)) != len(sweep_order):
             raise ConfigError("run.sweep_order must list every swept key exactly once")
+    check_link(config, swept)
     return config
+
+
+# Design: abstraction/benchmark_runner/config/design.md#linkedsweep
+def _link_table(link):
+    if not isinstance(link, dict) or not all(isinstance(k, str) and isinstance(v, str) and "." in k and "." in v
+                                             for k, v in link.items()):
+        raise ConfigError('run.link must map "<section>.<param>" keys to "<section>.<param>" keys')
+    return dict(link)
+
+
+# Design: abstraction/benchmark_runner/config/design.md#linkedsweep
+def check_link(config, swept):
+    for linked, driver in config.run.link.items():
+        section, name = linked.split(".", 1)
+        if section not in SECTIONS or not isinstance(config.params[section].get(name), list):
+            raise ConfigError(f"run.link: {linked} must be an array program parameter")
+        if driver not in swept:  # an array key that is not itself linked
+            raise ConfigError(f"run.link: driver {driver} of {linked} must be a swept key")
+        if len(config.lookup(linked)) != len(config.lookup(driver)):
+            raise ConfigError(f"run.link: {linked} and {driver} must have the same number of values")
 
 
 # Design: abstraction/benchmark_runner/config/design.md#cancelratefraction
@@ -342,11 +367,13 @@ class SweepPoint:
     ingress_machine: str = "client"
     loadgen_target: str = ""
     placement: dict = None  # program -> {"threads", "cpu_set"} (ProcessPlacement)
+    linked: dict = None  # LinkedSweep: linked key -> this point's value; {} when unused
 
     def to_json(self):
         return {
             "id": self.id,
             "swept": self.swept,
+            "linked": self.linked or {},
             "server_args": [[k, v] for k, v in self.server_args],
             "loadgen_args": [[k, v] for k, v in self.loadgen_args],
             "ingress_args": [[k, v] for k, v in self.ingress_args],
@@ -366,8 +393,12 @@ def expand_sweep(config):
     """Cross product of the swept keys; the last key varies fastest."""
     keys = config.swept_keys()
     points = []
-    for pid, combo in enumerate(itertools.product(*[config.lookup(k) for k in keys])):
-        choose = dict(zip(keys, combo))
+    for pid, idx in enumerate(itertools.product(*[range(len(config.lookup(k))) for k in keys])):
+        swept = {k: config.lookup(k)[i] for k, i in zip(keys, idx)}
+        # LinkedSweep: a linked key takes the element at its driver's index.
+        # Design: abstraction/benchmark_runner/config/design.md#linkedsweep
+        linked = {l: config.lookup(l)[idx[keys.index(d)]] for l, d in config.run.link.items()}
+        choose = {**swept, **linked}
 
         def args(section):
             return [(k, choose.get(f"{section}.{k}", v)) for k, v in config.params[section].items()]
@@ -388,8 +419,8 @@ def expand_sweep(config):
             ingress_args.append(("cancel_rate", derived_cancel_rate(dict(loadgen_args)["global_rate"], f)))
         # Design: abstraction/benchmark_runner/config/design.md#processplacement
         placement = {PROGRAM_OF[section]: dict(config.placement[section]) for section in SECTIONS}
-        points.append(SweepPoint(pid, choose, server_args, loadgen_args, ingress_args, config.instances,
-                                 config.ingress_machine, loadgen_target(config), placement))
+        points.append(SweepPoint(pid, swept, server_args, loadgen_args, ingress_args, config.instances,
+                                 config.ingress_machine, loadgen_target(config), placement, linked))
     return points
 
 

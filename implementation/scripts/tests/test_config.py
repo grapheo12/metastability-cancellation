@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.15.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.16.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -172,6 +172,46 @@ class ConfigTest(unittest.TestCase):
         self.assertConfigError(BASE.replace("cancel_rate = 100", "cancel_rate_fraction = []"), "non-empty array")
         self.assertConfigError(BASE.replace("global_rate = [1000, 2000]", "")
                                .replace("cancel_rate = 100", "cancel_rate_fraction = 0.1"), "global_rate is required")
+
+    # Design: abstraction/benchmark_runner/config/design.md#linkedsweep
+    def test_linked_sweep_worked_example(self):
+        text = (BASE.replace('["ignore", "cooperative"]', '"ignore"').replace("[1000, 2000]", "[60, 70]")
+                .replace("duration_s = 2", "duration_s = 2\nretry_timeout_ms = [183.258, 240.795]\nmax_retries = [0, 1]")
+                + '[run]\nlink = { "load_gen.retry_timeout_ms" = "load_gen.global_rate" }\n')
+        c = self.load(text)
+        self.assertEqual(c.swept_keys(), ["load_gen.global_rate", "load_gen.max_retries"])
+        points = cfg.expand_sweep(c)
+        got = [(p.swept["load_gen.global_rate"], p.swept["load_gen.max_retries"],
+                p.linked["load_gen.retry_timeout_ms"]) for p in points]
+        self.assertEqual(got, [(60, 0, 183.258), (60, 1, 183.258), (70, 0, 240.795), (70, 1, 240.795)])
+        self.assertNotIn("load_gen.retry_timeout_ms", points[0].swept)
+        self.assertEqual([k for k, _ in points[3].loadgen_args],
+                         ["num_clients", "global_rate", "slo_ms", "duration_s", "retry_timeout_ms", "max_retries"])
+        self.assertEqual(dict(points[3].loadgen_args)["retry_timeout_ms"], 240.795)
+        self.assertEqual(points[3].to_json()["linked"], {"load_gen.retry_timeout_ms": 240.795})
+        self.assertEqual(cfg.expand_sweep(self.load(BASE))[0].to_json()["linked"], {})
+        # duplicate driver values pair by index
+        dup = text.replace("[60, 70]", "[60, 60]").replace("[183.258, 240.795]", "[100, 200]") \
+            .replace("max_retries = [0, 1]", "max_retries = 1")
+        self.assertEqual([p.linked["load_gen.retry_timeout_ms"] for p in cfg.expand_sweep(self.load(dup))], [100, 200])
+
+    # Design: abstraction/benchmark_runner/config/design.md#linkedsweep
+    def test_linked_sweep_errors(self):
+        text = (BASE.replace('["ignore", "cooperative"]', '"ignore"')
+                .replace("duration_s = 2", "duration_s = 2\nretry_timeout_ms = [150, 300]"))
+        link = '[run]\nlink = { "load_gen.retry_timeout_ms" = "load_gen.global_rate" }\n'
+        self.assertConfigError(text.replace("[150, 300]", "150") + link,
+                               "run.link: load_gen.retry_timeout_ms must be an array program parameter")
+        self.assertConfigError(text.replace("[1000, 2000]", "100") + link,
+                               "run.link: driver load_gen.global_rate of load_gen.retry_timeout_ms must be a swept key")
+        self.assertConfigError(text.replace("[150, 300]", "[150, 300, 450]") + link,
+                               "must have the same number of values")
+        self.assertConfigError(text + link.replace("\n", '\nsweep_order = ["load_gen.global_rate", '
+                                                   '"load_gen.retry_timeout_ms"]\n', 1),
+                               "run.sweep_order must list every swept key exactly once")
+        self.assertConfigError(text + '[run]\nlink = { "load_gen.retry_timeout_ms" = 5 }\n',
+                               'run.link must map "<section>.<param>" keys')
+        self.assertEqual(len(cfg.expand_sweep(self.load(text + "[run]\nlink = {}\n"))), 4)  # plain cross product
 
     # Design: abstraction/benchmark_runner/config/design.md#benchconfig
     def test_lb_policy_is_an_ingress_param(self):
