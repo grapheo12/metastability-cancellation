@@ -17,6 +17,10 @@ queueing model of the servers instead of by hand, and predicts whether retries a
   grows past `ρ = 1` (collapse). Neither may exist.
 - The **MaxStableEta** of a rate is the largest `η` whose RetryFeedback still has a StableLoad, found by binary
   search. It is an upper bound with no margin: at it, the StableLoad and the TippingLoad meet.
+- In exact arithmetic the RetryFeedback iteration converges to the StableLoad when one exists and collapses
+  otherwise, and the stable `η` form one interval, so the MaxStableEta search is sound. These results are
+  machine-checked in Lean in [proofs/](proofs/RetryTimeout.lean), under named assumptions about the M/M/k tail that the
+  design argues in prose ([design.md#convergence](design.md#convergence)).
 - It is computed numerically (the tail has no closed-form inverse), for one or more rates, and printed as a table;
   the RetryTimeouts also as a line ready to paste into a BenchConfig, for example as the linked values of a
   LinkedSweep ([../config/design.md#linkedsweep](../config/design.md#linkedsweep)).
