@@ -44,3 +44,4 @@
 | 0.2.28 | 2026-11-12T00:00:00Z | Child bump: config 0.14.0 (`initial_stall_ms` copied to the load generator) |
 | 0.2.29 | 2026-11-12T00:00:00Z | Child bump: result_plotter 0.13.0 (Availability skips StallWindowRequests) |
 | 0.2.30 | 2026-11-13T00:00:00Z | Child bump: config 0.15.0 (`queue_discipline`) |
+| 0.2.31 | 2026-11-18T00:00:00Z | Child bump: config 0.16.0 (LinkedSweep) |

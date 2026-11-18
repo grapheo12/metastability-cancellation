@@ -19,3 +19,4 @@
 | 0.13.0 | 2026-11-12T00:00:00Z | Load generator program parameters `retry_timeout_ms` and `max_retries` (settable and sweepable) |
 | 0.14.0 | 2026-11-12T00:00:00Z | Load generator program parameter `initial_stall_ms`; `expand_sweep` copies the point's `server.initial_stall_ms` to the load generator unless `load_gen` sets it |
 | 0.15.0 | 2026-11-13T00:00:00Z | Server program parameter `queue_discipline` (settable and sweepable) |
+| 0.16.0 | 2026-11-18T00:00:00Z | LinkedSweep: `[run] link` maps a linked array parameter to a swept driver key; the linked key takes the driver's index at each point, is not a sweep dimension and is recorded in the new SweepPoint field `linked`; validation errors and worked examples |

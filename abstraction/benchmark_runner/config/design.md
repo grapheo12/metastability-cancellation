@@ -46,8 +46,11 @@ function load_config(path):
                          else ConfigError("server.listen_port + server.instances - 1 must be <= 65535")
     check_ingress_placement(config)                           # IngressPlacement: port collision
     validate run table; fill defaults
+    link = run.link or empty map                              # LinkedSweep
+    # swept keys: every array-valued program parameter and every array-valued SWEEPABLE_RUNNER_KEY,
+    # except the linked keys (the keys of link)
     if sweep_order given: require it to be a permutation of the swept keys
-    # swept keys: every array-valued program parameter and every array-valued SWEEPABLE_RUNNER_KEY
+    check_link(config)                                        # LinkedSweep
     return BenchConfig
 ```
 
@@ -63,6 +66,7 @@ Error messages for the runner keys added with ProcessPlacement and CancelRateFra
 | `gc_trace` not a boolean (an array included: it cannot be swept) | `server.gc_trace must be true or false` |
 | `machine` not `"client"` or `"server"` | `ingress.machine must be "client" or "server"` |
 | a `[canceller]` table (from before the Ingress) | `unknown table [canceller]` |
+| `run.link` problems | see [LinkedSweep](#linkedsweep) |
 | `[server] queue_log_path` | `server.queue_log_path is set by the runner` (the Experiment Executor always sets it, [../experiment_executor/design.md#serverlifecycle](../experiment_executor/design.md#serverlifecycle)) |
 
 ```
@@ -100,11 +104,15 @@ names and shapes. Values are validated by the programs themselves, which fail fa
 function expand_sweep(config):
     swept_keys = config.run.sweep_order if given
                  else [ "<section>.<key>" for section in SECTIONS
-                        for key in config[section] in file order if value is an array ]
-    value_lists = [ config.lookup(k) for k in swept_keys ]
+                        for key in config[section] in file order
+                        if value is an array and "<section>.<key>" not in config.run.link ]
+    index_lists = [ [0 .. len(config.lookup(k)) - 1] for k in swept_keys ]
     points = []
-    for id, combo in enumerate(cartesian_product(value_lists)):    # last key varies fastest
-        choose = { k: combo[i] for i, k in enumerate(swept_keys) }
+    for id, idx in enumerate(cartesian_product(index_lists)):      # last key varies fastest
+        swept  = { k: config.lookup(k)[idx[i]] for i, k in enumerate(swept_keys) }
+        linked = { l: config.lookup(l)[idx[swept_keys.index(d)]]     # LinkedSweep: same index as its driver
+                   for l, d in config.run.link in file order }
+        choose = swept ∪ linked                                       # the values this point overrides
         server_args  = [ (k, choose.get("server."+k, v)) for k, v in config.server program params ]
         loadgen_args = [ (k, choose.get("load_gen."+k, v)) for k, v in config.load_gen program params ]
         if "initial_stall_ms" not in loadgen_args and "initial_stall_ms" in server_args:   # StallWindow
@@ -121,7 +129,7 @@ function expand_sweep(config):
                                  "cpu_set": config[section].cpu_set or none }
                       for (program, section) in [("server", "server"), ("loadgen", "load_gen"),
                                                  ("ingress", "ingress")] }
-        points.append(SweepPoint(id, ordered(choose by swept_keys), server_args, loadgen_args, ingress_args,
+        points.append(SweepPoint(id, swept, linked, server_args, loadgen_args, ingress_args,
                                  config.server.instances, config.ingress.machine, loadgen_target(config),
                                  placement))
     return points          # with no swept keys: exactly one point, id 0
@@ -276,6 +284,62 @@ Boundary cases:
 | 3 | 0.1 | `0.30000000000000004` | The double product is written as is. It is not rounded to the decimal the operator had in mind |
 | 1000 | 1.0 | `1000.0` | Fraction 1 gives the same rate as the load generator |
 | 10 | 2.5 | `25.0` | Fractions above 1 are allowed |
+
+## LinkedSweep
+
+A **LinkedSweep** makes one array parameter follow a swept key instead of adding a sweep dimension. `run.link` maps
+each **linked key** to its **driver key**. Both arrays have the same length, and at every point the linked key takes
+the element at the index of the driver's chosen value. It is used when the right value of a parameter depends on
+another swept parameter, for example a retry timeout computed by the operator for each offered rate.
+
+```
+function check_link(config):
+    for linked, driver in config.run.link in file order:
+        if linked or driver is not a string "<section>.<param>":
+            ConfigError("run.link must map \"<section>.<param>\" keys to \"<section>.<param>\" keys")
+        if linked is not a program parameter whose value is an array:
+            ConfigError("run.link: <linked> must be an array program parameter")
+        if driver is not a swept key:                 # an array key that is not itself linked
+            ConfigError("run.link: driver <driver> of <linked> must be a swept key")
+        if len(config.lookup(linked)) != len(config.lookup(driver)):
+            ConfigError("run.link: <linked> and <driver> must have the same number of values")
+```
+
+- A linked key is not a swept key: it is left out of the cross product, may not appear in `sweep_order` (the
+  permutation check fails), and is not in `SweepPoint.swept`. Its value per point is in `SweepPoint.linked` and in
+  its program's argument list at its usual (file) position.
+- A linked key cannot drive another key, because a driver must be a swept key. One driver can drive several linked
+  keys.
+- Pairing is by **index**, not by value: if the driver's array repeats a value, each occurrence keeps its own linked
+  value.
+- The plots use only `swept`, so a linked key never adds a series
+  ([../result_plotter/design.md#sweepplots](../result_plotter/design.md#sweepplots)).
+
+Worked example: `[load_gen] global_rate = [60, 70]`, `retry_timeout_ms = [183.258, 240.795]`, `max_retries = [0, 1]`,
+`[run] link = { "load_gen.retry_timeout_ms" = "load_gen.global_rate" }`, no `sweep_order`. The swept keys are
+`load_gen.global_rate`, `load_gen.max_retries`:
+
+| id | `swept` | `linked` | Check |
+|---|---|---|---|
+| 0 | rate 60, retries 0 | timeout 183.258 | rate index 0 → timeout index 0 |
+| 1 | rate 60, retries 1 | timeout 183.258 | rate index 0 |
+| 2 | rate 70, retries 0 | timeout 240.795 | rate index 1 |
+| 3 | rate 70, retries 1 | timeout 240.795 | rate index 1 |
+
+Four points (2 × 2), not eight. The load generator's arguments keep file order: `global_rate`, …, `retry_timeout_ms`,
+`max_retries`.
+
+Edge and error cases:
+
+| `run.link` / values | Result |
+|---|---|
+| unset, or `{}` | No linked keys: the expansion is the plain cross product |
+| driver `global_rate = [60, 60]`, linked `[100, 200]` | Two points; the first gets 100, the second 200 |
+| linked `retry_timeout_ms = 150` (scalar) | ConfigError `run.link: load_gen.retry_timeout_ms must be an array program parameter` |
+| driver `global_rate = 100` (scalar) | ConfigError `run.link: driver load_gen.global_rate of load_gen.retry_timeout_ms must be a swept key` |
+| lengths 4 and 3 | ConfigError `run.link: load_gen.retry_timeout_ms and load_gen.global_rate must have the same number of values` |
+| linked key listed in `sweep_order` | ConfigError `run.sweep_order must list every swept key exactly once` |
+| `link = { "load_gen.retry_timeout_ms" = 5 }` | ConfigError `run.link must map "<section>.<param>" keys to "<section>.<param>" keys` |
 
 ## Argument formatting
 
