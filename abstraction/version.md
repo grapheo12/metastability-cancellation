@@ -129,3 +129,4 @@
 | 0.13.0 | 2026-11-13T00:00:00Z | Server parameter `queue_discipline` (`fifo` \| `edf`, default `fifo`); glossary QueueDiscipline and EarliestDeadlineFirst, WorkQueue wording; request flow and shared-queue rationale name the `edf` order |
 | 0.13.1 | 2026-11-13T00:00:00Z | Child bump: benchmark_runner 0.2.30 (config 0.15.0) |
 | 0.13.2 | 2026-11-17T00:00:00Z | Child bump: load_generator 0.6.0 (client 0.7.0: the last RequestCopy waits for the SLO) |
+| 0.14.0 | 2026-11-17T00:00:00Z | RetryTimer wording in the parameter table, glossary and request flow: the last RequestCopy waits for its answer or the SLO; the request flow no longer lists `dropped` |
