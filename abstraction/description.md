@@ -125,6 +125,8 @@ downloads each point's results and plots all points together.
 | **ProcessPlacement** | A program's worker-thread count and CPU set, applied when the runner starts it | [benchmark_runner/config/design.md](benchmark_runner/config/design.md#processplacement) |
 | **CancelRateFraction** | Canceller rate given as a fraction of the same point's `global_rate` | [benchmark_runner/config/design.md](benchmark_runner/config/design.md#cancelratefraction) |
 | **LinkedSweep** | An array parameter paired index by index with a swept driver key instead of crossed with it | [benchmark_runner/config/design.md](benchmark_runner/config/design.md#linkedsweep) |
+| **RetryTimeoutCalculator** | Picks `retry_timeout_ms` per offered rate: the time T with Pr(sojourn > T) = 1 − ρ in a pooled M/M/k model | [benchmark_runner/retry_timeout/design.md](benchmark_runner/retry_timeout/design.md#timeoutsolve) |
+| **RetryTimeout** | The T computed by the RetryTimeoutCalculator for one rate | [benchmark_runner/retry_timeout/design.md](benchmark_runner/retry_timeout/design.md#timeoutsolve) |
 | **Transport** | Run commands on, and copy files from, a machine over SSH (or locally) | [benchmark_runner/remote_transport/design.md](benchmark_runner/remote_transport/design.md#transport) |
 | **SourcePin** | The exact branch and commit the runner deploys, checked against `repo_url` | [benchmark_runner/remote_setup/design.md](benchmark_runner/remote_setup/design.md#sourcepin) |
 | **BuildManifest** | Per-implementation declarative file saying how to build and where the binaries are | [benchmark_runner/remote_setup/design.md](benchmark_runner/remote_setup/design.md#buildmanifest) |
