@@ -18,3 +18,4 @@
 | 0.4.3 | 2026-11-12T00:00:00Z | Parameter `initial_stall_ms` (default 1000) and derived `initial_stall_ns`; description introduces the StallWindow |
 | 0.5.0 | 2026-11-13T00:00:00Z | `request_bytes >= 76` (PingRequestBody). Child bump: client 0.6.0 (RequestDeadline) |
 | 0.5.1 | 2026-11-13T00:00:00Z | Time base: `run_start_unix_ns` is also the RequestDeadline origin. Child bump: run_controller 0.6.0 |
+| 0.6.0 | 2026-11-17T00:00:00Z | The last RequestCopy waits for the SLO instead of being dropped. Child bump: client 0.7.0 |

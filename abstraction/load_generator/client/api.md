@@ -9,7 +9,7 @@
 | `ok` | `202` with matching RequestId on the newest RequestCopy, fully received before the SLO |
 | `rejected` | `503` with matching RequestId on the newest RequestCopy, fully received before the SLO |
 | `cancelled` | The SLO ran out first. The client sent `RST_STREAM(CANCEL)` on every RequestCopy |
-| `dropped` | The RetryTimer of the last RequestCopy (copy `max_retries`) fired first. No reset was sent. Never for a StallWindowRequest ([design.md#stallwindow](design.md#stallwindow)) |
+| `dropped` | Reserved: never produced since client v0.7.0. The last RequestCopy (copy `max_retries`) has no RetryTimer and waits for its answer or the SLO ([design.md#retrytimer](design.md#retrytimer)). Kept so the record and summary formats stay stable |
 | `error` | Any other status, a body or id mismatch, or a stream/connection error of the newest RequestCopy before the SLO |
 | `not_sent` | Scheduled before `duration_ns` but not yet sendable when the active phase ended |
 
