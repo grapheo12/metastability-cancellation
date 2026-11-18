@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/design.md (benchmark_runner v0.3.0)
+# Source: abstraction/benchmark_runner/design.md (benchmark_runner v0.4.0)
 """bench: the BenchmarkRunner.
 
 Usage (from anywhere inside an impl/<lang> checkout):
     python3 implementation/scripts/bench.py run   <config.toml>   # setup, every SweepPoint, plots
     python3 implementation/scripts/bench.py setup <config.toml>   # setup both machines only
     python3 implementation/scripts/bench.py plot  <output_dir>    # rebuild table and plots
-    python3 implementation/scripts/bench.py retry-timeout --workers K --mean_service_ms S RATE [RATE ...]
-                                                                  # RetryTimeout per rate (pooled M/M/k)
+    python3 implementation/scripts/bench.py retry-timeout --workers K --mean_service_ms S [--eta E] RATE [RATE ...]
+                                                                  # RetryTimeout per rate (M/M/k), with RetryFeedback
+    python3 implementation/scripts/bench.py stable-eta --workers K --mean_service_ms S RATE [RATE ...]
+                                                                  # MaxStableEta per rate
 
 Exit status: 0 all good, 1 some SweepPoint failed, 2 config/pin/setup/usage error.
 Plotting needs plotly: python3 -m pip install -r implementation/scripts/requirements.txt
@@ -147,13 +149,25 @@ def bench_plot(output_dir):
 
 # Design: abstraction/benchmark_runner/design.md#run-flow
 # Design: abstraction/benchmark_runner/retry_timeout/design.md#failure-and-edge-cases
-def bench_retry_timeout(workers, mean_service_ms, rates):
+def bench_retry_timeout(workers, mean_service_ms, rates, eta=1.0):
     try:
-        results = [retry_timeout.retry_timeout(workers, mean_service_ms, r) for r in rates]
+        results = [retry_timeout.retry_timeout(workers, mean_service_ms, r, eta) for r in rates]
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     sys.stdout.write(retry_timeout.format_results(results))
+    return 0
+
+
+# Design: abstraction/benchmark_runner/design.md#run-flow
+# Design: abstraction/benchmark_runner/retry_timeout/design.md#failure-and-edge-cases
+def bench_stable_eta(workers, mean_service_ms, rates):
+    try:
+        results = [retry_timeout.max_stable_eta(workers, mean_service_ms, r) for r in rates]
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    sys.stdout.write(retry_timeout.format_stable_eta(results))
     return 0
 
 
@@ -163,13 +177,18 @@ def main(argv=None):
     for name in ("run", "setup"):
         sub.add_parser(name).add_argument("config")
     sub.add_parser("plot").add_argument("output_dir")
-    rt = sub.add_parser("retry-timeout", help="RetryTimeout per offered rate from a pooled M/M/k model")
-    rt.add_argument("--workers", type=int, required=True, help="total workers k (instances x n_worker_threads)")
-    rt.add_argument("--mean_service_ms", type=float, required=True, help="mean exponential service time")
-    rt.add_argument("rates", type=float, nargs="+", metavar="RATE", help="offered rate of the whole system, req/s")
+    rt = sub.add_parser("retry-timeout", help="RetryTimeout per offered rate from an M/M/k model")
+    se = sub.add_parser("stable-eta", help="largest eta whose RetryFeedback settles below rho = 1, per rate")
+    for q in (rt, se):
+        q.add_argument("--workers", type=int, required=True, help="workers k of the modelled queue")
+        q.add_argument("--mean_service_ms", type=float, required=True, help="mean exponential service time")
+        q.add_argument("rates", type=float, nargs="+", metavar="RATE", help="offered rate into that queue, req/s")
+    rt.add_argument("--eta", type=float, default=1.0, help="EtaSlack: Pr(sojourn > T) = clamp(eta - rho); default 1")
     args = p.parse_args(argv)
     if args.command == "retry-timeout":
-        return bench_retry_timeout(args.workers, args.mean_service_ms, args.rates)
+        return bench_retry_timeout(args.workers, args.mean_service_ms, args.rates, args.eta)
+    if args.command == "stable-eta":
+        return bench_stable_eta(args.workers, args.mean_service_ms, args.rates)
     if args.command == "plot":
         if not os.path.isdir(args.output_dir):
             print(f"error: no such directory {args.output_dir}", file=sys.stderr)

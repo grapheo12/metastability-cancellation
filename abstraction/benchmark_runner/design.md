@@ -105,8 +105,8 @@ Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t imple
 
 ### Python choices
 
-- Entry point `bench.py` (argparse subcommands `run`, `setup`, `plot`, `retry-timeout`). The package `benchrunner/` has one module per leaf: `config.py`, `transport.py`, `remote_setup.py`, `executor.py`, `plotter.py`, `retry_timeout.py`.
-- `bench retry-timeout` is `bench_retry_timeout`: it needs neither a config nor plotly, computes every rate first and prints only if all succeed.
+- Entry point `bench.py` (argparse subcommands `run`, `setup`, `plot`, `retry-timeout`, `stable-eta`). The package `benchrunner/` has one module per leaf: `config.py`, `transport.py`, `remote_setup.py`, `executor.py`, `plotter.py`, `retry_timeout.py`.
+- `bench retry-timeout` is `bench_retry_timeout` and `bench stable-eta` is `bench_stable_eta`: they need neither a config nor plotly, compute every rate first and print only if all succeed.
 - The operator repository is found with `git rev-parse --show-toplevel` from the script's own directory, so `bench.py` can be run from any working directory.
 - `check_placement_support` also refuses `gc_trace` when the manifest has no `gc_trace_env` (GcTraceHook).
 - `check_placement_support` raises `PinError`, which `bench_run` already maps to exit `2`. `warn_unpinned` prints to standard error right after the `setup done` log line.
@@ -121,8 +121,8 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [Structure](#structure) | [bench.py:88](../../implementation/scripts/bench.py#L88) |
-| [Run flow](#run-flow) | [bench.py:42](../../implementation/scripts/bench.py#L42), [bench.py:60](../../implementation/scripts/bench.py#L60), [bench.py:70](../../implementation/scripts/bench.py#L70), [bench.py:88](../../implementation/scripts/bench.py#L88), [bench.py:135](../../implementation/scripts/bench.py#L135), [bench.py:150](../../implementation/scripts/bench.py#L150) |
-| [Why setup happens once](#why-setup-happens-once) | [bench.py:102](../../implementation/scripts/bench.py#L102) |
-| [Interrupts](#interrupts) | [bench.py:126](../../implementation/scripts/bench.py#L126) |
+| [Structure](#structure) | [bench.py:90](../../implementation/scripts/bench.py#L90) |
+| [Run flow](#run-flow) | [bench.py:44](../../implementation/scripts/bench.py#L44), [bench.py:62](../../implementation/scripts/bench.py#L62), [bench.py:72](../../implementation/scripts/bench.py#L72), [bench.py:90](../../implementation/scripts/bench.py#L90), [bench.py:137](../../implementation/scripts/bench.py#L137), [bench.py:152](../../implementation/scripts/bench.py#L152), [bench.py:164](../../implementation/scripts/bench.py#L164) |
+| [Why setup happens once](#why-setup-happens-once) | [bench.py:104](../../implementation/scripts/bench.py#L104) |
+| [Interrupts](#interrupts) | [bench.py:128](../../implementation/scripts/bench.py#L128) |
 <!-- trace:end -->
