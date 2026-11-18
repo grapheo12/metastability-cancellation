@@ -28,7 +28,7 @@ function admit_ping(task, config, rng, conn_state):
         return Response(400, empty)
 
     service_us = 0
-    if config.workload == cpu_burn:
+    if config.workload in {cpu_burn, sleep}:
         service_us = sampling.exponential_us(rng, config.response_rate)  # see Sampling order
     deadline = protocol.parse_deadline(task.body)          # RequestDeadline; none if missing or malformed
     if deadline is none: deadline = NO_DEADLINE            # 2^64 - 1: after every deadline under edf
@@ -45,7 +45,7 @@ function admit_ping(task, config, rng, conn_state):
 ## run_ping
 
 ```
-function run_ping(job, config, registry, counters, buf):        # buf: MessageBuffer, or NONE for cpu_burn
+function run_ping(job, config, registry, counters, buf):        # buf: MessageBuffer, or NONE for cpu_burn and sleep
     id = job.request_id
     slot = cancel_tracker.registry_client(registry, job.client_id)      # none if the registry is full
     cancel_tracker.registry_start(registry, slot, id)                    # CancelMatching: started, not finished
@@ -65,6 +65,8 @@ function run_ping(job, config, registry, counters, buf):        # buf: MessageBu
         if config.workload == cpu_burn:
             outcome = cpu_burner.burn(job.service_us, job.task.cancelled, config.cancel_check_interval_us,
                                       id_check, CHECK_ITER)
+        else if config.workload == sleep:
+            outcome = sleeper.sleep(job.service_us, job.task.cancelled, id_check)        # QuantumSleep
         else:
             outcome = fill_messages(job, config, buf, job.task.cancelled, id_check)        # MessageWork
         if outcome == CANCELLED_RST:
@@ -75,6 +77,8 @@ function run_ping(job, config, registry, counters, buf):        # buf: MessageBu
     else:  # ignore
         if config.workload == cpu_burn:
             cpu_burner.burn(job.service_us, NONE, config.cancel_check_interval_us, NONE, CHECK_ITER)
+        else if config.workload == sleep:
+            sleeper.sleep(job.service_us, NONE, NONE)                                      # always COMPLETED
         else:
             fill_messages(job, config, buf, NONE, NONE)                                    # always COMPLETED
 
@@ -137,7 +141,7 @@ change the state.
 
 ## Sampling order
 
-With `workload = cpu_burn`, `exponential_us` is called **exactly once for each request that parses and matches
+With `workload = cpu_burn` or `sleep`, `exponential_us` is called **exactly once for each request that parses and matches
 the binding, before it is queued and before any cancellation check**, in both modes, inside `admit_ping`. With
 `workload = message_buffer` it is never called, and the connection's `rng` is not used. A connection admits
 its requests one at a time in the order they were fully received. The `k`-th such request on connection `c`
@@ -152,6 +156,7 @@ In `cooperative` mode the worker running the request checks for cancellation at 
 |---|---|---|---|
 | 1 | When a worker has popped the job, before the burn | checked first, then → `Aborted` | → `503`, `cancelled_before_processing += 1` |
 | 2 | During the burn (`cpu_burn`) | every `cancel_check_interval_us` → `Aborted` | every `CHECK_ITER` spin units → `503`, `cancelled_during_processing += 1` |
+| 2 | During the sleep (`sleep`) | after each wake-up that does not reach the deadline → `Aborted` | after each such wake-up, after the RST check → `503`, `cancelled_during_processing += 1` |
 | 2 | During MessageWork (`message_buffer`), before the buffer is written | after each message → `Aborted` | after each message → `503`, `cancelled_during_processing += 1` |
 | (3) | Before the response is written | checked by the Connection Handler ([response writing](../connection_handler/design.md#response-writing)) | not checked: a completed burn is final |
 

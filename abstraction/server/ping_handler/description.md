@@ -5,17 +5,17 @@ Leaf component. Handles one routed `POST /ping` in two steps.
 On the Connection Handler, when the request is fully received (**admit**):
 
 - Parse the RequestId and bind the connection to its client id (`id >> 32`) on the first `/ping`.
-- Sample a ServiceTime from the connection's Rng (`workload = cpu_burn` only).
+- Sample a ServiceTime from the connection's Rng (`workload = cpu_burn` or `sleep`).
 - Package the request as a **PingJob** for the WorkQueue, or answer `400` straight away.
 
 On a worker of the WorkerPool (**run**):
 
-- Do the request's work: burn the ServiceTime (`cpu_burn`), or **MessageWork** (`message_buffer`): create
+- Do the request's work: burn the ServiceTime (`cpu_burn`), sleep it in 20 ms quanta (`sleep`, QuantumSleep), or **MessageWork** (`message_buffer`): create
   `n_messages_per_request` MessageTrees from the request's own random stream, then write them into the MessageBuffer
   under its lock.
 - In `cooperative` mode, run the **CancelCheckPoints**: once before the work, and inside it (for a burn, RST
-  every `cancel_check_interval_us` and `/cancel` every `CHECK_ITER` spin units; for MessageWork, both after each
-  message).
+  every `cancel_check_interval_us` and `/cancel` every `CHECK_ITER` spin units; for a sleep, both at each wake-up;
+  for MessageWork, both after each message).
 - Answer `202` if the work completed, `503` if a `/cancel` stopped it, or nothing if an RST stopped it.
   Responses echo the RequestId in a PaddedJsonBody of `response_bytes`.
 - Publish the request's id as the client's **FinishedWatermark** whichever way it finished, so `/cancel` replies
