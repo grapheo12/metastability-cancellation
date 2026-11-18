@@ -14,7 +14,8 @@ Then a very high level design doc showing modular components.
 For each component, recursively, there will be another set of general description, API, design doc.
 We keep doing this recursively, until we are discussing exact algorithm to use.
 Everything will be in Natural Language and Pseudocode and flowcharts. All files will be markdown.
-Nothing implementation language specific will ever be part of the markdown files.
+Nothing implementation language specific will ever be part of the markdown files. The one exception is links to
+machine-checked proofs ([Machine-checked proofs](#machine-checked-proofs)), which are part of the spec.
 This is a top-down approach of looking at code: Markdowns go from high-level to lower and lower level details.
 Human reviewers can review the markdowns in any level of detail they want.
 
@@ -51,7 +52,8 @@ Stick to this folder structure:
 ```
 
 The `impl/<lang>` branches will have the full structure. `main` should only have `abstraction/`, plus the two top-level
-documents `AGENTS.md` and `README.md` (a human-facing overview of the repository and how to run it). `README.md`
+documents `AGENTS.md` and `README.md` (a human-facing overview of the repository and how to run it). `abstraction/`
+holds only markdown, except for the `proofs/` directories of [Machine-checked proofs](#machine-checked-proofs). `README.md`
 follows the same rule as `AGENTS.md`: changes go in a separate commit and are backported to `main` and all other branches.
 For every `implementation/<lang>`, first add the full `<lang>.gitignore` (likely download from Github), before any other file in that directory.
 For `impl/<lang>` branches, the `design.md` at each leaf level component will have an added `Design specific to <lang>` section, which is to be filled in before an agent touches the actual code.
@@ -153,7 +155,8 @@ for each source file under impl dir with the extension:
             for k in pending: refs[k].append((file, n))
             pending = []
 
-designs = every design.md under abstraction/ that contains "## Design specific to <Lang>",
+designs = every design.md under abstraction/ (skipping directories whose name starts with ".")
+          that contains "## Design specific to <Lang>",
           plus every design path named by a tag
 for each design in sorted(designs):
     spec_part = text before "## Design specific to <Lang>"
@@ -190,7 +193,8 @@ The output must be deterministic: the same tree always gives byte-identical tabl
 the anchor slug rule with tracegen. This section is its spec.
 
 - **Command:** `python3 implementation/spec_tools/linkcheck.py [--root <repo root>] [<path> ...]`, run from the
-  repository root. The default paths are `abstraction/` and `AGENTS.md`. A directory means every `.md` file under it.
+  repository root. The default paths are `abstraction/` and `AGENTS.md`. A directory means every `.md` file under it,
+  skipping directories whose name starts with `.` (such as the `.lake/` build output of a `proofs/` directory).
 - **Which links:** every inline Markdown link `[text](target)` in the checked files, except links inside fenced code
   blocks (lines between a pair of ```` ``` ```` fences) and inside inline code spans. Targets that start with `http://`,
   `https://` or `mailto:` are skipped.
@@ -285,6 +289,34 @@ A table of Version | Last modified (UTC, ISO-8601) | Summary, with the newest ro
 - Names, units, defaults and constraints are the same from parent to child and from `api.md` to `design.md`.
 - Every `api.md` item has a design anchor. Every child's `api.md` covers what its parent's `design.md` asks of it.
 - Every worked example has been recomputed.
+- Every `proofs/` directory that changed passes its checks ([Machine-checked proofs](#machine-checked-proofs)).
+
+
+# Machine-checked proofs
+
+A spec node may prove properties of its design (convergence, termination, error bounds) in Lean 4 with Mathlib. The
+proofs are part of the spec, not an implementation: they argue about the design's algorithms in exact arithmetic,
+never about code.
+
+- **Location.** `abstraction/<path>/proofs/`, next to the `design.md` it proves things about, on `main` and every
+  branch, identical everywhere like the rest of the spec. It is a Lean project with only these files: `.gitignore`
+  (first, containing `.lake/`), `lean-toolchain`, `lakefile.toml`, `lake-manifest.json` and `*.lean` files. The
+  toolchain and the Mathlib revision are pinned.
+- **Assumptions are hypotheses.** Whatever the proofs take for granted about the model (for example properties of a
+  queueing formula) is an explicit hypothesis, such as the fields of a `structure`, never an `axiom`. The design
+  names each hypothesis and argues it in prose, marked as not machine-checked.
+- **Tags.** Each Lean file starts with a `Source: abstraction/<path>/design.md (<component> v<version>)` comment.
+  Above each theorem, a `-- Design: abstraction/<path>/design.md#<anchor>` comment names the subsection it proves.
+- **Links from the design.** The subsection that a proof covers has a table of Result | Statement | Lean declaration,
+  where the declaration is a link to its `.lean` file with the declaration's name as the link text. Links carry no
+  line numbers, so they do not go stale. A result that is only argued in prose says so in the same table.
+- **Checks**, run from the `proofs/` directory, whenever it or the subsections it covers change:
+  - `lake exe cache get` (downloads the Mathlib build), then `lake build`, which must succeed.
+  - No `sorry`, `admit` or `axiom` in any `.lean` file, and no `declaration uses 'sorry'` in the build output.
+  - `lake env lean CheckAxioms.lean` prints only `[propext, Classical.choice, Quot.sound]` for each theorem.
+    `CheckAxioms.lean` lists `#print axioms` for every theorem the design links, and is not part of the library.
+- **Versions.** A proof change is a spec change: the node's `version.md` gets a row (parent-bump rule as usual), and
+  the `Source:` comments are bumped.
 
 
 # Coding principle
