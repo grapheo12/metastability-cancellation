@@ -19,7 +19,9 @@ reproducible experiment on two remote machines:
   CancelCounters, and downloads every output.
 - **Result Plotter** builds the **PointTable** of all points and draws the **SweepPlots** over every swept value.
 - **Retry Timeout** is a stand-alone calculator, the **RetryTimeoutCalculator**: it picks a `retry_timeout_ms` for
-  each offered rate from a pooled M/M/k model, before an experiment is configured.
+  each offered rate from an M/M/k model, before an experiment is configured, and predicts from the same model
+  whether the extra load of the retries settles (RetryFeedback) and up to which target load `η` it does
+  (MaxStableEta).
 
 Setup happens once per run. Only the experiment repeats per SweepPoint.
 
