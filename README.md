@@ -24,6 +24,7 @@ and humans working here are in [AGENTS.md](AGENTS.md).
 |  |- design.md           #   components, diagrams, links to children
 |  |- version.md          #   version history of this node
 |  |- <component>/        #   same four files, recursively, down to leaf components
+|  |- <node>/proofs/      #   optional: Lean 4 proofs of that node's design (e.g. benchmark_runner/retry_timeout)
 |- implementation/        # only on impl/<lang> branches
    |- <lang>/             #   one language implementation per branch, e.g. go/
    |- spec_tools/         #   shared tool: tracegen (traceability tables) and linkcheck (link checker)
