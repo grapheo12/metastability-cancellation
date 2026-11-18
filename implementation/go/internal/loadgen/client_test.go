@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/client/design.md (client v0.6.0)
+// Source: abstraction/load_generator/client/design.md (client v0.7.0)
 package loadgen
 
 import (
@@ -203,8 +203,8 @@ func TestRetryTimerWorkedExamples(t *testing.T) {
 		}
 	})
 	t.Run("late original ignored", func(t *testing.T) {
-		// copy 1 sent at 100; copy 0 answers at 130 (ignored); copy 1 answers at 100+60,
-		// before its own RetryTimer (200).
+		// copy 1 sent at 100; copy 0 answers at 130 (ignored); copy 1 (the last, no
+		// RetryTimer) answers at 100+60.
 		conn, done := scriptedServer(t, []time.Duration{130 * ms, 60 * ms})
 		r := oneRequest(t, conn, 1000, 100, 1)
 		if r.Outcome != OutcomeOK || r.Copies != 2 || service(r) < 155*ms {
@@ -231,23 +231,39 @@ func TestRetryTimerWorkedExamples(t *testing.T) {
 			}
 		}
 	})
-	t.Run("dropped after the last copy, no reset", func(t *testing.T) {
+	t.Run("last copy answered late", func(t *testing.T) {
+		// copy 1 sent at 50 has no RetryTimer; it answers at 50+300, long after 50+RETRY.
 		conn, done := scriptedServer(t, []time.Duration{300 * ms, 300 * ms})
 		r := oneRequest(t, conn, 5000, 50, 1)
-		if r.Outcome != OutcomeDropped || r.Copies != 2 || r.HTTPStatus != 0 || service(r) < 100*ms || service(r) >= 300*ms {
+		if r.Outcome != OutcomeOK || r.Copies != 2 || r.HTTPStatus != protocol.StatusOK || service(r) < 340*ms {
 			t.Fatalf("%+v", r)
 		}
 		for i := 0; i < 2; i++ {
 			if e := <-done; e.reset {
-				t.Fatalf("a dropped request's copies are not reset: %+v", e)
+				t.Fatalf("no copy is reset before the SLO: %+v", e)
 			}
 		}
 	})
-	t.Run("R = 0 drops the only copy", func(t *testing.T) {
+	t.Run("R = 0, slow answer", func(t *testing.T) {
 		conn, _ := scriptedServer(t, []time.Duration{300 * ms})
 		r := oneRequest(t, conn, 5000, 50, 0)
-		if r.Outcome != OutcomeDropped || r.Copies != 1 || service(r) < 50*ms || service(r) >= 300*ms {
+		if r.Outcome != OutcomeOK || r.Copies != 1 || service(r) < 290*ms {
 			t.Fatalf("%+v", r)
+		}
+	})
+	t.Run("R = 0, no answer", func(t *testing.T) {
+		conn, done := scriptedServer(t, []time.Duration{time.Hour})
+		r := oneRequest(t, conn, 150, 50, 0)
+		if r.Outcome != OutcomeCancelled || r.Copies != 1 || service(r) < 150*ms {
+			t.Fatalf("%+v", r)
+		}
+		select {
+		case e := <-done:
+			if !e.reset {
+				t.Fatalf("%+v", e)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("the copy must be reset at the SLO")
 		}
 	})
 }

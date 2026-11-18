@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/client/design.md (client v0.6.0)
+// Source: abstraction/load_generator/client/design.md (client v0.7.0)
 package loadgen
 
 import (
@@ -27,7 +27,7 @@ const (
 	OutcomeOK        Outcome = "ok"
 	OutcomeRejected  Outcome = "rejected"
 	OutcomeCancelled Outcome = "cancelled"
-	OutcomeDropped   Outcome = "dropped"
+	OutcomeDropped   Outcome = "dropped" // reserved: never produced since client v0.7.0
 	OutcomeError     Outcome = "error"
 	OutcomeNotSent   Outcome = "not_sent"
 )
@@ -178,8 +178,8 @@ func (r *pendingRequest) newest(k uint32) bool {
 	return k == r.current
 }
 
-// sendCopy opens RequestCopy k (r.current == k already) and starts its
-// RetryTimer. Called without r.mu. RoundTrip opens the stream and waits for
+// sendCopy opens RequestCopy k (r.current == k already) and, unless k is the
+// last copy, starts its RetryTimer. Called without r.mu. RoundTrip opens the stream and waits for
 // the response on the copy's own goroutine; an earlier copy's answer or error
 // is ignored, and its stream stays open until it ends or SLOCancellation.
 //
@@ -222,7 +222,10 @@ func (r *pendingRequest) sendCopy(k uint32) {
 	if r.stall {
 		return // StallWindowRequest: no RetryTimer
 	}
-	// RetryTimer of copy k.
+	if k == r.cfg.MaxRetries {
+		return // last copy: no RetryTimer, it waits for its answer or the SLO
+	}
+	// RetryTimer of copy k < max_retries.
 	// Design: abstraction/load_generator/client/design.md#retrytimer
 	time.AfterFunc(time.Duration(tCopy+r.cfg.RetryTimeoutNs-nowNs(r.runStart)), func() {
 		r.mu.Lock()
@@ -230,16 +233,9 @@ func (r *pendingRequest) sendCopy(k uint32) {
 			r.mu.Unlock()
 			return
 		}
-		last := k == r.cfg.MaxRetries
-		if !last {
-			r.current = k + 1
-		}
+		r.current = k + 1
 		r.mu.Unlock()
-		if last {
-			r.settle(OutcomeDropped, 0) // no reset: the copies are abandoned
-		} else {
-			r.sendCopy(k + 1)
-		}
+		r.sendCopy(k + 1)
 	})
 }
 
