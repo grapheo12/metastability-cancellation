@@ -1,4 +1,4 @@
-// Source: abstraction/server/ping_handler/design.md (ping_handler v0.8.0)
+// Source: abstraction/server/ping_handler/design.md (ping_handler v0.9.0)
 package server
 
 import (
@@ -30,7 +30,7 @@ func admitPing(task *StreamTask, cfg Config, rng *sampling.Rng, st *ConnectionCa
 
 	var serviceUs uint64
 	// Design: abstraction/server/ping_handler/design.md#sampling-order
-	if cfg.Workload == WorkloadCPUBurn {
+	if cfg.Workload == WorkloadCPUBurn || cfg.Workload == WorkloadSleep {
 		serviceUs = rng.ExponentialUs(cfg.ResponseRate)
 	}
 	// RequestDeadline for the edf QueueDiscipline; missing or malformed is NoDeadline, never a 400.
@@ -68,9 +68,12 @@ func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *Cance
 		}
 
 		var outcome BurnOutcome
-		if cfg.Workload == WorkloadCPUBurn {
+		switch cfg.Workload {
+		case WorkloadCPUBurn:
 			outcome = Burn(job.ServiceUs, &job.Task.Cancelled, cfg.CancelCheckIntervalUs, idCheck, CheckIter)
-		} else {
+		case WorkloadSleep:
+			outcome = Sleep(job.ServiceUs, &job.Task.Cancelled, idCheck) // QuantumSleep
+		default:
 			outcome = fillMessages(job, cfg, buf, &job.Task.Cancelled, idCheck)
 		}
 		switch outcome {
@@ -84,6 +87,8 @@ func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *Cance
 		}
 	} else if cfg.Workload == WorkloadCPUBurn {
 		Burn(job.ServiceUs, nil, cfg.CancelCheckIntervalUs, nil, CheckIter)
+	} else if cfg.Workload == WorkloadSleep {
+		Sleep(job.ServiceUs, nil, nil) // always BurnCompleted
 	} else {
 		fillMessages(job, cfg, buf, nil, nil) // always BurnCompleted
 	}

@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.8.1)
+// Source: abstraction/server/design.md (server v0.9.1)
 package server
 
 import (
@@ -301,6 +301,7 @@ func TestValidateWorkload(t *testing.T) {
 	}
 	for _, bad := range []func(*Params){
 		func(q *Params) { q.Workload = "gc" },
+		func(q *Params) { q.Workload = "sleep"; q.ResponseRate = "" }, // sleep needs response_rate
 		func(q *Params) { q.ResponseRate = "0" }, // validated when given
 		func(q *Params) { q.WindowSize = "0" },
 		func(q *Params) { q.WindowSize = "4294967296" },
@@ -313,6 +314,60 @@ func TestValidateWorkload(t *testing.T) {
 		if _, err := Validate(q); err == nil {
 			t.Fatalf("must be rejected: %+v", q)
 		}
+	}
+}
+
+// workload = sleep is accepted with a response_rate.
+//
+// Design: abstraction/server/design.md#configuration-validation
+func TestValidateSleepWorkload(t *testing.T) {
+	p := DefaultParams()
+	p.ResponseBytes, p.Workload, p.ResponseRate = "64", "sleep", "5"
+	if c, err := Validate(p); err != nil || c.Workload != WorkloadSleep || c.ResponseRate != 5 {
+		t.Fatalf("%+v %v", c, err)
+	}
+}
+
+// End to end with workload = sleep: a /ping is answered 202 after its sleep;
+// an RST during a long sleep frees the worker at the next wake-up, so shutdown
+// returns promptly; ignore mode sleeps to the end.
+//
+// Design: abstraction/server/ping_handler/design.md#run_ping
+// Design: abstraction/server/design.md#cancellation-semantics
+func TestSleepWorkloadEndToEnd(t *testing.T) {
+	start := func(mode CancelMode, rate float64) *Server {
+		s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: rate, ResponseBytes: 64, CancelMode: mode,
+			CancelCheckIntervalUs: 50, NWorkerThreads: 1, Workload: WorkloadSleep})
+		if err != nil {
+			t.Fatal(err)
+		}
+		go s.Serve()
+		return s
+	}
+	for _, mode := range []CancelMode{CancelCooperative, CancelIgnore} {
+		s := start(mode, 50) // mean 20 ms
+		c := dialTest(t, s.Addr().String())
+		for seq := uint32(0); seq < 3; seq++ {
+			if st, b := c.do(t, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(seq, 1), 64)); st != 202 || len(b) != 64 {
+				t.Fatalf("mode %v ping %d: %d", mode, seq, st)
+			}
+		}
+		s.Shutdown()
+	}
+	s := start(CancelCooperative, 0.0001) // mean 10000 s: only an RST can end it
+	client := dialTest(t, s.Addr().String())
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "POST", "http://"+client.addr+"/ping", bytes.NewReader(protocol.BuildBody(1, 64)))
+	if _, err := client.cc.RoundTrip(req); err == nil {
+		t.Fatal("expected cancellation error")
+	}
+	done := make(chan struct{})
+	go func() { s.Shutdown(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sleep was not stopped by RST")
 	}
 }
 
