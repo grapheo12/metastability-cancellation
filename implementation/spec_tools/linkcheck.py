@@ -30,7 +30,7 @@ def markdown_files(root, paths):
         full = os.path.join(root, p)
         if os.path.isdir(full):
             for dirpath, dirnames, filenames in os.walk(full):
-                dirnames.sort()
+                dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))  # e.g. proofs/.lake/
                 files += [os.path.join(dirpath, f) for f in sorted(filenames) if f.endswith(".md")]
         elif os.path.isfile(full):
             files.append(full)

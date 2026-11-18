@@ -55,7 +55,8 @@ def collect_tags(root, impl_dir, exts, comment):
 def design_files(root, section_header, refs):
     """Every design.md that has the language section, plus every tagged one."""
     found = {k[0] for k in refs}
-    for dirpath, _, filenames in os.walk(os.path.join(root, "abstraction")):
+    for dirpath, dirnames, filenames in os.walk(os.path.join(root, "abstraction")):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]  # e.g. proofs/.lake/
         if "design.md" in filenames:
             path = os.path.join(dirpath, "design.md")
             with open(path, encoding="utf-8") as f:

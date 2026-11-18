@@ -65,6 +65,14 @@ class LinkcheckTest(unittest.TestCase):
             "PROBLEMS",
         ])
 
+    def test_skips_hidden_directories(self):
+        hidden = os.path.join(self.tmp.name, "abstraction", "proofs", ".lake")
+        os.makedirs(hidden)
+        with open(os.path.join(hidden, "README.md"), "w") as f:
+            f.write("[broken](nope.md)\n")
+        files = linkcheck.markdown_files(self.tmp.name, ["abstraction"])
+        self.assertFalse(any(".lake" in p for p in files))
+
     def test_ok(self):
         out = io.StringIO()
         self.assertEqual(linkcheck.check(self.tmp.name, ["abstraction/other.md", "AGENTS.md"], out), 0)
