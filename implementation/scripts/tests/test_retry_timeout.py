@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/retry_timeout/design.md (retry_timeout v0.2.0)
+# Source: abstraction/benchmark_runner/retry_timeout/design.md (retry_timeout v0.3.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -115,6 +115,26 @@ class RetryTimeoutTest(unittest.TestCase):
         self.assertAlmostEqual(rt.retry_timeout(20, 200.0, 60.0).target, 0.4, places=12)
         r = rt.retry_timeout(1, 200.0, 0.5, 2.0)
         self.assertEqual((r.target, round(r.retry_timeout_ms, 3), round(r.stable_rho, 4), r.tipping_rho), (1.0, 0.0, 0.2, None))
+
+    # Design: abstraction/benchmark_runner/retry_timeout/design.md#convergence
+    def test_iteration_converges_to_stable_rho(self):
+        # Theorem 1 numerically: r <- rho0 (1 + tail(T, r)) from rho0 rises monotonically to the StableLoad of
+        # feedback_points, or passes 1 when there is none.
+        def iterate(rate, eta, steps):
+            r0 = rate / 50
+            t = rt.solve_timeout(10, 5.0, rate, rt.eta_target(r0, eta))
+            rs = [r0]
+            while len(rs) <= steps and rs[-1] < 1:
+                rs.append(r0 * (1 + rt.sojourn_tail(t, 10, 5.0, rs[-1] * 50)))
+            return rs, rt.feedback_points(10, 5.0, r0, t)[0]
+        for rate, eta in ((30.0, 0.8), (35.0, 0.8), (20.0, 2.0)):
+            rs, stable = iterate(rate, eta, 200)
+            self.assertTrue(all(a <= b for a, b in zip(rs, rs[1:])))
+            self.assertAlmostEqual(rs[-1], stable, places=9)
+        self.assertAlmostEqual(iterate(20.0, 2.0, 200)[0][-1], 0.8, places=9)  # target 1: settles at 2 rho0
+        rs, stable = iterate(30.0, 0.90000001, 200)
+        self.assertIsNone(stable)
+        self.assertGreaterEqual(rs[-1], 1.0)
 
     # Design: abstraction/benchmark_runner/retry_timeout/design.md#maxstableeta
     def test_max_stable_eta_examples(self):

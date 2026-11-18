@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/retry_timeout/design.md (retry_timeout v0.2.0)
+# Source: abstraction/benchmark_runner/retry_timeout/design.md (retry_timeout v0.3.0)
 """RetryTimeoutCalculator: the RetryTimeout T with Pr(sojourn > T) = EtaSlack target in an M/M/k model,
 the RetryFeedback fixed points at that T, and the MaxStableEta search."""
 
