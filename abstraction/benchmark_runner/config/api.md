@@ -73,7 +73,8 @@ See [design.md#processplacement](design.md#processplacement).
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `output_dir` | path | `"<runner directory>/results/<UTC start time as YYYYMMDDTHHMMSSZ>"` | Where results go. A relative path is relative to the current directory |
-| `sweep_order` | array of `"<section>.<param>"` | swept keys in file order | Order of the swept keys. If given, it must list every swept key exactly once |
+| `sweep_order` | array of `"<section>.<param>"` | swept keys in file order | Order of the swept keys. If given, it must list every swept key exactly once (linked keys are not swept keys) |
+| `link` | inline table `"<section>.<param>"` → `"<section>.<param>"` | empty | **LinkedSweep**: each entry maps a **linked key** (an array program parameter) to its **driver key** (a swept key of the same array length). The linked key takes the element at the same index as the driver's chosen value; it is not a sweep dimension. See [design.md#linkedsweep](design.md#linkedsweep) |
 | `cooldown_s` | float `>= 0` | `2.0` | Pause between SweepPoints |
 | `on_failure` | `"continue"` \| `"stop"` | `"continue"` | Whether a failed SweepPoint stops the run |
 | `server_ready_timeout_s` | float `> 0` | `30.0` | Longest wait for the server's `listening on` line |
@@ -97,6 +98,7 @@ The validated file with every default filled in: `repo_url`, `machines.server`, 
 |---|---|---|
 | `id` | integer `>= 0` | Position in the SweepExpansion |
 | `swept` | ordered map `"<section>.<param>"` → scalar | This point's value for every swept key, in sweep order. Empty if nothing is swept |
+| `linked` | ordered map `"<section>.<param>"` → scalar | This point's value for every linked key ([design.md#linkedsweep](design.md#linkedsweep)), in `run.link` order. Empty if `run.link` is not set |
 | `server_args` | ordered list of (name, scalar) | Every `[server]` program parameter for this point, excluding runner-owned keys |
 | `loadgen_args` | ordered list of (name, scalar) | Every `[load_gen]` program parameter for this point |
 | `ingress_args` | ordered list of (name, scalar) | Every `[ingress]` program parameter, plus the runner's `backends` and `num_clients`, the defaulted `duration_s`, and the derived `cancel_rate` when CancelRateFraction is set |

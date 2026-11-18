@@ -15,5 +15,8 @@ Leaf component. It turns the operator's TOML file into a validated **BenchConfig
   servers. That choice sets the load generator's target and the Ingress's backend addresses.
 - The Ingress's cancel rate can be given as a **CancelRateFraction** of the load generator's `global_rate`, so a
   sweep over offered load keeps the cancel load proportional. The fraction itself can be swept.
+- A **LinkedSweep** pairs an array parameter with a swept key element by element instead of crossing them, so a
+  parameter can follow another one (for example a retry timeout chosen per offered rate) without adding a sweep
+  dimension.
 
 Parent: [../design.md](../design.md). API: [api.md](api.md). Design: [design.md](design.md).
