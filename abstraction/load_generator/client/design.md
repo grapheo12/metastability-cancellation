@@ -127,7 +127,6 @@ function settle(C, req, result):                      # first event wins
     match result:
         Response(status, resp_body): outcome = classify(status, resp_body, req.id)  # see Outcome classification
         TimerFired:                  outcome = cancelled; status = none
-        Dropped:                     outcome = dropped;   status = none
         StreamError or ConnectionError: outcome = error; status = none
     C.events.push(Resolved(RequestRecord(req.id, req.client_id, req.seq, outcome, status,
                                          req.t_sched, req.t_send, t_end, copies,
@@ -167,7 +166,8 @@ Worked example, `run_start_unix_ns = 1_794_533_185_000_000_000`, `SLO = 300 ms`,
 ## RetryTimer
 
 Every **RequestCopy** of a request is the same RequestId and the same body, sent on a new stream of the client's
-connection. Each copy `k` has its own **RetryTimer**, `RETRY` after that copy's send. Only the newest copy
+connection. Each copy `k < R` has its own **RetryTimer**, `RETRY` after that copy's send; the last copy (`k = R`)
+has none and waits for its answer or the SLO. Only the newest copy
 (`k == req.current`) can decide the request; the responses and errors of earlier copies are ignored, and their
 streams are left open (no reset) until the server answers them or SLOCancellation resets them.
 
@@ -187,23 +187,22 @@ procedure send_copy(C, req, k, conn, config, body):   # req.current == k already
         with req.lock: newest = (k == req.current)
         if newest: settle(C, req, StreamError)
     if req.in_stall_window: return                    # StallWindow: no RetryTimer
-    at timer t_copy + RETRY:                          # RetryTimer of copy k
+    if k == config.max_retries: return                # last copy: no RetryTimer, it waits for the SLO
+    at timer t_copy + RETRY:                          # RetryTimer of copy k < R
         with req.lock:
             if req.settled or k != req.current: return
-            last = (k == config.max_retries)
-            if not last: req.current = k + 1
-        if last: settle(C, req, Dropped)              # no reset: the stream is abandoned
-        else:    send_copy(C, req, k + 1, conn, config, body)
+            req.current = k + 1
+        send_copy(C, req, k + 1, conn, config, body)
 ```
 
 - **Copies.** A request sends at most `1 + R` copies. `copies` in its RequestRecord is `req.current + 1` when it
   settles: every copy the client started, including one whose `open_stream` failed.
 - **Which answer counts.** Once copy `k+1` is started, the client waits only for copy `k+1`. A response of copy
   `k` that arrives later is ignored even if it is `ok`.
-- **Dropped.** When the RetryTimer of copy `R` fires before any deciding event, the request resolves as `dropped`.
-  Its streams are not reset; the server may still answer them, and those answers are ignored.
-- **`R = 0`** gives one copy whose RetryTimer drops it after `RETRY`. With `R = 0` and `RETRY >= SLO`,
-  SLOCancellation always fires first, which is the behavior before retries existed.
+- **The last copy waits for the SLO.** Copy `R` has no RetryTimer. It is decided by its full response, its stream
+  or connection error, or SLOCancellation, which resets every copy. So a request never ends `dropped`; that outcome
+  is reserved ([api.md#outcome](api.md#outcome)).
+- **`R = 0`** gives one copy with no RetryTimer: the behavior before retries existed. `RETRY` is then unused.
 - **Races.** Every event checks `req.current` and `req.settled`, and `settle` decides by compare-and-swap, so
   whichever deciding event is observed first wins and the others are ignored. A RetryTimer and a response of the
   same copy at about the same moment: if the timer takes `req.lock` first, the copy is superseded and its response
@@ -221,13 +220,9 @@ Worked examples, `RETRY = 150 ms`, `SLO = 300 ms`, `R = 1`, a request first sent
 | Retry answered | RetryTimer of copy 0 at 150 sends copy 1; copy 1 answers at 250 | `ok`, 2, 250 |
 | Late original | copy 1 sent at 150; copy 0 answers at 200 (ignored); copy 1 answers at 260 | `ok`, 2, 260 |
 | No answer | copy 1 sent at 150; SLO timer at 300 settles first and resets copies 0 and 1; copy 1's RetryTimer (due at 300 or later) then does nothing | `cancelled`, 2, 300 |
-| Dropped | `RETRY = 100`: copy 1 sent at 100; copy 1's RetryTimer at 200 | `dropped`, 2, 200 |
-| `R = 0` | `RETRY = 100`: copy 0's RetryTimer at 100 | `dropped`, 1, 100 |
-| `R = 0`, `RETRY = 300` | SLO timer and RetryTimer both due at 300; whichever settles first wins | `cancelled` or `dropped`, 1, 300 |
-
-With the defaults (`RETRY = 150`, `R = 1`) and `slo_ms = 300`, copy 1 is sent at 150 ms or later, so its
-RetryTimer is due at 300 ms or later. SLOCancellation fires first, or ties and then the first `settle` wins, so
-those runs record `cancelled` and almost never `dropped`. `dropped` is reliable only when `(1 + R) × RETRY < SLO`.
+| Last copy answered late | `RETRY = 100`: copy 1 sent at 100; it has no RetryTimer and answers at 280 | `ok`, 2, 280 |
+| `R = 0`, slow answer | copy 0 has no RetryTimer and answers at 200 | `ok`, 1, 200 |
+| `R = 0`, no answer | SLO timer at 300 resets copy 0 | `cancelled`, 1, 300 |
 
 ## StallWindow
 
@@ -236,8 +231,7 @@ StallGate ([../../server/worker_pool/design.md](../../server/worker_pool/design.
 `/ping` runs, so every request sent then is slow by construction. A request whose first send `t_send` is in the
 window (`t_send < STALL`) is a **StallWindowRequest**:
 
-- It sends only copy 0. `send_copy` returns before starting a RetryTimer, so it never retries and never ends
-  `dropped`; `copies` is always 1.
+- It sends only copy 0. `send_copy` returns before starting a RetryTimer, so it never retries; `copies` is always 1.
 - SLOCancellation still applies: it ends `ok`, `rejected`, `cancelled` or `error` as before retries existed.
 - It holds a GatedArrival slot like any other request.
 - Its RequestRecord has `in_stall_window = true`. Metrics leaves it out of every count, rate and latency statistic
@@ -298,12 +292,11 @@ stateDiagram-v2
   Ready --> InFlight: now < D (outstanding += 1, open copy 0)
   InFlight --> InFlight: RetryTimer of newest copy k < R (open copy k+1)
   InFlight --> Resolved: full response of newest copy (ok / rejected / error)
-  InFlight --> Resolved: RetryTimer of copy R (dropped, no reset)
   InFlight --> Resolved: SLO timer (RST_STREAM on every copy, cancelled)
   InFlight --> Resolved: stream/conn error on newest copy (error)
   Resolved --> [*]: receiver records it, outstanding -= 1
   NotSent --> [*]: receiver records it
 ```
 
-Events of copies older than the newest one never change the state. A StallWindowRequest never takes the two RetryTimer
-transitions.
+Events of copies older than the newest one never change the state. A StallWindowRequest never takes the RetryTimer
+transition, and copy `R` has no RetryTimer, so nothing resolves a request as `dropped`.

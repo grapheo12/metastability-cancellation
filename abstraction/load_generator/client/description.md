@@ -8,8 +8,8 @@ Leaf component: the **SemiOpenLoopClient**. One instance simulates one user on i
   client is at its cap waits for a slot (**GatedArrival**). The schedule itself is never shifted, so waiting builds
   up a backlog that later requests drain. With `n_waiting_requests = 1` this is a closed loop.
 - Starts a **RetryTimer** of `retry_timeout_ms` for each send of a request (a **RequestCopy**). When it fires, the
-  client sends another copy with the same RequestId and waits only for that copy, up to `max_retries` times; when
-  the last copy's timer fires, the request is `dropped`.
+  client sends another copy with the same RequestId and waits only for that copy, up to `max_retries` times. The
+  last copy has no RetryTimer: it waits for its answer or the SLO.
 - Never retries a request first sent in the **StallWindow** (the first `initial_stall_ms` of the run, while the
   servers' StallGate holds every request). Such a **StallWindowRequest** is flagged in its record and left out of
   every metric.
