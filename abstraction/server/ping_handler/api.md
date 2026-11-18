@@ -20,7 +20,7 @@ order the requests were fully received, so it uses `rng` and `conn_state` exclus
 
 ### `run_ping(job: PingJob, config: ServerConfig, registry: CancelRegistry, counters: CancelCounters, buf: MessageBuffer | NONE) -> Response | Aborted`
 
-- `Response(202, body)`: the burn (`cpu_burn`) or the MessageWork (`message_buffer`, which writes into `buf`)
+- `Response(202, body)`: the burn (`cpu_burn`), the sleep (`sleep`) or the MessageWork (`message_buffer`, which writes into `buf`)
   completed. Body is a PaddedJsonBody. See [design.md#messagework](design.md#messagework).
 - `Response(503, body)`: a `/cancel` matched (`cooperative` only). Body is a PaddedJsonBody.
 - `Aborted`: the RST flag stopped the request (`cooperative` only). Nothing is written.
@@ -34,6 +34,7 @@ run any client's job, and two jobs of one client may run at once; the client's s
 - [../../protocol/api.md](../../protocol/api.md): `parse_body`, `parse_deadline`, `split_request_id` (also for MessageWork's stream), `build_body`
 - [../../sampling/api.md](../../sampling/api.md): `exponential_us`; for MessageWork `rng_new`, `derive_seed`, `STREAM_SERVER_MESSAGES`
 - [../cpu_burner/api.md](../cpu_burner/api.md): `burn`, `BurnOutcome`
+- [../sleeper/api.md](../sleeper/api.md): `sleep`
 - [../message_buffer/api.md](../message_buffer/api.md): `make_tree`, `push_messages`, `MessageBuffer`
 - [../cancel_tracker/api.md](../cancel_tracker/api.md): `ConnectionCancelState`, `registry_client`, `registry_start`, `should_cancel`, `registry_publish_finished`, `CancelCounters`
 - [../worker_pool/api.md](../worker_pool/api.md): `PingJob`

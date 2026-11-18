@@ -11,3 +11,4 @@
 | 0.6.0 | 2026-11-12T00:00:00Z | MessageWork for `workload = message_buffer`: create messages with checks after each, then push_messages; `run_ping` takes the MessageBuffer; ServiceTime drawn only for `cpu_burn`; worked example |
 | 0.7.0 | 2026-11-12T00:00:00Z | MessageWork creates MessageTrees with `make_tree` from a per-request Rng derived from the seed and the RequestId (STREAM_SERVER_MESSAGES); worked example updated |
 | 0.8.0 | 2026-11-13T00:00:00Z | `admit_ping` reads the RequestDeadline (`protocol.parse_deadline`; missing or malformed = `NO_DEADLINE = 2^64 - 1`, never a rejection) into `PingJob.deadline_unix_ns` |
+| 0.9.0 | 2026-11-18T00:00:00Z | `workload = sleep`: `admit_ping` samples the ServiceTime as for `cpu_burn`; `run_ping` runs `sleeper.sleep` (cooperative: RST flag and CancelMatching at each wake-up; ignore: no checks); CancelCheckPoints table and Sampling order updated |
