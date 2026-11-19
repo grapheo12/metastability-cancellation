@@ -1,0 +1,45 @@
+# Standing queue, 1 retry, retry timeout per rate = 1.5 x the MaxStableEta timeout of the per-server M/M/10 model:
+#   bench stable-eta --workers 10 --mean_service_ms 200 30 35 40 45 (each of the 2 servers gets half the rate)
+#   60 -> 255.770 x 1.5 = 383.655 ms; 70 -> 410.244 x 1.5 = 615.366 ms; 80 -> 638.392 x 1.5 = 957.588 ms;
+#   90 -> 1203.908 x 1.5 = 1805.862 ms (linked to global_rate). A longer timeout means a smaller eta, below the MaxStableEta.
+# workload = sleep (QuantumSleep, 20 ms quanta, no CPU) with 200 ms mean service time (response_rate = 5 per worker), 10 workers per server, 2 servers,
+# SLO 5 s, no initial stall, n_waiting_requests 500, 120 s per point. Sweep rate x [fifo, edf].
+[repo]
+url = "https://github.com/grapheo12/metastability-cancellation.git"
+
+[machines.server]
+host = "metafail-exp-1"
+data_addr = "172.31.23.63"
+
+[machines.client]
+host = "metafail-exp-2"
+
+[server]
+listen_port = 8080
+instances = 2
+workload = "sleep"
+response_rate = 5   # per worker: 200 ms mean
+initial_stall_ms = 0
+n_worker_threads = 10
+queue_discipline = ["fifo", "edf"]
+response_bytes = 128
+
+[load_gen]
+num_clients = 16
+global_rate = [60, 70, 80, 90]
+request_bytes = 128
+slo_ms = 5000
+duration_s = 120
+n_waiting_requests = 500
+retry_timeout_ms = [383.655, 615.366, 957.588, 1805.862]   # linked to global_rate
+max_retries = 1
+
+[ingress]
+machine = "server"   # Ingress next to the server on metafail-exp-1
+listen_port = 9090
+lb_policy = "ewma"
+
+[run]
+sweep_order = ["load_gen.global_rate", "server.queue_discipline"]
+link = { "load_gen.retry_timeout_ms" = "load_gen.global_rate" }
+cooldown_s = 2
