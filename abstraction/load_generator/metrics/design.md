@@ -75,6 +75,7 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 
 - File `internal/loadgen/metrics.go`.
 - Empty CSV fields: `HTTPStatus == 0` means empty, and `Sent == false` blanks `send_ns`, `end_ns` and both latencies. `copies` is `RequestRecord.Copies` (`uint32`), always written (`0` for `not_sent`).
+- ExecReport columns: `RequestRecord` carries `ExecNs`/`HasExec` and `StartSlackNs` (`int64`)/`HasSlack`; a false flag is the empty field. They are written last with `strconv.FormatUint` / `strconv.FormatInt` (signed) and `aggregate` ignores them. `TestRequestsCSVExecColumns` checks the header, a filled row and an empty one.
 - `counts.copies_sent` is accumulated in the same loop that counts outcomes.
 - The StallWindow filter is the first test in that loop: a record with `InStallWindow` only increments `counts.stall_window`. `measured_s` is `cfg.DurationS - float64(cfg.InitialStallMs)/1000`. The CSV writes `in_stall_window` as `1`/`0` from the `bool`. `TestAggregateLeavesOutStallWindow` covers the filter and the rate denominator.
 - `null` statistics are `*float64` set to `nil`. JSON field order comes from struct field order (`encoding/json`).
@@ -88,8 +89,8 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [RequestRecord](#requestrecord) | [metrics.go:16](../../../implementation/go/internal/loadgen/metrics.go#L16), [metrics.go:162](../../../implementation/go/internal/loadgen/metrics.go#L162) |
-| [Collection](#collection) | [metrics.go:92](../../../implementation/go/internal/loadgen/metrics.go#L92), [metrics_test.go:23](../../../implementation/go/internal/loadgen/metrics_test.go#L23), [metrics_test.go:60](../../../implementation/go/internal/loadgen/metrics_test.go#L60) |
-| [Summary](#summary) | [metrics.go:92](../../../implementation/go/internal/loadgen/metrics.go#L92), [metrics_test.go:60](../../../implementation/go/internal/loadgen/metrics_test.go#L60) |
-| [Percentiles](#percentiles) | [metrics.go:139](../../../implementation/go/internal/loadgen/metrics.go#L139), [metrics_test.go:11](../../../implementation/go/internal/loadgen/metrics_test.go#L11) |
+| [RequestRecord](#requestrecord) | [metrics.go:16](../../../implementation/go/internal/loadgen/metrics.go#L16), [metrics.go:168](../../../implementation/go/internal/loadgen/metrics.go#L168), [metrics_test.go:86](../../../implementation/go/internal/loadgen/metrics_test.go#L86) |
+| [Collection](#collection) | [metrics.go:98](../../../implementation/go/internal/loadgen/metrics.go#L98), [metrics_test.go:26](../../../implementation/go/internal/loadgen/metrics_test.go#L26), [metrics_test.go:63](../../../implementation/go/internal/loadgen/metrics_test.go#L63) |
+| [Summary](#summary) | [metrics.go:98](../../../implementation/go/internal/loadgen/metrics.go#L98), [metrics_test.go:63](../../../implementation/go/internal/loadgen/metrics_test.go#L63) |
+| [Percentiles](#percentiles) | [metrics.go:145](../../../implementation/go/internal/loadgen/metrics.go#L145), [metrics_test.go:14](../../../implementation/go/internal/loadgen/metrics_test.go#L14) |
 <!-- trace:end -->

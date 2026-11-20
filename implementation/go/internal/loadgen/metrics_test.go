@@ -1,7 +1,10 @@
-// Source: abstraction/load_generator/metrics/design.md (metrics v0.4.0)
+// Source: abstraction/load_generator/metrics/design.md (metrics v0.5.0)
 package loadgen
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"testbed/internal/protocol"
@@ -74,5 +77,26 @@ func TestAggregateLeavesOutStallWindow(t *testing.T) {
 	}
 	if r.E2ELatencyUs.Count != 1 || *r.E2ELatencyUs.Max != 3 {
 		t.Fatal("latency over the measured ok records only")
+	}
+}
+
+// The ExecReport columns come last; empty when the record has none, signed for the slack.
+//
+// Design: abstraction/load_generator/metrics/design.md#requestrecord
+func TestRequestsCSVExecColumns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "r.requests.csv")
+	recs := []RequestRecord{
+		{RequestID: 0, Outcome: OutcomeOK, HTTPStatus: 202, SendNs: 10, EndNs: 30, Sent: true, Copies: 1,
+			ExecNs: 150000000, HasExec: true, StartSlackNs: -35000000, HasSlack: true},
+		{RequestID: 1, Seq: 1, Outcome: OutcomeCancelled, SendNs: 10, EndNs: 40, Sent: true, Copies: 1},
+	}
+	if err := WriteRequestsCSV(path, recs); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(path)
+	lines := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	if !strings.HasSuffix(lines[0], ",copies,in_stall_window,exec_ns,start_slack_ns") ||
+		!strings.HasSuffix(lines[1], ",1,0,150000000,-35000000") || !strings.HasSuffix(lines[2], ",1,0,,") {
+		t.Fatalf("got\n%s", raw)
 	}
 }

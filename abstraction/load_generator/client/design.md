@@ -344,6 +344,6 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [RetryTimer](#retrytimer) | [client.go:187](../../../implementation/go/internal/loadgen/client.go#L187), [client.go:230](../../../implementation/go/internal/loadgen/client.go#L230), [client_test.go:189](../../../implementation/go/internal/loadgen/client_test.go#L189) |
 | [StallWindow](#stallwindow) | [client.go:137](../../../implementation/go/internal/loadgen/client.go#L137), [client_test.go:305](../../../implementation/go/internal/loadgen/client_test.go#L305) |
 | [SLOCancellation](#slocancellation) | [client.go:140](../../../implementation/go/internal/loadgen/client.go#L140) |
-| [Outcome classification](#outcome-classification) | [client.go:246](../../../implementation/go/internal/loadgen/client.go#L246), [metrics_test.go:45](../../../implementation/go/internal/loadgen/metrics_test.go#L45) |
+| [Outcome classification](#outcome-classification) | [client.go:246](../../../implementation/go/internal/loadgen/client.go#L246), [metrics_test.go:48](../../../implementation/go/internal/loadgen/metrics_test.go#L48) |
 | [State machine](#state-machine) | [client.go:51](../../../implementation/go/internal/loadgen/client.go#L51) |
 <!-- trace:end -->

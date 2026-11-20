@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/metrics/design.md (metrics v0.4.0)
+// Source: abstraction/load_generator/metrics/design.md (metrics v0.5.0)
 package loadgen
 
 import (
@@ -25,6 +25,12 @@ type RequestRecord struct {
 	Sent          bool
 	Copies        uint32 // RequestCopies started; 0 for not_sent
 	InStallWindow bool   // StallWindowRequest: left out of the summary
+	// ExecReport of the deciding response; written to the CSV only. The Has*
+	// flags false are the design's empty.
+	ExecNs       uint64
+	HasExec      bool
+	StartSlackNs int64
+	HasSlack     bool
 }
 
 // LatencyStats uses pointers so that an empty set serializes as null.
@@ -172,11 +178,17 @@ func WriteRequestsCSV(path string, records []RequestRecord) error {
 		return err
 	}
 	w := bufio.NewWriter(f)
-	w.WriteString("request_id,client_id,seq,outcome,http_status,scheduled_ns,send_ns,end_ns,e2e_latency_ns,service_latency_ns,copies,in_stall_window\n")
+	w.WriteString("request_id,client_id,seq,outcome,http_status,scheduled_ns,send_ns,end_ns,e2e_latency_ns,service_latency_ns,copies,in_stall_window,exec_ns,start_slack_ns\n")
 	for _, r := range sorted {
-		status, send, end, e2e, svc, stall := "", "", "", "", "", "0"
+		status, send, end, e2e, svc, stall, exec, slack := "", "", "", "", "", "0", "", ""
 		if r.InStallWindow {
 			stall = "1"
+		}
+		if r.HasExec {
+			exec = strconv.FormatUint(r.ExecNs, 10)
+		}
+		if r.HasSlack {
+			slack = strconv.FormatInt(r.StartSlackNs, 10) // signed decimal
 		}
 		if r.HTTPStatus != 0 {
 			status = strconv.Itoa(r.HTTPStatus)
@@ -188,7 +200,7 @@ func WriteRequestsCSV(path string, records []RequestRecord) error {
 		w.WriteString(strconv.FormatUint(r.RequestID, 10) + "," + strconv.FormatUint(uint64(r.ClientID), 10) + "," +
 			strconv.FormatUint(uint64(r.Seq), 10) + "," + string(r.Outcome) + "," + status + "," +
 			strconv.FormatInt(r.ScheduledNs, 10) + "," + send + "," + end + "," + e2e + "," + svc + "," +
-			strconv.FormatUint(uint64(r.Copies), 10) + "," + stall + "\n")
+			strconv.FormatUint(uint64(r.Copies), 10) + "," + stall + "," + exec + "," + slack + "\n")
 	}
 	if err := w.Flush(); err != nil {
 		f.Close()
