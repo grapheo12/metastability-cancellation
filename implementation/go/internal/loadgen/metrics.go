@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/metrics/design.md (metrics v0.5.0)
+// Source: abstraction/load_generator/metrics/design.md (metrics v0.6.0)
 package loadgen
 
 import (
@@ -56,6 +56,8 @@ type summaryConfig struct {
 	RetryTimeoutMs   float64 `json:"retry_timeout_ms"`
 	MaxRetries       uint32  `json:"max_retries"`
 	InitialStallMs   uint64  `json:"initial_stall_ms"`
+	SloCancel        bool    `json:"slo_cancel"`
+	DrainTimeoutMs   uint64  `json:"drain_timeout_ms"`
 	OutputPath       string  `json:"output_path"`
 }
 
@@ -70,6 +72,7 @@ type summaryCounts struct {
 	NotSent     int `json:"not_sent"`
 	CopiesSent  int `json:"copies_sent"`
 	StallWindow int `json:"stall_window"`
+	OKLate      int `json:"ok_late"` // ok answered after the SLO (slo_cancel = false)
 }
 
 type summaryRates struct {
@@ -97,7 +100,7 @@ type SummaryReport struct {
 // Design: abstraction/load_generator/metrics/design.md#summary
 func Aggregate(records []RequestRecord, cfg Config, runEndNs int64, runStartUnixNs uint64) SummaryReport {
 	var r SummaryReport
-	r.Config = summaryConfig{cfg.Target, cfg.NumClients, cfg.GlobalRate, cfg.RequestBytes, cfg.SloMs, cfg.DurationS, cfg.Seed, cfg.NWaitingRequests, cfg.RetryTimeoutMs, cfg.MaxRetries, cfg.InitialStallMs, cfg.OutputPath}
+	r.Config = summaryConfig{cfg.Target, cfg.NumClients, cfg.GlobalRate, cfg.RequestBytes, cfg.SloMs, cfg.DurationS, cfg.Seed, cfg.NWaitingRequests, cfg.RetryTimeoutMs, cfg.MaxRetries, cfg.InitialStallMs, cfg.SloCancel, cfg.DrainTimeoutMs, cfg.OutputPath}
 	r.RunEndS = float64(runEndNs) / 1e9
 	r.RunStartUnixNs = runStartUnixNs
 	var e2e, service []float64
@@ -112,6 +115,9 @@ func Aggregate(records []RequestRecord, cfg Config, runEndNs int64, runStartUnix
 		switch rec.Outcome {
 		case OutcomeOK:
 			r.Counts.OK++
+			if rec.EndNs-rec.SendNs > cfg.SloNs {
+				r.Counts.OKLate++ // late answer: in ok and the latencies, not in goodput
+			}
 			e2e = append(e2e, float64(rec.EndNs-rec.ScheduledNs)/1000.0)
 			service = append(service, float64(rec.EndNs-rec.SendNs)/1000.0)
 		case OutcomeRejected:
@@ -132,7 +138,7 @@ func Aggregate(records []RequestRecord, cfg Config, runEndNs int64, runStartUnix
 	r.RatesPerS = summaryRates{
 		Offered: float64(r.Counts.Scheduled) / measuredS,
 		Sent:    float64(r.Counts.Sent) / measuredS,
-		Goodput: float64(r.Counts.OK) / measuredS,
+		Goodput: float64(r.Counts.OK-r.Counts.OKLate) / measuredS, // ok within the SLO only
 	}
 	r.E2ELatencyUs = latencyStats(e2e)
 	r.ServiceLatencyUs = latencyStats(service)

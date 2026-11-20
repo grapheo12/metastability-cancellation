@@ -1,6 +1,6 @@
 // Command loadgen runs the closed-loop Poisson load generator.
 //
-// Source: abstraction/load_generator/api.md (load_generator v0.8.1)
+// Source: abstraction/load_generator/api.md (load_generator v0.8.2)
 package main
 
 import (

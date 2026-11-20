@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/metrics/design.md (metrics v0.5.0)
+// Source: abstraction/load_generator/metrics/design.md (metrics v0.6.0)
 package loadgen
 
 import (
@@ -31,7 +31,7 @@ func TestAggregateCounts(t *testing.T) {
 		{Outcome: OutcomeDropped, Sent: true, Copies: 2},
 		{Outcome: OutcomeNotSent},
 	}
-	r := Aggregate(recs, Config{DurationS: 2}, 2e9, 1_700_000_000_000_000_000)
+	r := Aggregate(recs, Config{DurationS: 2, SloNs: 5_000_000_000}, 2e9, 1_700_000_000_000_000_000)
 	if r.RunStartUnixNs != 1_700_000_000_000_000_000 {
 		t.Fatal("run_start_unix_ns is passed through")
 	}
@@ -67,7 +67,7 @@ func TestAggregateLeavesOutStallWindow(t *testing.T) {
 		{Outcome: OutcomeOK, ScheduledNs: 0, SendNs: 1000, EndNs: 3000, Sent: true, Copies: 2},
 		{Outcome: OutcomeDropped, Sent: true, Copies: 2},
 	}
-	r := Aggregate(recs, Config{DurationS: 3, InitialStallMs: 1000}, 3e9, 0)
+	r := Aggregate(recs, Config{DurationS: 3, InitialStallMs: 1000, SloNs: 5_000_000_000}, 3e9, 0)
 	c := r.Counts
 	if c.StallWindow != 2 || c.Scheduled != 2 || c.Sent != 2 || c.OK != 1 || c.Cancelled != 0 || c.Dropped != 1 || c.CopiesSent != 4 {
 		t.Fatalf("%+v", c)
@@ -98,5 +98,22 @@ func TestRequestsCSVExecColumns(t *testing.T) {
 	if !strings.HasSuffix(lines[0], ",copies,in_stall_window,exec_ns,start_slack_ns") ||
 		!strings.HasSuffix(lines[1], ",1,0,150000000,-35000000") || !strings.HasSuffix(lines[2], ",1,0,,") {
 		t.Fatalf("got\n%s", raw)
+	}
+}
+
+// The ok_late worked example: slo 5 s, D_s = 10.
+//
+// Design: abstraction/load_generator/metrics/design.md#summary
+func TestAggregateOkLate(t *testing.T) {
+	const s = int64(1_000_000_000)
+	recs := []RequestRecord{
+		{Outcome: OutcomeOK, SendNs: 0, EndNs: 4 * s, Sent: true, Copies: 1},
+		{Outcome: OutcomeOK, SendNs: 0, EndNs: 5 * s, Sent: true, Copies: 1}, // exactly the SLO: in time
+		{Outcome: OutcomeOK, SendNs: 0, EndNs: 7 * s, Sent: true, Copies: 1},
+		{Outcome: OutcomeCancelled, SendNs: 0, EndNs: 80 * s, Sent: true, Copies: 2},
+	}
+	r := Aggregate(recs, Config{DurationS: 10, SloNs: 5 * s}, 90*s, 0)
+	if r.Counts.OK != 3 || r.Counts.OKLate != 1 || r.RatesPerS.Goodput != 0.2 || r.ServiceLatencyUs.Count != 3 {
+		t.Fatalf("%+v %+v", r.Counts, r.RatesPerS)
 	}
 }
