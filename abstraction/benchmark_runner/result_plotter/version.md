@@ -17,3 +17,4 @@
 | 0.13.0 | 2026-11-12T00:00:00Z | AvailabilityPlot skips StallWindowRequests (`in_stall_window = 1`); CSVs without the column are read as before |
 | 0.14.0 | 2026-11-20T00:00:00Z | FigurePage layout: full browser-window width (resizes with it), height `FIGURE_HEIGHT_PX = 600`, horizontal legend below the subplots (was about 600 px per subplot column, legend on the right) |
 | 0.15.0 | 2026-11-20T00:00:00Z | `read_forward_log` reads the first five ForwardLog columns and ignores later ones (`exec_ns`, `ewma_exec_ns`); a line needs at least 5 fields |
+| 0.16.0 | 2026-11-20T00:00:00Z | StartSlackHistogram (`start_slack.html`): per done point, the fraction of `start_slack_ns` samples per 100 ms bin (floor), empty bins between the extremes at 0, dashed line at the deadline; worked example |

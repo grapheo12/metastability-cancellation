@@ -18,6 +18,8 @@ Leaf component. It reads every point directory of a run and produces:
   every garbage-collection cycle of the server (the **GcOverlay**).
 - the **AvailabilityPlot**: per 200 ms window, the share of the client's finished requests that finished under the
   SLO (the **Availability**), one line per done SweepPoint, with the GcOverlay.
+- the **StartSlackHistogram**: per done SweepPoint, the distribution of the requests' StartSlack (time left before
+  the RequestDeadline when a worker picked the request up), as fractions per 100 ms bin.
 
 Every figure is an interactive page (**FigurePage**, `plots/<name>.html`) that opens offline.
 

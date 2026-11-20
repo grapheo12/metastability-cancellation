@@ -38,6 +38,7 @@ function plot(output_dir):
         if figure.x == "time": draw_queue_length(output_dir, done, swept_keys); continue   # QueueLengthPlot
         if figure.x == "forward_time": draw_forward_timelines(output_dir, done, swept_keys); continue   # ForwardTimelinePlots
         if figure.x == "loadgen_time": draw_availability(output_dir, done, swept_keys); continue      # AvailabilityPlot
+        if figure.x == "start_slack": draw_start_slack(output_dir, done, swept_keys); continue        # StartSlackHistogram
         if figure.x == "x_key": draw as below
         else: draw as in ThroughputLatencyPlot; continue
         one subplot per metric of the figure, sharing the x-axis, title = metric name
@@ -463,6 +464,85 @@ Worked example, `slo_ms = 50` (`slo_ns = 50_000_000`):
 | No `loadgen.summary.json` `run_start_unix_ns` (a run made before it) | Line drawn, no GC overlay |
 | No `server_<k>.gc.csv` for any instance | Line drawn, no GC overlay |
 | No done point drawable | No `availability.html`; an earlier one is deleted |
+
+## StartSlackHistogram
+
+The **StartSlackHistogram** (`start_slack.html`) shows, for each done point, how the requests' StartSlack is
+distributed: how much time was left before the RequestDeadline when a worker picked the request up
+([../../protocol/design.md#execreport](../../protocol/design.md#execreport)). It reads the `start_slack_ns` column of
+the load generator's Requests CSV
+([../../load_generator/metrics/api.md#requests-csv](../../load_generator/metrics/api.md#requests-csv)).
+
+- **Samples:** every row whose `start_slack_ns` is not empty (`ok` and `rejected` answers from a server that sent an
+  ExecReport, with a RequestDeadline). Rows with `in_stall_window = 1` are skipped, as in the AvailabilityPlot.
+- **Bins:** `START_SLACK_BIN_MS = 100` ms wide, by floor division, so bin `b` is `[b W, (b+1) W)` and negative
+  slacks fall in negative bins. Every bin from the point's smallest to its largest non-empty bin is drawn, empty
+  ones at 0, so the line shows gaps instead of bridging them.
+- **y** is the fraction of the point's samples in the bin, so points with different rates compare directly.
+
+```
+START_SLACK_BIN_MS = 100
+
+function read_start_slacks(path):                 # -> list of i64 | none
+    if path does not exist: return none
+    header = first line
+    if "start_slack_ns" not in header: return []   # a run made before the ExecReport
+    slacks = []
+    for each later line:
+        split into the header's columns; stop at a line without all of them (e.g. a truncated last line)
+        if the in_stall_window column exists and is "1": continue    # StallWindowRequest
+        if start_slack_ns is empty: continue
+        slacks.append(signed decimal integer of start_slack_ns)    # stop at a line where it does not parse
+    return slacks
+
+function start_slack_histogram(slacks):            # slacks not empty; -> list of (x_s, fraction), bins in order
+    W = START_SLACK_BIN_MS * 1_000_000
+    counts = count of slacks per s div W           # floor division: -1 div W = -1
+    lo = smallest key of counts; hi = largest key of counts
+    return [ ((b + 0.5) * START_SLACK_BIN_MS / 1000, counts.get(b, 0) / len(slacks)) for b in lo ..= hi ]
+
+function draw_start_slack(output_dir, done, swept_keys):
+    lines = []
+    for row in done, in point-id order:
+        slacks = read_start_slacks(output_dir/points/point_<row.point>/loadgen.requests.csv)
+        if slacks is none or slacks is empty: continue
+        lines.append((label as in the QueueLengthPlot, start_slack_histogram(slacks), the point's color index))
+    if lines is empty: delete output_dir/plots/start_slack.html if it exists; return
+    one plot; for each line: a line with small markers through its histogram, in the point's color
+    a dashed vertical line at x = 0 (the RequestDeadline: left of it the request was already late)
+    x-axis linear, label "start slack: RequestDeadline - worker pick-up (s)"; y-axis linear from 0,
+        label "fraction of requests"
+    legend with the labels when there is more than one line
+    save as output_dir/plots/start_slack.html, full page width (see FigurePage)
+```
+
+- **Color.** The color index is the point's position among the drawn points, as in the AvailabilityPlot.
+- **Clocks.** The StartSlack mixes the client's and the server's wall clocks, so the histogram is shifted by their
+  offset; the plot does not correct for it.
+
+Worked example, `W = 100_000_000` ns, six samples:
+
+| `start_slack_ns` | Bin (`div W`, floor) | Why |
+|---|---|---|
+| 5_000_000_000 | 50 | exactly on a bin edge: the upper bin |
+| 4_999_999_999 | 49 | |
+| 4_950_000_000 | 49 | |
+| -1 | -1 | 1 ns late: floor, not toward zero |
+| -100_000_000 | -1 | |
+| -100_000_001 | -2 | |
+
+| Bin | x (s) | Fraction | Check |
+|---|---|---|---|
+| -2 | -0.15 | 1/6 | (-2 + 0.5) × 0.1 |
+| -1 | -0.05 | 2/6 | |
+| 0 ..= 48 | 0.05 ..= 4.85 | 0 | empty bins between `lo` and `hi` are drawn at 0 |
+| 49 | 4.95 | 2/6 | |
+| 50 | 5.05 | 1/6 | |
+
+| Situation | Result |
+|---|---|
+| No `loadgen.requests.csv`, no `start_slack_ns` column, or no sample | Point left out |
+| No done point drawable | No `start_slack.html`; an earlier one is deleted |
 
 ## GcOverlay
 
