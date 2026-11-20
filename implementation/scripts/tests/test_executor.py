@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.8.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.9.0)
 import contextlib
 import io
 import json
@@ -265,6 +265,24 @@ class ServerLifecycleTest(unittest.TestCase):
             ("b", ["/b/server", "--listen_addr", "0.0.0.0:8081"], "/rdb/server_3.out", "/wb/server_3.pid")])
         self.assertEqual(stopped, [("a", "/wa/server_0.pid"), ("a", "/wa/server_1.pid"),
                                    ("b", "/wb/server_2.pid"), ("b", "/wb/server_3.pid")])
+
+    # Design: abstraction/benchmark_runner/experiment_executor/design.md#serverlifecycle
+    def test_freeze_target_only_on_its_instance(self):
+        started = []
+        orig_start = executor.start_program
+        executor.start_program = lambda m, name, words, *rest: started.append(words)
+        try:
+            a = MachineReady(None, "a", "/wa", "/wa/repo", {"server": "/a/server"}, "10.0.0.1", "GOMAXPROCS", True)
+            b = MachineReady(None, "b", "/wb", "/wb/repo", {"server": "/b/server"}, "10.0.0.2", "GOMAXPROCS", True)
+            config = SimpleNamespace(listen_port=8080, gc_trace=False, run=SimpleNamespace(server_ready_timeout_s=1.0))
+            p = point(instances=2)
+            p.server_hosts = [0, 1]
+            p.freeze = {"instance": 0, "freeze_after_ms": 60000}
+            executor.start_servers(p, config, [a, b], ["/rda", "/rdb"])
+        finally:
+            executor.start_program = orig_start
+        self.assertEqual(started[0][-2:], ["--freeze_after_ms", "60000"])
+        self.assertNotIn("--freeze_after_ms", started[1])
 
     # Design: abstraction/benchmark_runner/experiment_executor/design.md#point-outputs
     def test_outputs_fetched_from_each_instances_machine(self):

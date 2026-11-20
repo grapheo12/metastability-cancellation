@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.8.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.9.0)
 """run_point: ServerLifecycle, IngressLifecycle, ClientRun and point outputs for one SweepPoint."""
 
 import json
@@ -9,7 +9,7 @@ import shutil
 import time
 from dataclasses import dataclass
 
-from .config import arg_words
+from .config import arg_words, format_arg
 from .transport import TransportError, join, quote
 
 # API: abstraction/benchmark_runner/experiment_executor/api.md#constants
@@ -167,6 +167,8 @@ def start_servers(point, config, servers, rds):
             [m.binaries["server"], "--listen_addr", f"0.0.0.0:{config.listen_port + local_index(hosts, k)}",
              "--queue_log_path", f"{rd}/server_{k}.queue.csv"] + \
             arg_words(point.server_args)
+        if point.freeze is not None and point.freeze["instance"] == k:  # FreezeTarget: only this instance
+            words += ["--freeze_after_ms", format_arg(point.freeze["freeze_after_ms"])]
         start_program(m, f"server {k}", words, f"{rd}/server_{k}.out", _server_pid_file(m, k),
                       config.run.server_ready_timeout_s)
 
