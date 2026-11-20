@@ -9,7 +9,7 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 | `listen_addr` | `host:port` | `0.0.0.0:8080` |
 | `workload` | `cpu_burn` \| `message_buffer` \| `sleep` | `cpu_burn` |
 | `response_rate` | float, requests/s, `> 0` | required when `workload` is `cpu_burn` or `sleep` |
-| `response_bytes` | integer, bytes, `>= 42` | required |
+| `response_bytes` | integer, bytes, `>= 115` | required |
 | `cancel_mode` | `ignore` \| `cooperative` | `cooperative` |
 | `cancel_check_interval_us` | integer, µs, `>= 1` | `50` |
 | `seed` | u64 | `0` |

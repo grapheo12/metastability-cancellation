@@ -155,3 +155,4 @@
 | 0.24.1 | 2026-11-20T00:00:00Z | Child bump: benchmark_runner 0.7.1 (experiment_executor 0.10.0) |
 | 0.24.2 | 2026-11-20T00:00:00Z | Child bump: benchmark_runner 0.7.2 (result_plotter 0.14.0) |
 | 0.25.0 | 2026-11-20T00:00:00Z | `/ping` responses carry the ExecReport (ExecutionTime, StartSlack); `response_bytes >= 115`. Child bump: protocol 0.6.0 |
+| 0.26.0 | 2026-11-20T00:00:00Z | Child bump: server 0.12.0 (ping_handler 0.11.0, ExecReport) |
