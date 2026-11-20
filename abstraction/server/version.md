@@ -27,3 +27,4 @@
 | 0.8.1 | 2026-11-13T00:00:00Z | Child bump: ping_handler 0.8.0 (RequestDeadline into the PingJob) |
 | 0.9.0 | 2026-11-18T00:00:00Z | ServerWorkload `sleep` (validation: `response_rate` required; cancellation semantics at each wake-up; ServiceTime sampled as for `cpu_burn`). New subcomponent Sleeper 0.1.0 (QuantumSleep) |
 | 0.9.1 | 2026-11-18T00:00:00Z | Child bump: ping_handler 0.9.0 (`sleep` workload) |
+| 0.10.0 | 2026-11-19T00:00:00Z | Server parameter `freeze_after_ms` (WorkerFreeze; validation: empty or >= 1); the Listener passes it to `queue_new`. Child bump: worker_pool 0.6.0 |

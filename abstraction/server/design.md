@@ -46,6 +46,7 @@ function validate(params):
     n_worker_threads is an integer in 1 ..= 2^32-1   else error
     queue_sample_interval_ms is an integer >= 1      else error   # checked even if queue_log_path is empty
     initial_stall_ms is an integer >= 0              else error
+    freeze_after_ms is empty or an integer >= 1      else error "freeze_after_ms must be empty or an integer >= 1"
     queue_discipline in {fifo, edf}                  else error   # default fifo
     window_size is an integer in 1 ..= 2^32-1        else error   # these three are checked under every workload
     n_gc_binary_tree_size is an integer in 1 ..= 65536   else error
@@ -76,7 +77,8 @@ procedure main(argv):
 function serve(config):
     registry = cancel_tracker.registry_new(CANCEL_REGISTRY_CAPACITY)     # one per process
     counters = cancel_tracker.counters_new()                            # one per process
-    queue = worker_pool.queue_new(config.initial_stall_ms, config.queue_discipline)   # one per process; StallGate, QueueDiscipline
+    queue = worker_pool.queue_new(config.initial_stall_ms, config.queue_discipline,
+                                  config.freeze_after_ms)                # one per process; StallGate, QueueDiscipline, WorkerFreeze
     buf = message_buffer.buffer_new(config.window_size, config.n_gc_binary_tree_size, config.seed)
           if config.workload == message_buffer
           else none                                                     # MessageBuffer: full before bind

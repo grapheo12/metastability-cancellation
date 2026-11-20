@@ -9,6 +9,8 @@ Leaf component. It runs the server's `/ping` work, separately from the connectio
   through the Ping Handler (CancelCheckPoints and the CPU burn), and hands the result back to the job's stream.
 - **StallGate**: holds every worker back for `initial_stall_ms` after the first admitted `/ping`, so a backlog
   builds before any request runs.
+- **WorkerFreeze**: an injected failure. `freeze_after_ms` after the first admitted `/ping`, every worker stops for
+  good, including in the middle of a request, while the rest of the server keeps admitting and queueing.
 - **QueueLengthLog**: an optional sampler that records the WorkQueue length (jobs waiting, not running) every
   `queue_sample_interval_ms` into a CSV, so a run's backlog can be plotted over time.
 
