@@ -52,6 +52,7 @@ function validate(params):
     every backend parses as host:port                       else error "backend <i> must be host:port"
     1 <= num_clients <= MAX_CLIENTS                         else error
     lb_policy in {round_robin, least_outstanding, power_of_two, ewma}  else error
+    lb_filter in {none, deadline}                           else error             # default none
     0 <= ewma_beta <= 1 and finite                          else error "ewma_beta must be a number in [0, 1]"
     cancel_rate >= 0 and finite                             else error
     if cancel_rate > 0: duration_s > 0 and finite           else error "duration_s is required with cancel_rate > 0"
