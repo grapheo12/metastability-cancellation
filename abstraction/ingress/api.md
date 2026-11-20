@@ -12,7 +12,7 @@ or missing required parameters make the program exit non-zero with a one-line er
 | `backends` | comma-separated list of `host:port`, at least 1, at most `MAX_BACKENDS` | required | The server instances. A backend's `server_id` is its 0-based position in this list |
 | `num_clients` (`N`) | integer, `1 ..= MAX_CLIENTS` | required | Number of load-generator clients. Client ids must be `< N`. Bounds the InFlightMap key space |
 | `lb_policy` | `round_robin` \| `least_outstanding` \| `power_of_two` \| `ewma` | `least_outstanding` | The LoadBalancer policy |
-| `lb_filter` | `none` \| `deadline` | `none` | DeadlineFilter: send a request only to backends whose `(outstanding + 1) × EwmaExecTime` fits in its time left; drop it with `503` if none does. `none`: off ([load_balancer/design.md](load_balancer/design.md#deadlinefilter)) |
+| `lb_filter` | `none` \| `deadline` | `none` | DeadlineFilter: send a request only to backends whose `(outstanding + 1) × EwmaExecTime / WorkerCount` fits in its time left; drop it with `503` if none does. `none`: off ([load_balancer/design.md](load_balancer/design.md#deadlinefilter)) |
 | `ewma_beta` | float, `0 <= ewma_beta <= 1` | `0.7` | Weight of the old value in each EwmaLatency update; used by `lb_policy = ewma`, validated always ([load_balancer/design.md](load_balancer/design.md#ewmalatency)) |
 | `cancel_rate` | float, cancels/s, `>= 0` | `0` | Rate of the LoadCanceller's Poisson process. `0` disables the LoadCanceller |
 | `duration_s` | float, s, `> 0` | required if `cancel_rate > 0`, else ignored | Length of the LoadCanceller's sending phase |
@@ -52,6 +52,7 @@ an atomic binary64 starting at `EWMA_INITIAL_LATENCY_NS` ([load_balancer/api.md]
 | `bad_gateway` | Answered `502` (upstream failure) |
 | `reset` | Ended because the client reset its stream |
 | `ewma_latency_ns` | EwmaLatency: moving average of the latency of `ok` forwards, in ns (float), under every policy ([load_balancer/design.md](load_balancer/design.md#ewmalatency)) |
+| `worker_count` | The backend's latest WorkerCount (`x-worker-threads` of its last `202`/`503`), `0` before its first answer; divides the DeadlineFilter's expected wait ([load_balancer/design.md](load_balancer/design.md#deadlinefilter)) |
 | `ewma_exec_ns` | EwmaExecTime: moving average of the ExecutionTime the backend reported on `ok` and `rejected` forwards, in ns (float), or none before the first sample ([load_balancer/design.md](load_balancer/design.md#ewmaexectime)) |
 
 ## Behavior visible on the wire
@@ -114,7 +115,7 @@ monitor is off. Written at shutdown ([design.md#shutdown](design.md#shutdown)).
   "rates_per_s": { "offered", "sent", "accepted" },
   "clients_targeted": integer,
   "filter_dropped": integer,
-  "backends": [ { "server_id", "addr", "forwarded", "ok", "rejected", "bad_request", "bad_gateway", "reset", "ewma_latency_ns", "ewma_exec_ns" }, ... ]
+  "backends": [ { "server_id", "addr", "forwarded", "ok", "rejected", "bad_request", "bad_gateway", "reset", "ewma_latency_ns", "ewma_exec_ns", "worker_count" }, ... ]
 }
 ```
 

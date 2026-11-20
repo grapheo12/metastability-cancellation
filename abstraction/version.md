@@ -173,3 +173,4 @@
 | 0.31.2 | 2026-11-20T00:00:00Z | Child bump: benchmark_runner 0.8.4 (config 0.21.0) |
 | 0.32.0 | 2026-11-20T00:00:00Z | `/ping` answers carry the WorkerCount header. Child bump: protocol 0.7.0 |
 | 0.32.1 | 2026-11-20T00:00:00Z | Child bump: server 0.12.1 (connection_handler 0.5.0) |
+| 0.33.0 | 2026-11-20T00:00:00Z | DeadlineFilter divides by the WorkerCount (glossary). Child bump: ingress 0.5.0 (load_balancer 0.7.0) |
