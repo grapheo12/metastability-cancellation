@@ -48,7 +48,10 @@ function handle_ping(stream, ctx):
     inflight_map.publish(ctx.inflight, entry)                     # keyed by the RequestId
     (response, outcome) = forward(ctx, client_id, s, stream)
     inflight_map.clear(ctx.inflight, entry)                       # before relaying: see below
-    load_balancer.finish(ctx.lb, ticket, outcome)                 # same ticket: times the forward
+    exec_ns = none
+    if outcome in {ok, rejected}:
+        (exec_ns, _) = protocol.parse_exec_report(response.body)  # ExecReport; StartSlack is not used here
+    load_balancer.finish(ctx.lb, ticket, outcome, exec_ns)        # same ticket: times the forward
     return response
 
 function forward(ctx, c, s, stream):
@@ -73,6 +76,11 @@ function forward(ctx, c, s, stream):
 - **Reset wins ties.** If the client's reset and the upstream completion are observed together, whichever
   `wait for the first of` reports first wins and the other is ignored. A reset is passed upstream with HTTP/2 error
   code `CANCEL` (`RST_CODE_CANCEL`).
+- **ExecReport.** For a relayed `202` or `503`, the Frontend reads the backend's ExecutionTime from the body it is
+  about to relay ([../../protocol/design.md#execreport](../../protocol/design.md#execreport)) and hands it to `finish`,
+  which keeps the EwmaExecTime ([../load_balancer/design.md#ewmaexectime](../load_balancer/design.md#ewmaexectime)).
+  The body is relayed byte for byte all the same. `parse_exec_report` never fails; a body without an ExecReport
+  just gives none.
 - **Clear before relay.** The entry is cleared as soon as the upstream answer is in, before the response is
   written to the client, so the Load Canceller never picks a request that the Ingress has already finished with.
   The `clear` checks identity ([../inflight_map/design.md#publish-and-clear](../inflight_map/design.md#publish-and-clear)).

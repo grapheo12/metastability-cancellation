@@ -23,3 +23,4 @@
 | 0.2.0 | 2026-11-20T00:00:00Z | New subcomponent Heartbeat Monitor 0.1.0; parameter `heartbeat_timeout_ms` (validation `>= 0`, default 0 = off); started before `listening on`, stopped at shutdown; output `<output_path>.liveness.csv`; Structure, Shared state, Concurrency model |
 | 0.2.1 | 2026-11-20T00:00:00Z | Child bump: load_balancer 0.4.0 (LiveSet) |
 | 0.3.0 | 2026-11-20T00:00:00Z | BackendStats `ewma_exec_ns`; `forwards.csv` columns `exec_ns`, `ewma_exec_ns`; summary `ewma_exec_ns` (`null` before a sample). Child bump: load_balancer 0.5.0 |
+| 0.3.1 | 2026-11-20T00:00:00Z | Uses `parse_exec_report`. Child bump: frontend 0.3.0 |
