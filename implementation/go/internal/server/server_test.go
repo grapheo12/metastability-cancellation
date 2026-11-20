@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.11.1)
+// Source: abstraction/server/design.md (server v0.12.0)
 package server
 
 import (
@@ -302,7 +302,7 @@ func TestValidateWorkload(t *testing.T) {
 	for _, bad := range []func(*Params){
 		func(q *Params) { q.Workload = "gc" },
 		func(q *Params) { q.Workload = "sleep"; q.ResponseRate = "" }, // sleep needs response_rate
-		func(q *Params) { q.ResponseRate = "0" }, // validated when given
+		func(q *Params) { q.ResponseRate = "0" },                      // validated when given
 		func(q *Params) { q.WindowSize = "0" },
 		func(q *Params) { q.WindowSize = "4294967296" },
 		func(q *Params) { q.NGCBinaryTreeSize = "0" },

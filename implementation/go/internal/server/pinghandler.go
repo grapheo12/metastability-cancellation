@@ -1,8 +1,10 @@
-// Source: abstraction/server/ping_handler/design.md (ping_handler v0.10.0)
+// Source: abstraction/server/ping_handler/design.md (ping_handler v0.11.0)
 package server
 
 import (
+	"math"
 	"sync/atomic"
+	"time"
 
 	"testbed/internal/protocol"
 	"testbed/internal/sampling"
@@ -48,6 +50,8 @@ func admitPing(task *StreamTask, cfg Config, rng *sampling.Rng, st *ConnectionCa
 // Design: abstraction/server/design.md#cancellation-semantics
 func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *CancelCounters, buf *MessageBuffer, q *WorkQueue) Response {
 	id := job.RequestID
+	report := startExecReport(job) // ExecReport: stamped first, right after the pop
+	body := func() []byte { return protocol.BuildBody(id, report.execNs(), report.startSlackNs, cfg.ResponseBytes) }
 	slot := registry.Client(job.ClientID) // NoSlot if the registry is full
 	registry.Start(slot, id)              // CancelMatching: started, not finished
 	// Design: abstraction/server/ping_handler/design.md#finishedwatermark
@@ -66,7 +70,7 @@ func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *Cance
 		if idCheck() {
 			counters.CancelledBeforeProcessing.Add(1)
 			finish(false)
-			return Response{Status: protocol.StatusRejected, Body: protocol.BuildBody(id, 0, nil, cfg.ResponseBytes)}
+			return Response{Status: protocol.StatusRejected, Body: body()}
 		}
 
 		var outcome BurnOutcome
@@ -85,7 +89,7 @@ func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *Cance
 		case BurnCancelledID:
 			counters.CancelledDuringProcessing.Add(1)
 			finish(false)
-			return Response{Status: protocol.StatusRejected, Body: protocol.BuildBody(id, 0, nil, cfg.ResponseBytes)}
+			return Response{Status: protocol.StatusRejected, Body: body()}
 		}
 	} else {
 		// Design: abstraction/server/ping_handler/design.md#cancelcheckpoints
@@ -105,7 +109,60 @@ func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *Cance
 
 	finish(true) // completed: a later /cancel counts completed_before_cancel
 	// Design: abstraction/server/ping_handler/design.md#response-status
-	return Response{Status: protocol.StatusOK, Body: protocol.BuildBody(id, 0, nil, cfg.ResponseBytes)}
+	return Response{Status: protocol.StatusOK, Body: body()}
+}
+
+// execReport holds what run_ping stamps when it starts: the monotonic start
+// (time.Time carries Go's monotonic reading) and the StartSlack, nil for none.
+//
+// Design: abstraction/server/ping_handler/design.md#execreport
+type execReport struct {
+	t0           time.Time
+	startSlackNs *int64
+}
+
+// startExecReport reads the monotonic and wall clocks once and computes the
+// StartSlack = deadline_unix_ns - wall, exact and saturated to i64.
+//
+// Design: abstraction/server/ping_handler/design.md#execreport
+func startExecReport(job *PingJob) execReport {
+	t0 := time.Now()
+	r := execReport{t0: t0}
+	if job.DeadlineUnixNs != NoDeadline {
+		v := startSlack(job.DeadlineUnixNs, t0.UnixNano())
+		r.startSlackNs = &v
+	}
+	return r
+}
+
+// startSlack returns deadline - wall as exact signed arithmetic, saturated to
+// [math.MinInt64, math.MaxInt64]. wall is a Unix time in ns (>= 0 until 2262).
+//
+// Design: abstraction/server/ping_handler/design.md#execreport
+func startSlack(deadline uint64, wall int64) int64 {
+	if wall < 0 { // before 1970: never on a real clock; keep the arithmetic exact anyway
+		wall = 0
+	}
+	if deadline > math.MaxInt64 {
+		d := deadline - uint64(wall) // > 0 and fits in a u64
+		if d > math.MaxInt64 {
+			return math.MaxInt64
+		}
+		return int64(d)
+	}
+	return int64(deadline) - wall // both in [0, MaxInt64]: no overflow
+}
+
+// execNs is the ExecutionTime: monotonic time since run_ping started, read when
+// the body is built.
+//
+// Design: abstraction/server/ping_handler/design.md#execreport
+func (r execReport) execNs() uint64 {
+	d := time.Since(r.t0)
+	if d < 0 {
+		return 0
+	}
+	return uint64(d)
 }
 
 // fillMessages is the MessageWork: create every message (checking RST, then
