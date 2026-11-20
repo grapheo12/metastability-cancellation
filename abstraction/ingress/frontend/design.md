@@ -54,10 +54,11 @@ function handle_ping(stream, ctx):
     inflight_map.publish(ctx.inflight, entry)                     # keyed by the RequestId
     (response, outcome) = forward(ctx, client_id, s, stream)
     inflight_map.clear(ctx.inflight, entry)                       # before relaying: see below
-    exec_ns = none
+    exec_ns = none; worker_count = none
     if outcome in {ok, rejected}:
         (exec_ns, _) = protocol.parse_exec_report(response.body)  # ExecReport; StartSlack is not used here
-    load_balancer.finish(ctx.lb, ticket, outcome, exec_ns)        # same ticket: times the forward
+        worker_count = protocol.parse_worker_count(upstream x-worker-threads header)   # WorkerCount
+    load_balancer.finish(ctx.lb, ticket, outcome, exec_ns, worker_count)   # same ticket: times the forward
     return response
 
 function forward(ctx, c, s, stream):
@@ -82,6 +83,9 @@ function forward(ctx, c, s, stream):
 - **Reset wins ties.** If the client's reset and the upstream completion are observed together, whichever
   `wait for the first of` reports first wins and the other is ignored. A reset is passed upstream with HTTP/2 error
   code `CANCEL` (`RST_CODE_CANCEL`).
+- **WorkerCount.** For a relayed `202` or `503` the Frontend also reads the backend's `x-worker-threads` header
+  ([../../protocol/design.md#workercount](../../protocol/design.md#workercount)) and hands it to `finish`, which keeps
+  it for the DeadlineFilter. The header is not relayed to the client.
 - **ExecReport.** For a relayed `202` or `503`, the Frontend reads the backend's ExecutionTime from the body it is
   about to relay ([../../protocol/design.md#execreport](../../protocol/design.md#execreport)) and hands it to `finish`,
   which keeps the EwmaExecTime ([../load_balancer/design.md#ewmaexectime](../load_balancer/design.md#ewmaexectime)).
