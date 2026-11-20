@@ -2,14 +2,15 @@
 
 `B` is the number of backends. All counters are atomic u64, incremented and decremented with relaxed ordering.
 Each backend's `ewma_latency_ns` is an atomic u64 holding the bits of an IEEE-754 binary64 value
-([EwmaLatency](#ewmalatency)). `stats_snapshot` runs after every forward has ended or been abandoned, so its loads
+([EwmaLatency](#ewmalatency)), and so is its `ewma_exec_ns` ([EwmaExecTime](#ewmaexectime)). `stats_snapshot` runs after every forward has ended or been abandoned, so its loads
 are final. `monotonic_now_ns()` is the Ingress's monotonic clock ([../design.md#time-base](../design.md#time-base)).
 
 ## LoadBalancer
 
 ```
 lb = { policy, beta: ewma_beta, monitor: HeartbeatMonitor or none,         # BackendLiveness
-       stats: array[B] of BackendStats (counters 0, ewma_latency_ns = EWMA_INITIAL_LATENCY_NS),
+       stats: array[B] of BackendStats (counters 0, ewma_latency_ns = EWMA_INITIAL_LATENCY_NS,
+                                        ewma_exec_ns = bits of EXEC_NO_SAMPLE),
        rr: atomic u64 = 0,
        rng: rng_new(derive_seed(seed, STREAM_INGRESS_LB, 0)), rng_lock: mutex,
        log: list of ForwardRecord (empty), log_lock: mutex }                    # ForwardLog
@@ -20,7 +21,7 @@ function pick(lb):
     lb.stats[s].forwarded.fetch_add(1)
     return ForwardTicket(server_id = s, start_ns = monotonic_now_ns())
 
-function finish(lb, ticket, outcome):
+function finish(lb, ticket, outcome, exec_ns):     # exec_ns: u64 or none, the backend's ExecutionTime
     s = ticket.server_id
     lb.stats[s].outstanding.fetch_sub(1)
     lb.stats[s][outcome].fetch_add(1)                # ok | rejected | bad_request | bad_gateway | reset
@@ -30,8 +31,13 @@ function finish(lb, ticket, outcome):
         e = ewma_update(lb, s, latency_ns)           # EwmaLatency after this sample
     else:
         e = binary64_from_bits(lb.stats[s].ewma_latency_ns.load())
+    if outcome in {ok, rejected} and exec_ns is not none:
+        x = ewma_exec_update(lb, s, exec_ns)         # EwmaExecTime after this sample
+    else:
+        x = exec_value(lb, s)                        # unchanged; none before the first sample
     with lb.log_lock:
-        lb.log.append(ForwardRecord(end_ns, s, outcome, latency_ns, e))      # ForwardLog
+        lb.log.append(ForwardRecord(end_ns, s, outcome, latency_ns, e,
+                                    exec_ns if outcome in {ok, rejected} else none, x))   # ForwardLog
 ```
 
 `outstanding` is incremented in `pick`, not when the forward actually starts, so the next `pick` already sees the
@@ -70,6 +76,38 @@ function ewma_update(lb, s, sample_ns):              # sample_ns: u64
   they apply in the order the compare-and-swaps succeed, which depends on timing. No lock is taken.
 - **Returned value.** `ewma_update` returns the value it stored, which is the EwmaLatency right after this sample
   even if another sample lands a moment later. `finish` puts it in the ForwardRecord.
+
+## EwmaExecTime
+
+Per backend, the **EwmaExecTime** is an exponentially weighted moving average of the ExecutionTimes the backend
+reported in its ExecReports ([../../protocol/design.md#execreport](../../protocol/design.md#execreport)). It uses
+the same `beta` as the EwmaLatency. No LbPolicy reads it yet.
+
+```
+EXEC_NO_SAMPLE = the binary64 quiet NaN with bits 0x7FF8000000000000    # "no sample yet"
+
+function ewma_exec_update(lb, s, sample_ns):         # sample_ns: u64
+    x = float(sample_ns)                             # binary64, round to nearest
+    loop:
+        old_bits = lb.stats[s].ewma_exec_ns.load()
+        if old_bits == bits_of(EXEC_NO_SAMPLE):
+            new = x                                  # the first sample is the average
+        else:
+            old = binary64_from_bits(old_bits)
+            new = old * lb.beta + x * (1 - lb.beta)  # binary64, evaluated left to right, round to nearest
+        if lb.stats[s].ewma_exec_ns.compare_and_swap(old_bits, bits_of(new)): return new
+
+function exec_value(lb, s):                          # binary64 or none
+    bits = lb.stats[s].ewma_exec_ns.load()
+    return none if bits == bits_of(EXEC_NO_SAMPLE) else binary64_from_bits(bits)
+```
+
+- **Which samples.** Forwards that end `ok` or `rejected` and whose relayed body carried a valid `exec_ns`. A `503`
+  is a sample here, unlike for the EwmaLatency: its ExecutionTime is the work the backend really did before the
+  cancel. `bad_request`, `bad_gateway` and `reset` have no ExecReport.
+- **Start value.** None, not a guess: the first sample becomes the average. A stored binary64 is never NaN (samples
+  are finite and `beta` is in `[0, 1]`), so the sentinel cannot collide with a value.
+- **Concurrency** is as for the EwmaLatency: a lock-free compare-and-swap loop that applies each sample once.
 
 ## EwmaScore
 
@@ -144,7 +182,9 @@ function forward_log(lb):                            # -> list of ForwardRecord,
   lock. A forward abandoned at shutdown never calls `finish` and has no record.
 - **Fields.** `end_ns` is the monotonic time `finish` read, `latency_ns = end_ns - start_ns`, and
   `ewma_latency_ns` is the backend's EwmaLatency after this finish: the value `ewma_update` stored for `ok`, or the
-  value read for the other outcomes, which do not change it.
+  value read for the other outcomes, which do not change it. `exec_ns` is the ExecutionTime the backend reported
+  (none unless `ok` or `rejected`), and `ewma_exec_ns` is the backend's EwmaExecTime after this finish (none before
+  its first sample).
 - **Lock.** `log_lock` is held only for one append or one copy, and never nests with another lock. The Ingress's
   concurrency model allows it ([../design.md#concurrency-model](../design.md#concurrency-model)).
 - **Memory.** The log grows by one record per forward for the whole run, and is kept in memory until shutdown. A
@@ -207,6 +247,17 @@ ForwardLog, `ewma_beta = 0.7`, one backend starting at `1_000_000`, three forwar
 | 100 | 2_000_100 | `ok` | 2_000_000 | 1_300_000 | 1_000_000 × 0.7 + 2_000_000 × 0.3 |
 | 200 | 300_200 | `rejected` | 300_000 | 1_300_000 | not a sample: unchanged |
 | 300 | 500_300 | `ok` | 500_000 | 1_060_000 | 1_300_000 × 0.7 + 500_000 × 0.3 = 910_000 + 150_000 |
+
+EwmaExecTime, `ewma_beta = 0.7`, one backend, in finish order:
+
+| outcome | `exec_ns` given | `ewma_exec_ns` in the record | Check |
+|---|---|---|---|
+| `reset` | none | none | no sample yet |
+| `ok` | 2_000_000 | 2_000_000 | first sample is the average |
+| `rejected` | 1_000_000 | 1_700_000 | 2_000_000 × 0.7 + 1_000_000 × 0.3 = 1_400_000 + 300_000 |
+| `bad_gateway` | none | 1_700_000 | not a sample: unchanged |
+| `ok` | 500_000 | 1_340_000 | 1_700_000 × 0.7 + 500_000 × 0.3 = 1_190_000 + 150_000 |
+| `ok` | none (old server, no ExecReport) | 1_340_000 | not a sample: unchanged |
 
 `B = 1`: every policy returns 0 and draws nothing.
 
