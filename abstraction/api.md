@@ -19,6 +19,7 @@ three on remote machines. Its interface is in [Benchmark runner](#benchmark-runn
 | `cancel_check_interval_us` | integer, µs, `>= 1` | `50` | How often CooperativeCpuBurn checks the RST flag |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for ServiceTime sampling |
 | `n_worker_threads` | integer, `1 ..= 2^32-1` | `1` | Number of workers in the server's WorkerPool: how many `/ping` requests run at once ([server/worker_pool/design.md](server/worker_pool/design.md#workerpool)) |
+| `heartbeat_interval_ms` | integer, ms, `>= 1` | `500` | Time between two HeartbeatLines on each `GET /heartbeat` stream. The server stops writing them once its WorkerFreeze has started ([server/heartbeat/design.md](server/heartbeat/design.md#heartbeatsender)) |
 | `initial_stall_ms` | integer, ms, `>= 0` | `1000` | StallGate: after the first admitted `/ping`, the server queues requests but runs none for this long, to build a backlog. `0`: no stall ([server/worker_pool/design.md](server/worker_pool/design.md#stallgate)) |
 | `freeze_after_ms` | integer, ms, `>= 1`, or empty | empty | WorkerFreeze: this long after the first admitted `/ping`, every worker stops for good, in the middle of a request too. The process stays up: it still admits and queues `/ping`, answers `/cancel` and logs the queue. Empty: never ([server/worker_pool/design.md](server/worker_pool/design.md#workerfreeze)) |
 | `queue_discipline` | `fifo` \| `edf` | `fifo` | QueueDiscipline of the WorkQueue. `fifo`: `/ping`s start in the order they were admitted. `edf`: EarliestDeadlineFirst, the queued `/ping` with the earliest RequestDeadline starts first (ties and deadline-less requests in admission order) ([server/worker_pool/design.md](server/worker_pool/design.md#earliestdeadlinefirst)) |
@@ -114,7 +115,8 @@ details are in [protocol/api.md](protocol/api.md).
 - **Response:** `200`, `content-type: text/plain`, no `content-length`, then a HeartbeatStream: one HeartbeatLine
   `hb <seq>\n` every `heartbeat_interval_ms`, starting at once, until the stream is reset, the connection closes or
   the server stops ([protocol/design.md#heartbeatline](protocol/design.md#heartbeatline)). A server whose
-  WorkerFreeze ([server/worker_pool/design.md](server/worker_pool/design.md#workerfreeze)) has started writes no more lines.
+  WorkerFreeze ([server/worker_pool/design.md](server/worker_pool/design.md#workerfreeze)) has started writes no more lines
+  ([server/heartbeat/design.md](server/heartbeat/design.md#heartbeatsender)).
 - A method other than `GET` on `/heartbeat` returns `405`, empty body.
 
 ## Outputs

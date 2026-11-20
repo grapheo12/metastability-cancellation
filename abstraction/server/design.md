@@ -15,6 +15,8 @@ flowchart TD
   PR -->|CancelCheckPoints| CM[Cancel Tracker: CancelMatching]
   W -.reply.-> CH
   CH -->|"DELETE /cancel, inline"| HC[Cancel Tracker: handle_cancel]
+  CH -->|"GET /heartbeat, own coroutine"| HB[Heartbeat: HeartbeatSender]
+  HB -.freeze_wait.-> Q
   HC -->|push| R[(CancelRegistry, global)]
   CM -->|"drain, under the client's lock"| R
   PR --> P[(Protocol)]
@@ -31,6 +33,7 @@ flowchart TD
 | Message Buffer | The window of messages filled at startup and the per-client MessageCursors (`workload = message_buffer`) | [message_buffer/description.md](message_buffer/description.md) |
 | Sleeper | Sleep for an exact time in 20 ms quanta, checking RST and `/cancel` at each wake-up (`workload = sleep`) | [sleeper/description.md](sleeper/description.md) |
 | Cancel Tracker | CancelRegistry, CancelInbox, per-client cancel state, CancelMatching, CancelCounters, `handle_cancel` | [cancel_tracker/description.md](cancel_tracker/description.md) |
+| Heartbeat | Stream a HeartbeatLine every `heartbeat_interval_ms` on `GET /heartbeat`, stopping once the WorkerFreeze has started | [heartbeat/description.md](heartbeat/description.md) |
 
 ## Configuration validation
 
@@ -46,6 +49,7 @@ function validate(params):
     n_worker_threads is an integer in 1 ..= 2^32-1   else error
     queue_sample_interval_ms is an integer >= 1      else error   # checked even if queue_log_path is empty
     initial_stall_ms is an integer >= 0              else error
+    heartbeat_interval_ms is an integer >= 1         else error "heartbeat_interval_ms must be an integer >= 1"
     freeze_after_ms is empty or an integer >= 1      else error "freeze_after_ms must be empty or an integer >= 1"
     queue_discipline in {fifo, edf}                  else error   # default fifo
     window_size is an integer in 1 ..= 2^32-1        else error   # these three are checked under every workload
@@ -176,7 +180,8 @@ A stall in progress (StallGate, [worker_pool/design.md#stallgate](worker_pool/de
 shutdown. When a signal arrives, the Listener stops accepting, stops the QueueLengthLog sampler (it writes no extra row and
 closes the file, [worker_pool/design.md#queuelengthlog](worker_pool/design.md#queuelengthlog)) and closes the WorkQueue
 ([worker_pool/design.md#workqueue](worker_pool/design.md#workqueue)): jobs still queued are answered `Aborted`
-and never run. Then each Connection Handler is told to close: it sends `GOAWAY`, stops reading and sets the RST
+and never run; this also releases any HeartbeatSender held by the WorkerFreeze, which then returns without writing
+([heartbeat/design.md#heartbeatsender](heartbeat/design.md#heartbeatsender)). Then each Connection Handler is told to close: it sends `GOAWAY`, stops reading and sets the RST
 flag of each of its streams. A burn that is running is not interrupted (in `ignore` mode the process exits when the
 burn finishes, or the OS ends it). Once every worker and every handler has returned, the server prints the
 CancelCounters line ([api.md#cancelcounters-output](api.md#cancelcounters-output)) and exits `0`.
