@@ -40,7 +40,9 @@ CancelCounters ([Server outputs](#server-outputs)).
 | `num_clients` (`N`) | integer, `1 ..= 2^32-1` | required | Number of simulated clients. Each gets its own connection |
 | `global_rate` | float, requests/s, `> 0` | required | Total offered rate. Each client's arrival rate is `global_rate / N` |
 | `request_bytes` | integer, bytes, `>= 76` | required | Exact byte length of every `/ping` request body (a PingRequestBody) |
-| `slo_ms` | float, ms, `> 0` | required | A request not fully answered within `slo_ms` of its first send is cancelled, with every RequestCopy ([load_generator/client/design.md](load_generator/client/design.md#slocancellation)) |
+| `slo_ms` | float, ms, `> 0` | required | A request is available only if fully answered `ok` within `slo_ms` of its first send. With `slo_cancel = true` a request not answered by then is cancelled, with every RequestCopy ([load_generator/client/design.md](load_generator/client/design.md#slocancellation)) |
+| `slo_cancel` | `true` \| `false` | `true` | SLOCancellation on or off. `false`: requests are never cancelled at the SLO; a late answer is recorded `ok` and counts against Availability; requests still outstanding `drain_timeout_ms` after the active phase are cancelled ([load_generator/run_controller/design.md](load_generator/run_controller/design.md#drainphase)) |
+| `drain_timeout_ms` | integer, ms, `> 0` | `10000` | With `slo_cancel = false`, how long after `duration_s` outstanding requests may still finish before the DrainDeadline cancels them. Unused when `slo_cancel = true` |
 | `duration_s` | float, s, `> 0` | required | Length of the active phase. No request is sent at or after this time |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for arrival sampling |
 | `n_waiting_requests` | integer, `1 ..= MAX_WAITING_REQUESTS` (`1000`) | `100` | Most requests one client keeps outstanding at once. An arrival that comes due at the cap waits for a slot. `1` is a closed loop ([load_generator/client/design.md](load_generator/client/design.md#semiopenloopclient)) |

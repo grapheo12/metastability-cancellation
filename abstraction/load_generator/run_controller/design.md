@@ -8,6 +8,8 @@ function validate(params):
     global_rate > 0                          else error
     protocol.validate_request_body_size(request_bytes)   # >= 76 (PingRequestBody)
     slo_ms > 0                               else error
+    slo_cancel is exactly "true" or "false"  else error             # default true
+    drain_timeout_ms is an integer > 0       else error             # default 10000; checked even when unused
     duration_s > 0                           else error
     seed parses as u64                       else error
     target parses as host:port               else error
@@ -22,7 +24,8 @@ function validate(params):
                          slo_ns = round(slo_ms * 1e6),
                          retry_timeout_ns = round(retry_timeout_ms * 1e6),
                          initial_stall_ns = initial_stall_ms * 1_000_000,
-                         duration_ns = round(duration_s * 1e9))
+                         duration_ns = round(duration_s * 1e9),
+                         drain_timeout_ns = drain_timeout_ms * 1_000_000)
 ```
 
 The last retry check keeps every client's streams of unresolved requests within the `SETTINGS_MAX_CONCURRENT_STREAMS`
@@ -67,10 +70,17 @@ so its per-connection seeds) matches the client ids.
 
 ## DrainPhase
 
-No extra mechanism is needed. Each client's sender stops sending once `now() >= duration_ns`. Its receiver then
-waits for the up to `n_waiting_requests` requests still outstanding, and each one is resolved by its response or by
-its own SLO timer within `slo_ns` of being sent. Joining every client therefore ends by about
-`duration_ns + slo_ns` (plus scheduling jitter), whatever `n_waiting_requests` is.
+Each client's sender stops sending once `now() >= duration_ns`. Its receiver then waits for the up to
+`n_waiting_requests` requests still outstanding. How long that takes depends on `slo_cancel`:
+
+| `slo_cancel` | What ends an outstanding request | Clients have all returned by about |
+|---|---|---|
+| `true` (default) | its response, an error, or its own SLO timer within `slo_ns` of being sent ([../client/design.md#slocancellation](../client/design.md#slocancellation)) | `duration_ns + slo_ns` |
+| `false` | its response, an error, or the client's **DrainDeadline** at `duration_ns + drain_timeout_ns`, which cancels every request still outstanding (defined with SLOCancellation in [../client/design.md#slocancellation](../client/design.md#slocancellation)) | `duration_ns + drain_timeout_ns` |
+
+Either way the end is bounded, whatever `n_waiting_requests` is (plus scheduling jitter). With `slo_cancel = false`
+a request stuck on a server that never answers (a WorkerFreeze, for example) holds its client's slot until the
+DrainDeadline.
 
 `MAX_WAITING_REQUESTS = 1000` is the stream count every peer must accept on one connection
 ([../../api.md#wire-contract-ping](../../api.md#wire-contract-ping)), so a client never opens more streams than the
