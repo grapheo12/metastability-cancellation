@@ -57,3 +57,4 @@
 | 0.7.2 | 2026-11-20T00:00:00Z | Child bump: result_plotter 0.14.0 (FigurePage full width, legend below) |
 | 0.7.3 | 2026-11-20T00:00:00Z | Child bump: result_plotter 0.15.0 (ForwardLog with appended columns) |
 | 0.8.0 | 2026-11-20T00:00:00Z | Output directory lists `start_slack.html`. Child bump: result_plotter 0.16.0 |
+| 0.8.1 | 2026-11-20T00:00:00Z | Child bump: config 0.20.0 (`slo_cancel`, `drain_timeout_ms`) |

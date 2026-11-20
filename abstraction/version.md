@@ -165,3 +165,4 @@
 | 0.30.0 | 2026-11-20T00:00:00Z | Load-generator parameters `slo_cancel` and `drain_timeout_ms`; `slo_ms` defines Availability either way. Child bump: load_generator 0.8.0 (run_controller 0.7.0) |
 | 0.30.1 | 2026-11-20T00:00:00Z | Child bump: load_generator 0.8.1 (client 0.9.0) |
 | 0.30.2 | 2026-11-20T00:00:00Z | Child bump: load_generator 0.8.2 (metrics 0.6.0) |
+| 0.30.3 | 2026-11-20T00:00:00Z | Child bump: benchmark_runner 0.8.1 (config 0.20.0) |
