@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.17.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.18.0)
 """BenchConfig loading and validation, SweepExpansion, argument formatting."""
 
 import datetime
@@ -17,7 +17,7 @@ PROGRAM_PARAMS = {
     "server": ["response_rate", "response_bytes", "cancel_mode", "cancel_check_interval_us", "seed",
                "n_worker_threads", "queue_sample_interval_ms", "initial_stall_ms",
                "workload", "window_size", "n_gc_binary_tree_size", "n_messages_per_request",
-               "queue_discipline"],
+               "queue_discipline", "freeze_after_ms"],
     "load_gen": ["num_clients", "global_rate", "request_bytes", "slo_ms", "duration_s", "seed",
                  "n_waiting_requests", "retry_timeout_ms", "max_retries", "initial_stall_ms"],
     "ingress": ["lb_policy", "ewma_beta", "cancel_rate", "duration_s", "seed", "initial_stall_ms"],
@@ -25,7 +25,7 @@ PROGRAM_PARAMS = {
 # Design: abstraction/benchmark_runner/config/design.md#processplacement
 PLACEMENT_KEYS = ["threads", "cpu_set"]
 RUNNER_KEYS = {
-    "server": ["listen_port", "instances", "gc_trace"] + PLACEMENT_KEYS,
+    "server": ["listen_port", "instances", "gc_trace", "freeze_instance"] + PLACEMENT_KEYS,
     "load_gen": PLACEMENT_KEYS,
     "ingress": ["machine", "listen_port", "cancel_rate_fraction"] + PLACEMENT_KEYS,
 }
@@ -91,6 +91,7 @@ class BenchConfig:
     cancel_rate_fraction: object = None  # number, list of numbers, or None (CancelRateFraction)
     file_swept: list = None  # swept keys in file order, program parameters and sweepable runner keys
     gc_trace: bool = False  # [server] gc_trace: run the servers with the BuildManifest's GcTraceHook
+    freeze_instance: object = None  # [server] freeze_instance (FreezeTarget): instance id, or None
 
     def swept_keys(self):
         if self.run.sweep_order is not None:
@@ -230,6 +231,7 @@ def load_config(path, runner_dir, now=None):
     ports = {"server": 8080, "ingress": 9090}
     instances = 1
     gc_trace = False
+    freeze_instance = None
     ingress_machine = "client"
     placement = {section: {"threads": None, "cpu_set": None} for section in SECTIONS}
     for section in SECTIONS:
@@ -259,6 +261,8 @@ def load_config(path, runner_dir, now=None):
                     if value not in ("client", "server"):
                         raise ConfigError(f'{name} must be "client" or "server"')
                     ingress_machine = value
+                elif key == "freeze_instance":  # FreezeTarget; range checked by check_freeze_target
+                    freeze_instance = value
                 elif key == "instances":
                     if not _is_int(value) or not 1 <= value <= MAX_INSTANCES:
                         raise ConfigError(f"{name} must be an integer in 1..=64")
@@ -298,6 +302,7 @@ def load_config(path, runner_dir, now=None):
     if ports["server"] + instances - 1 > 65535:
         raise ConfigError("server.listen_port + server.instances - 1 must be <= 65535")
     check_ingress_placement(ingress_machine, ports, instances, len(machines["server"]))
+    check_freeze_target(freeze_instance, params["server"], len(machines["server"]) * instances)
 
     run = doc.get("run", {})
     _check_keys(run, {"output_dir", "sweep_order", "cooldown_s", "on_failure", "server_ready_timeout_s",
@@ -324,7 +329,7 @@ def load_config(path, runner_dir, now=None):
         link=_link_table(run.get("link", {})),
     )
     config = BenchConfig(repo_url, machines, params, ports["server"], instances, ports["ingress"], ingress_machine,
-                         options, placement, fraction, file_swept, gc_trace)
+                         options, placement, fraction, file_swept, gc_trace, freeze_instance)
     swept = [k for k in file_swept if k not in options.link]
     if sweep_order is not None:
         if sorted(sweep_order) != sorted(swept) or len(set(sweep_order)) != len(sweep_order):
@@ -391,6 +396,16 @@ def check_ingress_placement(ingress_machine, ports, instances, n_server_machines
         raise ConfigError("ingress.listen_port collides with a server instance port")
 
 
+# Design: abstraction/benchmark_runner/config/design.md#freezetarget
+def check_freeze_target(freeze_instance, server_params, total):
+    if freeze_instance is None:
+        return
+    if not _is_int(freeze_instance) or not 0 <= freeze_instance <= total - 1:
+        raise ConfigError(f"server.freeze_instance must be an integer in 0..={total - 1}")
+    if "freeze_after_ms" not in server_params:
+        raise ConfigError("server.freeze_instance needs server.freeze_after_ms")
+
+
 # Design: abstraction/benchmark_runner/config/design.md#cancelratefraction
 def derived_cancel_rate(global_rate, fraction):
     return float(global_rate) * float(fraction)  # IEEE 754 double, round to nearest even
@@ -409,6 +424,7 @@ class SweepPoint:
     placement: dict = None  # program -> {"threads", "cpu_set"} (ProcessPlacement)
     linked: dict = None  # LinkedSweep: linked key -> this point's value; {} when unused
     server_hosts: list = None  # ServerMachines: server machine index of each instance id; None = all on machine 0
+    freeze: dict = None  # FreezeTarget: {"instance", "freeze_after_ms"}, or None
 
     def hosts(self):
         return self.server_hosts if self.server_hosts is not None else [0] * self.server_instances
@@ -426,6 +442,7 @@ class SweepPoint:
             "ingress_machine": self.ingress_machine,
             "loadgen_target": self.loadgen_target,
             "placement": self.placement,
+            "freeze": self.freeze,
         }
 
     def arg(self, program, name):
@@ -462,12 +479,17 @@ def expand_sweep(config):
         if config.cancel_rate_fraction is not None:
             f = choose.get("ingress.cancel_rate_fraction", config.cancel_rate_fraction)
             ingress_args.append(("cancel_rate", derived_cancel_rate(dict(loadgen_args)["global_rate"], f)))
+        # Design: abstraction/benchmark_runner/config/design.md#freezetarget
+        freeze = None
+        if config.freeze_instance is not None:
+            freeze = {"instance": config.freeze_instance, "freeze_after_ms": dict(server_args)["freeze_after_ms"]}
+            server_args = [(k, v) for k, v in server_args if k != "freeze_after_ms"]
         # Design: abstraction/benchmark_runner/config/design.md#processplacement
         placement = {PROGRAM_OF[section]: dict(config.placement[section]) for section in SECTIONS}
         # Design: abstraction/benchmark_runner/config/design.md#servermachines
         points.append(SweepPoint(pid, swept, server_args, loadgen_args, ingress_args, config.total_instances(),
                                  config.ingress_machine, loadgen_target(config), placement, linked,
-                                 server_hosts(config)))
+                                 server_hosts(config), freeze))
     return points
 
 

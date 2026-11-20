@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.17.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.18.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -170,6 +170,40 @@ class ConfigTest(unittest.TestCase):
         self.assertConfigError(base.replace("[machines.client]", tables(2) + "[machines.client]")
                                .replace("cancel_rate = 100", 'cancel_rate = 100\nmachine = "server"'),
                                'ingress.machine = "server" needs exactly one server machine')
+
+    # Design: abstraction/benchmark_runner/config/design.md#freezetarget
+    def test_freeze_target(self):
+        two = BASE.replace('[machines.server]\nhost = "local"\n',
+                           '[[machines.server]]\nhost = "h0"\ndata_addr = "10.0.0.0"\n'
+                           '[[machines.server]]\nhost = "h1"\ndata_addr = "10.0.0.1"\n')
+        # neither: no freeze
+        p = cfg.expand_sweep(self.load(two))[0]
+        self.assertIsNone(p.freeze)
+        self.assertIsNone(p.to_json()["freeze"])
+        # freeze_after_ms alone: an ordinary parameter of every instance
+        p = cfg.expand_sweep(self.load(two.replace("response_rate = 2000", "response_rate = 2000\nfreeze_after_ms = 60000")))[0]
+        self.assertEqual((p.arg("server", "freeze_after_ms"), p.freeze), (60000, None))
+        # with freeze_instance: only in SweepPoint.freeze
+        text = two.replace("response_rate = 2000", "response_rate = 2000\nfreeze_after_ms = 60000\nfreeze_instance = 0")
+        p = cfg.expand_sweep(self.load(text))[0]
+        self.assertIsNone(p.arg("server", "freeze_after_ms"))
+        self.assertEqual(p.freeze, {"instance": 0, "freeze_after_ms": 60000})
+        self.assertEqual(p.to_json()["freeze"], {"instance": 0, "freeze_after_ms": 60000})
+        # swept freeze_after_ms
+        text = two.replace("response_rate = 2000",
+                           "response_rate = 2000\nfreeze_after_ms = [30000, 60000]\nfreeze_instance = 1")
+        got = [p.freeze for p in cfg.expand_sweep(self.load(text))]
+        self.assertIn({"instance": 1, "freeze_after_ms": 30000}, got)
+        self.assertIn({"instance": 1, "freeze_after_ms": 60000}, got)
+        # errors
+        self.assertConfigError(two.replace("response_rate = 2000", "freeze_after_ms = 1\nfreeze_instance = 2"),
+                               "server.freeze_instance must be an integer in 0..=1")
+        self.assertConfigError(two.replace("response_rate = 2000", "freeze_after_ms = 1\nfreeze_instance = -1"),
+                               "server.freeze_instance must be an integer in 0..=1")
+        self.assertConfigError(two.replace("response_rate = 2000", "freeze_instance = 0"),
+                               "server.freeze_instance needs server.freeze_after_ms")
+        self.assertConfigError(two.replace("response_rate = 2000", "freeze_after_ms = 1\nfreeze_instance = [0, 1]"),
+                               "server.freeze_instance cannot be swept")
 
     def test_defaults(self):
         c = self.load(BASE)
