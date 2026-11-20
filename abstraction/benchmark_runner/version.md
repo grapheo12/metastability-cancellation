@@ -54,3 +54,4 @@
 | 0.6.1 | 2026-11-19T00:00:00Z | Child bump: experiment_executor 0.9.0 (FreezeTarget) |
 | 0.7.0 | 2026-11-20T00:00:00Z | Child bump: config 0.19.0 (heartbeat parameters) |
 | 0.7.1 | 2026-11-20T00:00:00Z | Output directory lists `ingress.liveness.csv`. Child bump: experiment_executor 0.10.0 |
+| 0.7.2 | 2026-11-20T00:00:00Z | Child bump: result_plotter 0.14.0 (FigurePage full width, legend below) |

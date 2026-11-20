@@ -153,3 +153,4 @@
 | 0.23.1 | 2026-11-20T00:00:00Z | Child bump: ingress 0.2.1 (load_balancer 0.4.0) |
 | 0.24.0 | 2026-11-20T00:00:00Z | Child bump: benchmark_runner 0.7.0 (config 0.19.0) |
 | 0.24.1 | 2026-11-20T00:00:00Z | Child bump: benchmark_runner 0.7.1 (experiment_executor 0.10.0) |
+| 0.24.2 | 2026-11-20T00:00:00Z | Child bump: benchmark_runner 0.7.2 (result_plotter 0.14.0) |
