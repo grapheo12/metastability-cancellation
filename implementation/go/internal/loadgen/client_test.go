@@ -21,7 +21,7 @@ import (
 // server whose StallGate holds every request for 200 ms, so requests pile up.
 func runAgainstStalledServer(t *testing.T, waiting uint32) []RequestRecord {
 	t.Helper()
-	s, err := server.Listen(server.Config{ListenAddr: "127.0.0.1:0", ResponseRate: 100000, ResponseBytes: 64,
+	s, err := server.Listen(server.Config{ListenAddr: "127.0.0.1:0", ResponseRate: 100000, ResponseBytes: 128,
 		CancelMode: server.CancelCooperative, CancelCheckIntervalUs: 50, NWorkerThreads: 1, InitialStallMs: 200})
 	if err != nil {
 		t.Fatal(err)
@@ -142,7 +142,7 @@ func scriptedServer(t *testing.T, delays []time.Duration) (*h2client.Conn, chan 
 		select {
 		case <-time.After(delays[n]):
 			w.WriteHeader(protocol.StatusOK)
-			w.Write(protocol.BuildBody(id, 64))
+			w.Write(protocol.BuildBody(id, 0, nil, 128))
 			done <- copyEnd{copy: n, deadline: dl}
 		case <-req.Context().Done():
 			done <- copyEnd{copy: n, reset: true, deadline: dl}

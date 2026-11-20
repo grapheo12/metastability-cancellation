@@ -66,7 +66,7 @@ func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *Cance
 		if idCheck() {
 			counters.CancelledBeforeProcessing.Add(1)
 			finish(false)
-			return Response{Status: protocol.StatusRejected, Body: protocol.BuildBody(id, cfg.ResponseBytes)}
+			return Response{Status: protocol.StatusRejected, Body: protocol.BuildBody(id, 0, nil, cfg.ResponseBytes)}
 		}
 
 		var outcome BurnOutcome
@@ -85,7 +85,7 @@ func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *Cance
 		case BurnCancelledID:
 			counters.CancelledDuringProcessing.Add(1)
 			finish(false)
-			return Response{Status: protocol.StatusRejected, Body: protocol.BuildBody(id, cfg.ResponseBytes)}
+			return Response{Status: protocol.StatusRejected, Body: protocol.BuildBody(id, 0, nil, cfg.ResponseBytes)}
 		}
 	} else {
 		// Design: abstraction/server/ping_handler/design.md#cancelcheckpoints
@@ -105,7 +105,7 @@ func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *Cance
 
 	finish(true) // completed: a later /cancel counts completed_before_cancel
 	// Design: abstraction/server/ping_handler/design.md#response-status
-	return Response{Status: protocol.StatusOK, Body: protocol.BuildBody(id, cfg.ResponseBytes)}
+	return Response{Status: protocol.StatusOK, Body: protocol.BuildBody(id, 0, nil, cfg.ResponseBytes)}
 }
 
 // fillMessages is the MessageWork: create every message (checking RST, then

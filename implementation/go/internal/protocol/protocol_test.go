@@ -1,4 +1,4 @@
-// Source: abstraction/protocol/design.md (protocol v0.5.0)
+// Source: abstraction/protocol/design.md (protocol v0.6.0)
 package protocol
 
 import (
@@ -30,22 +30,57 @@ func TestRequestIDWorkedExamples(t *testing.T) {
 
 // Design: abstraction/protocol/design.md#paddedjsonbody
 func TestBuildBodyWorkedExamples(t *testing.T) {
+	i64 := func(v int64) *int64 { return &v }
 	cases := []struct {
-		id    uint64
-		total int
-	}{{0, 128}, {12884901889, 128}, {18446744073709551615, 42}}
+		id, exec uint64
+		slack    *int64
+		total, k int
+	}{
+		{0, 0, nil, 128, 71},
+		{12884901889, 201345678, i64(4791002113), 128, 43},
+		{7, 150000000, i64(-35000000), 128, 54},
+		{18446744073709551615, 18446744073709551615, i64(-9223372036854775808), 115, 0},
+	}
 	for _, c := range cases {
-		b := BuildBody(c.id, c.total)
-		if len(b) != c.total {
-			t.Fatalf("len=%d want %d", len(b), c.total)
+		b := BuildBody(c.id, c.exec, c.slack, c.total)
+		pad := len(b) - strings.Index(string(b), `"payload":"`) - len(`"payload":"`) - len(`"}`)
+		if len(b) != c.total || pad != c.k {
+			t.Fatalf("len=%d (want %d), k=%d (want %d): %s", len(b), c.total, pad, c.k, b)
 		}
 		got, err := ParseBody(b)
-		if err != nil || got != c.id {
-			t.Fatalf("round trip: %d %v", got, err)
+		ex, exOK, sl, slOK := ParseExecReport(b)
+		if err != nil || got != c.id || !exOK || ex != c.exec || slOK != (c.slack != nil) || (c.slack != nil && sl != *c.slack) {
+			t.Fatalf("round trip %s: id %d %v, exec %d %v, slack %d %v", b, got, err, ex, exOK, sl, slOK)
 		}
 	}
-	if string(BuildBody(0, 25)) != `{"id":"0","payload":"xx"}` {
-		t.Fatalf("unexpected serialization %s", BuildBody(0, 25))
+	if s := string(BuildBody(7, 150000000, i64(-35000000), 76)); s != `{"id":"7","exec_ns":"150000000","start_slack_ns":"-35000000","payload":"xx"}` {
+		t.Fatalf("unexpected serialization %s", s)
+	}
+}
+
+// Design: abstraction/protocol/design.md#parsing
+// Design: abstraction/protocol/design.md#execreport
+func TestParseExecReportWorkedExamples(t *testing.T) {
+	cases := []struct {
+		body    string
+		exec    uint64
+		execOK  bool
+		slack   int64
+		slackOK bool
+	}{
+		{`{"id":"7","exec_ns":"150000000","start_slack_ns":"-35000000","payload":""}`, 150000000, true, -35000000, true},
+		{`{"id":"7","exec_ns":"0","start_slack_ns":"","payload":""}`, 0, true, 0, false},
+		{`{"id":"7","payload":""}`, 0, false, 0, false},
+		{`{"id":"7","exec_ns":150,"start_slack_ns":"+5"}`, 0, false, 0, false},
+		{`{"id":"7","exec_ns":"1","start_slack_ns":"-9223372036854775809"}`, 1, true, 0, false},
+		{`{"id":"7","exec_ns":"1","start_slack_ns":"9223372036854775807"}`, 1, true, 9223372036854775807, true},
+		{`not json`, 0, false, 0, false},
+	}
+	for _, c := range cases {
+		ex, exOK, sl, slOK := ParseExecReport([]byte(c.body))
+		if ex != c.exec || exOK != c.execOK || sl != c.slack || slOK != c.slackOK {
+			t.Errorf("%s: got (%d %v, %d %v)", c.body, ex, exOK, sl, slOK)
+		}
 	}
 }
 
@@ -59,8 +94,8 @@ func TestBuildCancelBody(t *testing.T) {
 
 // Design: abstraction/protocol/design.md#minimum-body-size
 func TestValidateBodySize(t *testing.T) {
-	if ValidateBodySize(41) == nil || ValidateBodySize(42) != nil {
-		t.Fatal("minimum body size must be 42")
+	if ValidateBodySize(114) == nil || ValidateBodySize(115) != nil {
+		t.Fatal("minimum body size must be 115")
 	}
 }
 

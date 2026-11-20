@@ -122,7 +122,7 @@ func TestWorkQueueFIFOAndClose(t *testing.T) {
 // Design: abstraction/server/worker_pool/design.md#failure-and-edge-cases
 func TestWorkerPoolJoinAfterClose(t *testing.T) {
 	q := NewWorkQueue(0, QueueFIFO, 0)
-	p := StartWorkerPool(4, q, Config{CancelMode: CancelCooperative, ResponseBytes: 64, CancelCheckIntervalUs: 50}, NewCancelRegistry(16), &CancelCounters{}, nil)
+	p := StartWorkerPool(4, q, Config{CancelMode: CancelCooperative, ResponseBytes: 128, CancelCheckIntervalUs: 50}, NewCancelRegistry(16), &CancelCounters{}, nil)
 	q.Close()
 	done := make(chan struct{})
 	go func() { p.Join(); close(done) }()
@@ -138,7 +138,7 @@ func TestWorkerPoolJoinAfterClose(t *testing.T) {
 //
 // Design: abstraction/server/worker_pool/design.md#ordering
 func TestWorkerPoolOrdering(t *testing.T) {
-	cfg := Config{CancelMode: CancelIgnore, ResponseBytes: 64, CancelCheckIntervalUs: 50}
+	cfg := Config{CancelMode: CancelIgnore, ResponseBytes: 128, CancelCheckIntervalUs: 50}
 	for _, c := range []struct {
 		n    uint32
 		want []uint32
@@ -186,7 +186,7 @@ func TestResetWhileQueued(t *testing.T) {
 	j := testJob(9, 3_600_000_000) // an hour: must not run
 	j.Task.Cancelled.Store(true)
 	_ = q.Push(j)
-	p := StartWorkerPool(1, q, Config{CancelMode: CancelCooperative, ResponseBytes: 64, CancelCheckIntervalUs: 50}, reg, &CancelCounters{}, nil)
+	p := StartWorkerPool(1, q, Config{CancelMode: CancelCooperative, ResponseBytes: 128, CancelCheckIntervalUs: 50}, reg, &CancelCounters{}, nil)
 	if r := j.Reply(); !r.Aborted {
 		t.Fatalf("got %+v, want Aborted", r)
 	}
@@ -293,7 +293,7 @@ func TestStallGateCloseDuringStall(t *testing.T) {
 	q := NewWorkQueue(60_000, QueueFIFO, 0)
 	j := testJob(0, 0)
 	_ = q.Push(j)
-	p := StartWorkerPool(2, q, Config{CancelMode: CancelCooperative, ResponseBytes: 64, CancelCheckIntervalUs: 50}, NewCancelRegistry(16), &CancelCounters{}, nil)
+	p := StartWorkerPool(2, q, Config{CancelMode: CancelCooperative, ResponseBytes: 128, CancelCheckIntervalUs: 50}, NewCancelRegistry(16), &CancelCounters{}, nil)
 	time.Sleep(50 * time.Millisecond)
 	start := time.Now()
 	q.Close()
@@ -374,7 +374,7 @@ func TestWorkerFreezeHoldsRunningRequest(t *testing.T) {
 		q := NewWorkQueue(0, QueueFIFO, 50)
 		_ = q.Push(testJob(0, 300_000)) // arms the freeze at +50 ms
 		job := q.Pop()
-		cfg := Config{CancelMode: mode, ResponseBytes: 64, Workload: WorkloadSleep, FreezeAfterMs: 50}
+		cfg := Config{CancelMode: mode, ResponseBytes: 128, Workload: WorkloadSleep, FreezeAfterMs: 50}
 		got := make(chan Response, 1)
 		go func() { got <- runPing(job, cfg, NewCancelRegistry(16), &CancelCounters{}, nil, q) }()
 		select {

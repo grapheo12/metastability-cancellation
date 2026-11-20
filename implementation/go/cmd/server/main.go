@@ -23,7 +23,7 @@ func main() {
 	fs.StringVar(&p.ListenAddr, "listen_addr", p.ListenAddr, "host:port to accept connections on")
 	fs.StringVar(&p.Workload, "workload", p.Workload, "cpu_burn | message_buffer | sleep")
 	fs.StringVar(&p.ResponseRate, "response_rate", p.ResponseRate, "service rate in requests/s (required for cpu_burn)")
-	fs.StringVar(&p.ResponseBytes, "response_bytes", p.ResponseBytes, "exact /ping response body size (required, >= 42)")
+	fs.StringVar(&p.ResponseBytes, "response_bytes", p.ResponseBytes, "exact /ping response body size (required, >= 115)")
 	fs.StringVar(&p.CancelMode, "cancel_mode", p.CancelMode, "ignore | cooperative")
 	fs.StringVar(&p.CancelCheckIntervalUs, "cancel_check_interval_us", p.CancelCheckIntervalUs, "RST check interval in µs")
 	fs.StringVar(&p.Seed, "seed", p.Seed, "base seed")

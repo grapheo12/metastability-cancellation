@@ -62,7 +62,7 @@ func startTestServer(t *testing.T, mode CancelMode, rate float64) *Server {
 
 func startTestServerN(t *testing.T, mode CancelMode, rate float64, workers uint32) *Server {
 	t.Helper()
-	s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: rate, ResponseBytes: 64, CancelMode: mode, CancelCheckIntervalUs: 50, NWorkerThreads: workers})
+	s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: rate, ResponseBytes: 128, CancelMode: mode, CancelCheckIntervalUs: 50, NWorkerThreads: workers})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,17 +80,17 @@ func TestCancelBeforeProcessing(t *testing.T) {
 	client, canceller := dialTest(t, addr), dialTest(t, addr)
 
 	id0, id1 := protocol.MakeRequestID(0, 5), protocol.MakeRequestID(1, 5)
-	if st, b := client.do(t, "POST", "/ping", protocol.BuildBody(id0, 64)); st != 202 || len(b) != 64 {
+	if st, b := client.do(t, "POST", "/ping", protocol.BuildBody(id0, 0, nil, 128)); st != 202 || len(b) != 128 {
 		t.Fatalf("first ping: %d len %d", st, len(b))
 	}
 	if st, _ := canceller.do(t, "DELETE", "/cancel", protocol.BuildCancelBody(id1)); st != 202 {
 		t.Fatalf("cancel: %d", st)
 	}
-	st, b := client.do(t, "POST", "/ping", protocol.BuildBody(id1, 64))
-	if got, _ := protocol.ParseBody(b); st != 503 || len(b) != 64 || got != id1 {
+	st, b := client.do(t, "POST", "/ping", protocol.BuildBody(id1, 0, nil, 128))
+	if got, _ := protocol.ParseBody(b); st != 503 || len(b) != 128 || got != id1 {
 		t.Fatalf("cancelled ping: %d %s", st, b)
 	}
-	if st, _ := client.do(t, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(2, 6), 64)); st != 400 {
+	if st, _ := client.do(t, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(2, 6), 0, nil, 128)); st != 400 {
 		t.Fatalf("client id mismatch: %d", st)
 	}
 	if st, _ := client.do(t, "GET", "/ping", nil); st != 405 {
@@ -118,7 +118,7 @@ func TestCancelDuringProcessing(t *testing.T) {
 		canceller.do(t, "DELETE", "/cancel", protocol.BuildCancelBody(id))
 	}()
 	start := time.Now()
-	if st, _ := client.do(t, "POST", "/ping", protocol.BuildBody(id, 64)); st != 503 {
+	if st, _ := client.do(t, "POST", "/ping", protocol.BuildBody(id, 0, nil, 128)); st != 503 {
 		t.Fatalf("got %d", st)
 	}
 	if time.Since(start) > 5*time.Second {
@@ -138,7 +138,7 @@ func TestRSTStopsBurn(t *testing.T) {
 	client := dialTest(t, s.Addr().String())
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, "POST", "http://"+client.addr+"/ping", bytes.NewReader(protocol.BuildBody(1, 64)))
+	req, _ := http.NewRequestWithContext(ctx, "POST", "http://"+client.addr+"/ping", bytes.NewReader(protocol.BuildBody(1, 0, nil, 128)))
 	if _, err := client.cc.RoundTrip(req); err == nil {
 		t.Fatal("expected cancellation error")
 	}
@@ -172,13 +172,13 @@ func TestFinishedWatermarkReplies(t *testing.T) {
 		t.Fatal("before any /ping: want null")
 	}
 	id0, id1 := protocol.MakeRequestID(0, 4), protocol.MakeRequestID(1, 4)
-	if st, _ := client.do(t, "POST", "/ping", protocol.BuildBody(id0, 64)); st != 202 {
+	if st, _ := client.do(t, "POST", "/ping", protocol.BuildBody(id0, 0, nil, 128)); st != 202 {
 		t.Fatalf("ping 0: %d", st)
 	}
 	if f, ok := finished(id1); !ok || f != id0 { // also registers a cancel for id1
 		t.Fatalf("after 202: %d %v", f, ok)
 	}
-	if st, _ := client.do(t, "POST", "/ping", protocol.BuildBody(id1, 64)); st != 503 {
+	if st, _ := client.do(t, "POST", "/ping", protocol.BuildBody(id1, 0, nil, 128)); st != 503 {
 		t.Fatalf("ping 1: %d", st)
 	}
 	if f, ok := finished(protocol.MakeRequestID(99, 4)); !ok || f != id1 {
@@ -193,7 +193,7 @@ func TestFinishedWatermarkReplies(t *testing.T) {
 	id := protocol.MakeRequestID(0, 7)
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, "POST", "http://"+addr+"/ping", bytes.NewReader(protocol.BuildBody(id, 64)))
+	req, _ := http.NewRequestWithContext(ctx, "POST", "http://"+addr+"/ping", bytes.NewReader(protocol.BuildBody(id, 0, nil, 128)))
 	if _, err := client.cc.RoundTrip(req); err == nil {
 		t.Fatal("expected cancellation error")
 	}
@@ -221,8 +221,8 @@ func TestTwoWorkersServeInParallel(t *testing.T) {
 	slow, slow2, canceller := dialTest(t, addr), dialTest(t, addr), dialTest(t, addr)
 	idA, idB := protocol.MakeRequestID(1, 0), protocol.MakeRequestID(1, 1) // clients 0 and 1
 	resA, resB := make(chan int, 1), make(chan int, 1)
-	go func() { st, _ := slow.do(t, "POST", "/ping", protocol.BuildBody(idA, 64)); resA <- st }()
-	go func() { st, _ := slow2.do(t, "POST", "/ping", protocol.BuildBody(idB, 64)); resB <- st }()
+	go func() { st, _ := slow.do(t, "POST", "/ping", protocol.BuildBody(idA, 0, nil, 128)); resA <- st }()
+	go func() { st, _ := slow2.do(t, "POST", "/ping", protocol.BuildBody(idB, 0, nil, 128)); resB <- st }()
 	time.Sleep(100 * time.Millisecond) // both workers are now burning
 
 	start := time.Now()
@@ -262,7 +262,7 @@ func TestTwoWorkersServeInParallel(t *testing.T) {
 // Design: abstraction/server/design.md#configuration-validation
 func TestValidateNWorkerThreads(t *testing.T) {
 	p := DefaultParams()
-	p.ResponseRate, p.ResponseBytes = "10", "64"
+	p.ResponseRate, p.ResponseBytes = "10", "128"
 	if c, err := Validate(p); err != nil || c.NWorkerThreads != 1 {
 		t.Fatalf("default: %+v %v", c, err)
 	}
@@ -289,7 +289,7 @@ func TestValidateNWorkerThreads(t *testing.T) {
 // Design: abstraction/server/design.md#configuration-validation
 func TestValidateWorkload(t *testing.T) {
 	p := DefaultParams()
-	p.ResponseBytes = "64"
+	p.ResponseBytes = "128"
 	if _, err := Validate(p); err == nil {
 		t.Fatal("cpu_burn needs response_rate")
 	}
@@ -322,7 +322,7 @@ func TestValidateWorkload(t *testing.T) {
 // Design: abstraction/server/design.md#configuration-validation
 func TestValidateSleepWorkload(t *testing.T) {
 	p := DefaultParams()
-	p.ResponseBytes, p.Workload, p.ResponseRate = "64", "sleep", "5"
+	p.ResponseBytes, p.Workload, p.ResponseRate = "128", "sleep", "5"
 	if c, err := Validate(p); err != nil || c.Workload != WorkloadSleep || c.ResponseRate != 5 {
 		t.Fatalf("%+v %v", c, err)
 	}
@@ -336,7 +336,7 @@ func TestValidateSleepWorkload(t *testing.T) {
 // Design: abstraction/server/design.md#cancellation-semantics
 func TestSleepWorkloadEndToEnd(t *testing.T) {
 	start := func(mode CancelMode, rate float64) *Server {
-		s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: rate, ResponseBytes: 64, CancelMode: mode,
+		s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: rate, ResponseBytes: 128, CancelMode: mode,
 			CancelCheckIntervalUs: 50, NWorkerThreads: 1, Workload: WorkloadSleep})
 		if err != nil {
 			t.Fatal(err)
@@ -348,7 +348,7 @@ func TestSleepWorkloadEndToEnd(t *testing.T) {
 		s := start(mode, 50) // mean 20 ms
 		c := dialTest(t, s.Addr().String())
 		for seq := uint32(0); seq < 3; seq++ {
-			if st, b := c.do(t, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(seq, 1), 64)); st != 202 || len(b) != 64 {
+			if st, b := c.do(t, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(seq, 1), 0, nil, 128)); st != 202 || len(b) != 128 {
 				t.Fatalf("mode %v ping %d: %d", mode, seq, st)
 			}
 		}
@@ -358,7 +358,7 @@ func TestSleepWorkloadEndToEnd(t *testing.T) {
 	client := dialTest(t, s.Addr().String())
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, "POST", "http://"+client.addr+"/ping", bytes.NewReader(protocol.BuildBody(1, 64)))
+	req, _ := http.NewRequestWithContext(ctx, "POST", "http://"+client.addr+"/ping", bytes.NewReader(protocol.BuildBody(1, 0, nil, 128)))
 	if _, err := client.cc.RoundTrip(req); err == nil {
 		t.Fatal("expected cancellation error")
 	}
@@ -378,7 +378,7 @@ func TestSleepWorkloadEndToEnd(t *testing.T) {
 // Design: abstraction/server/ping_handler/design.md#messagework
 // Design: abstraction/server/design.md#listener
 func TestMessageBufferEndToEnd(t *testing.T) {
-	s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseBytes: 64, CancelMode: CancelCooperative,
+	s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseBytes: 128, CancelMode: CancelCooperative,
 		CancelCheckIntervalUs: 50, NWorkerThreads: 2, Workload: WorkloadMessageBuffer, WindowSize: 100,
 		NGCBinaryTreeSize: 3, NMessagesPerRequest: 5, Seed: 11})
 	if err != nil {
@@ -391,7 +391,7 @@ func TestMessageBufferEndToEnd(t *testing.T) {
 	c := dialTest(t, s.Addr().String())
 	for seq := uint32(0); seq < 3; seq++ {
 		id := protocol.MakeRequestID(seq, 1)
-		if st, b := c.do(t, "POST", "/ping", protocol.BuildBody(id, 64)); st != 202 || len(b) != 64 {
+		if st, b := c.do(t, "POST", "/ping", protocol.BuildBody(id, 0, nil, 128)); st != 202 || len(b) != 128 {
 			t.Fatalf("ping %d: %d", seq, st)
 		}
 	}
@@ -458,7 +458,7 @@ func TestFillMessagesCancel(t *testing.T) {
 func TestQueueLengthLogEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "server_0.queue.csv")
-	s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: 0.0001, ResponseBytes: 64,
+	s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: 0.0001, ResponseBytes: 128,
 		CancelMode: CancelCooperative, CancelCheckIntervalUs: 50, NWorkerThreads: 1,
 		QueueLogPath: path, QueueSampleIntervalMs: 5})
 	if err != nil {
@@ -470,7 +470,7 @@ func TestQueueLengthLogEndToEnd(t *testing.T) {
 	for c := uint32(0); c < 3; c++ { // three clients; one burns, two wait
 		client := dialTest(t, addr)
 		req, _ := http.NewRequestWithContext(ctx, "POST", "http://"+addr+"/ping",
-			bytes.NewReader(protocol.BuildBody(protocol.MakeRequestID(0, c), 64)))
+			bytes.NewReader(protocol.BuildBody(protocol.MakeRequestID(0, c), 0, nil, 128)))
 		go func() { _, _ = client.cc.RoundTrip(req) }()
 	}
 	time.Sleep(150 * time.Millisecond)
@@ -480,7 +480,7 @@ func TestQueueLengthLogEndToEnd(t *testing.T) {
 	if !strings.HasPrefix(string(b), "t_ms,queue_len\n") || !strings.Contains(string(b), ",2\n") {
 		t.Fatalf("queue log does not show 2 waiting jobs:\n%s", b)
 	}
-	if _, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: 1, ResponseBytes: 64, NWorkerThreads: 1,
+	if _, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: 1, ResponseBytes: 128, NWorkerThreads: 1,
 		QueueLogPath: filepath.Join(dir, "missing", "q.csv"), QueueSampleIntervalMs: 10}); err == nil {
 		t.Fatal("unwritable queue_log_path must fail Listen")
 	}
@@ -492,7 +492,7 @@ func TestQueueLengthLogEndToEnd(t *testing.T) {
 //
 // Design: abstraction/server/worker_pool/design.md#stallgate
 func TestInitialStallEndToEnd(t *testing.T) {
-	s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: 100000, ResponseBytes: 64,
+	s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: 100000, ResponseBytes: 128,
 		CancelMode: CancelCooperative, CancelCheckIntervalUs: 50, NWorkerThreads: 1, InitialStallMs: 300})
 	if err != nil {
 		t.Fatal(err)
@@ -507,12 +507,12 @@ func TestInitialStallEndToEnd(t *testing.T) {
 	idA, idB := protocol.MakeRequestID(0, 0), protocol.MakeRequestID(0, 1)
 	resB := make(chan int, 1)
 	start := time.Now()
-	go func() { st, _ := b.do(t, "POST", "/ping", protocol.BuildBody(idB, 64)); resB <- st }()
+	go func() { st, _ := b.do(t, "POST", "/ping", protocol.BuildBody(idB, 0, nil, 128)); resB <- st }()
 	time.Sleep(50 * time.Millisecond)
 	if st, _ := canceller.do(t, "DELETE", "/cancel", protocol.BuildCancelBody(idB)); st != 202 {
 		t.Fatalf("cancel during stall: %d", st)
 	}
-	if st, _ := a.do(t, "POST", "/ping", protocol.BuildBody(idA, 64)); st != 202 {
+	if st, _ := a.do(t, "POST", "/ping", protocol.BuildBody(idA, 0, nil, 128)); st != 202 {
 		t.Fatalf("A: %d", st)
 	}
 	if waited := time.Since(start); waited < 300*time.Millisecond {
@@ -540,7 +540,7 @@ func TestEDFEndToEnd(t *testing.T) {
 	}{{QueueEDF, "3210"}, {QueueFIFO, "0123"}} {
 		// ResponseRate 20: ServiceTimes of tens of ms (fixed by seed 0), so each finish is well
 		// separated from the next and the order in which the clients see 202s is the pop order.
-		s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: 20, ResponseBytes: 64,
+		s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: 20, ResponseBytes: 128,
 			CancelMode: CancelCooperative, CancelCheckIntervalUs: 50, NWorkerThreads: 1, InitialStallMs: 300,
 			QueueDiscipline: tc.disc})
 		if err != nil {
@@ -580,7 +580,7 @@ func TestEDFEndToEnd(t *testing.T) {
 // Design: abstraction/server/design.md#configuration-validation
 func TestValidateQueueDiscipline(t *testing.T) {
 	p := DefaultParams()
-	p.ResponseRate, p.ResponseBytes = "100", "64"
+	p.ResponseRate, p.ResponseBytes = "100", "128"
 	if c, err := Validate(p); err != nil || c.QueueDiscipline != QueueFIFO {
 		t.Fatalf("default: %+v %v", c, err)
 	}
@@ -599,7 +599,7 @@ func TestValidateQueueDiscipline(t *testing.T) {
 // Design: abstraction/server/design.md#configuration-validation
 func TestValidateFreezeAfterMs(t *testing.T) {
 	p := DefaultParams()
-	p.ResponseRate, p.ResponseBytes = "100", "64"
+	p.ResponseRate, p.ResponseBytes = "100", "128"
 	if c, err := Validate(p); err != nil || c.FreezeAfterMs != 0 {
 		t.Fatalf("default: %+v %v", c, err)
 	}

@@ -80,12 +80,12 @@ func TestForwardRelayAndSpread(t *testing.T) {
 		conn := dial(t, ing)
 		for seq := uint32(0); seq < 3; seq++ {
 			id := protocol.MakeRequestID(seq, c)
-			st, b, err := ping(t, ctx, conn, "POST", "/ping", protocol.BuildBody(id, 64))
-			if got, _ := protocol.ParseBody(b); err != nil || st != 202 || len(b) != 64 || got != id {
+			st, b, err := ping(t, ctx, conn, "POST", "/ping", protocol.BuildBody(id, 0, nil, 128))
+			if got, _ := protocol.ParseBody(b); err != nil || st != 202 || len(b) != 128 || got != id {
 				t.Fatalf("client %d seq %d: %d %v", c, seq, st, err)
 			}
 		}
-		if st, _, _ := ping(t, ctx, conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(0, 9), 64)); st != 400 {
+		if st, _, _ := ping(t, ctx, conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(0, 9), 0, nil, 128)); st != 400 {
 			t.Fatalf("client id >= N: %d", st)
 		}
 		if st, _, _ := ping(t, ctx, conn, "GET", "/ping", nil); st != 405 {
@@ -128,7 +128,7 @@ func TestCancelReachesBackend(t *testing.T) {
 	conn := dial(t, ing)
 	id := protocol.MakeRequestID(0, 2)
 	start := time.Now()
-	st, b, err := ping(t, context.Background(), conn, "POST", "/ping", protocol.BuildBody(id, 64))
+	st, b, err := ping(t, context.Background(), conn, "POST", "/ping", protocol.BuildBody(id, 0, nil, 128))
 	if got, _ := protocol.ParseBody(b); err != nil || st != 503 || got != id {
 		t.Fatalf("want 503 for %d: %d %v", id, st, err)
 	}
@@ -162,7 +162,7 @@ func TestResetAndBadGateway(t *testing.T) {
 	conn := dial(t, ing)
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	if _, _, err := ping(t, ctx, conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(0, 1), 64)); err == nil {
+	if _, _, err := ping(t, ctx, conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(0, 1), 0, nil, 128)); err == nil {
 		t.Fatal("expected the client's reset")
 	}
 	// The reset reaches the Ingress a few ms after the client gives up; wait for the
@@ -184,7 +184,7 @@ func TestResetAndBadGateway(t *testing.T) {
 
 	dead := startIngress(t, []string{"127.0.0.1:1"}, PolicyRoundRobin, 0)
 	c2 := dial(t, dead)
-	if st, b, _ := ping(t, context.Background(), c2, "POST", "/ping", protocol.BuildBody(5, 64)); st != 502 || len(b) != 0 {
+	if st, b, _ := ping(t, context.Background(), c2, "POST", "/ping", protocol.BuildBody(5, 0, nil, 128)); st != 502 || len(b) != 0 {
 		t.Fatalf("dead backend: %d", st)
 	}
 	_ = dead.Shutdown()
@@ -204,7 +204,7 @@ func TestEwmaPrefersFastBackend(t *testing.T) {
 	ing := startIngress(t, []string{slow.Addr().String(), fast.Addr().String()}, PolicyEwma, 0)
 	conn := dial(t, ing)
 	for seq := uint32(0); seq < 20; seq++ {
-		if st, _, err := ping(t, context.Background(), conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(seq, 0), 64)); err != nil || st != 202 {
+		if st, _, err := ping(t, context.Background(), conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(seq, 0), 0, nil, 128)); err != nil || st != 202 {
 			t.Fatalf("seq %d: %d %v", seq, st, err)
 		}
 	}

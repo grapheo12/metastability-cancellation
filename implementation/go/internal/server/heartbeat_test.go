@@ -31,7 +31,7 @@ func readLines(body *bufio.Reader, out chan<- time.Time) {
 // Design: abstraction/server/heartbeat/design.md#heartbeatsender
 // Design: abstraction/server/connection_handler/design.md#routing
 func TestHeartbeatStreamAndFreeze(t *testing.T) {
-	s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: 1000, ResponseBytes: 64,
+	s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseRate: 1000, ResponseBytes: 128,
 		CancelMode: CancelCooperative, CancelCheckIntervalUs: 50, NWorkerThreads: 1,
 		HeartbeatIntervalMs: 100, FreezeAfterMs: 400})
 	if err != nil {
@@ -67,7 +67,7 @@ func TestHeartbeatStreamAndFreeze(t *testing.T) {
 		t.Fatalf("%d lines in ~350 ms at 100 ms", n)
 	}
 	// Arm the freeze with one /ping: it freezes 400 ms later.
-	if st, _ := c.do(t, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(0, 1), 64)); st != 202 {
+	if st, _ := c.do(t, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(0, 1), 0, nil, 128)); st != 202 {
 		t.Fatalf("ping: %d", st)
 	}
 	armed := time.Now()
@@ -102,7 +102,7 @@ loop:
 // Design: abstraction/server/design.md#configuration-validation
 func TestValidateHeartbeatInterval(t *testing.T) {
 	p := DefaultParams()
-	p.ResponseRate, p.ResponseBytes = "100", "64"
+	p.ResponseRate, p.ResponseBytes = "100", "128"
 	if c, err := Validate(p); err != nil || c.HeartbeatIntervalMs != 500 {
 		t.Fatalf("default: %+v %v", c, err)
 	}

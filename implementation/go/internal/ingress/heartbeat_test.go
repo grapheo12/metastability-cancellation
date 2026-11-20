@@ -16,7 +16,7 @@ import (
 
 func startHeartbeatBackend(t *testing.T, freezeAfterMs uint64) *server.Server {
 	t.Helper()
-	s, err := server.Listen(server.Config{ListenAddr: "127.0.0.1:0", ResponseRate: 100000, ResponseBytes: 64,
+	s, err := server.Listen(server.Config{ListenAddr: "127.0.0.1:0", ResponseRate: 100000, ResponseBytes: 128,
 		CancelMode: server.CancelCooperative, CancelCheckIntervalUs: 50, NWorkerThreads: 1,
 		HeartbeatIntervalMs: 100, FreezeAfterMs: freezeAfterMs})
 	if err != nil {
@@ -132,7 +132,7 @@ func TestHeartbeatMonitorDropsFrozenBackend(t *testing.T) {
 	defer cancel()
 	// Two pings arm both servers (round robin): b0 freezes 300 ms later.
 	for seq := uint32(0); seq < 2; seq++ {
-		if st, _, err := ping(t, ctx, conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(seq, 1), 64)); err != nil || st != 202 {
+		if st, _, err := ping(t, ctx, conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(seq, 1), 0, nil, 128)); err != nil || st != 202 {
 			t.Fatalf("ping %d: %d %v", seq, st, err)
 		}
 	}
@@ -146,7 +146,7 @@ func TestHeartbeatMonitorDropsFrozenBackend(t *testing.T) {
 	before := ing.lb.stats[0].Forwarded.Load()
 	for seq := uint32(2); seq < 8; seq++ {
 		c, cc := context.WithTimeout(context.Background(), time.Second)
-		if st, _, err := ping(t, c, conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(seq, 1), 64)); err != nil || st != 202 {
+		if st, _, err := ping(t, c, conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(seq, 1), 0, nil, 128)); err != nil || st != 202 {
 			t.Fatalf("ping %d after the freeze: %d %v", seq, st, err)
 		}
 		cc()

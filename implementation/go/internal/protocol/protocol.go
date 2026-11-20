@@ -1,7 +1,7 @@
 // Package protocol implements the /ping, /cancel and /heartbeat wire formats shared by
 // the server, the load generator and the load canceller.
 //
-// Source: abstraction/protocol/design.md (protocol v0.5.0)
+// Source: abstraction/protocol/design.md (protocol v0.6.0)
 package protocol
 
 import (
@@ -28,8 +28,8 @@ const (
 	StatusMethodNotAllowed = 405
 	StatusBadGateway       = 502 // sent only by an Ingress
 	RSTCodeCancel          = 0x8
-	MinBodyBytes           = 42
-	MinRequestBodyBytes    = 76 // PingRequestBody: 36 fixed + 20-digit id + 20-digit deadline
+	MinBodyBytes           = 115 // PaddedJsonBody: 55 fixed + 20-digit id + 20-digit exec_ns + 20-byte start_slack_ns
+	MinRequestBodyBytes    = 76  // PingRequestBody: 36 fixed + 20-digit id + 20-digit deadline
 )
 
 // ErrParse is returned by ParseBody for any body that does not carry a valid RequestId.
@@ -49,23 +49,36 @@ func SplitRequestID(id uint64) (seq, clientID uint32) {
 	return uint32(id & 0xFFFFFFFF), uint32(id >> 32)
 }
 
-// bodyFixedOverhead is len(`{"id":"`) + len(`","payload":"`) + len(`"}`) = 7 + 13 + 2.
+// bodyFixedOverhead is len(`{"id":"`) + len(`","exec_ns":"`) + len(`","start_slack_ns":"`) +
+// len(`","payload":"`) + len(`"}`) = 7 + 13 + 20 + 13 + 2.
 //
 // Design: abstraction/protocol/design.md#paddedjsonbody
-const bodyFixedOverhead = 22
+const bodyFixedOverhead = 55
 
-// BuildBody returns {"id":"<dec>","payload":"xxx..."} of exactly totalBytes bytes.
+// BuildBody returns the PaddedJsonBody
+// {"id":"<dec>","exec_ns":"<ex>","start_slack_ns":"<sl>","payload":"xxx..."} of exactly
+// totalBytes bytes, carrying the ExecReport. startSlackNs nil (no RequestDeadline)
+// writes an empty start_slack_ns.
 //
 // Design: abstraction/protocol/design.md#paddedjsonbody
-func BuildBody(id uint64, totalBytes int) []byte {
+func BuildBody(id, execNs uint64, startSlackNs *int64, totalBytes int) []byte {
 	dec := strconv.FormatUint(id, 10)
-	k := totalBytes - bodyFixedOverhead - len(dec)
+	ex := strconv.FormatUint(execNs, 10)
+	sl := ""
+	if startSlackNs != nil {
+		sl = strconv.FormatInt(*startSlackNs, 10) // signed_decimal_string: "-" only when negative
+	}
+	k := totalBytes - bodyFixedOverhead - len(dec) - len(ex) - len(sl)
 	if k < 0 {
 		panic("protocol: body size below MinBodyBytes")
 	}
 	b := make([]byte, 0, totalBytes)
 	b = append(b, `{"id":"`...)
 	b = append(b, dec...)
+	b = append(b, `","exec_ns":"`...)
+	b = append(b, ex...)
+	b = append(b, `","start_slack_ns":"`...)
+	b = append(b, sl...)
 	b = append(b, `","payload":"`...)
 	for i := 0; i < k; i++ {
 		b = append(b, 'x')
@@ -79,7 +92,7 @@ func BuildBody(id uint64, totalBytes int) []byte {
 // Design: abstraction/protocol/design.md#minimum-body-size
 func ValidateBodySize(totalBytes int) error {
 	if totalBytes < MinBodyBytes {
-		return errors.New("body size must be >= 42 bytes")
+		return errors.New("body size must be >= 115 bytes")
 	}
 	return nil
 }
@@ -220,6 +233,65 @@ func ParseDeadline(body []byte) (deadline uint64, ok bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// ParseExecReport leniently extracts the ExecReport from a PaddedJsonBody. Each
+// field has its own ok flag (false is the design's none); it never fails.
+//
+// Design: abstraction/protocol/design.md#parsing
+// Design: abstraction/protocol/design.md#execreport
+func ParseExecReport(body []byte) (execNs uint64, execOK bool, startSlackNs int64, slackOK bool) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(body, &obj); err != nil || obj == nil {
+		return 0, false, 0, false
+	}
+	if raw, present := obj["exec_ns"]; present {
+		if n, err := parseDecimalString(raw); err == nil {
+			execNs, execOK = n, true
+		}
+	}
+	if raw, present := obj["start_slack_ns"]; present {
+		startSlackNs, slackOK = parseSignedDecimalString(raw)
+	}
+	return execNs, execOK, startSlackNs, slackOK
+}
+
+// parseSignedDecimalString decodes a JSON string of an optional "-" and 1..19 ASCII
+// digits whose value fits in an i64; ok is false otherwise (including "").
+//
+// Design: abstraction/protocol/design.md#parsing
+func parseSignedDecimalString(raw json.RawMessage) (int64, bool) {
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return 0, false
+	}
+	neg := len(s) > 0 && s[0] == '-'
+	d := s
+	if neg {
+		d = s[1:]
+	}
+	if len(d) == 0 || len(d) > 19 {
+		return 0, false
+	}
+	for i := 0; i < len(d); i++ {
+		if d[i] < '0' || d[i] > '9' {
+			return 0, false
+		}
+	}
+	u, err := strconv.ParseUint(d, 10, 64) // 19 digits always fit in a u64
+	if err != nil {
+		return 0, false
+	}
+	if neg {
+		if u > 1<<63 {
+			return 0, false
+		}
+		return int64(-u), true // wraps to -2^63 exactly when u == 2^63
+	}
+	if u > 1<<63-1 {
+		return 0, false
+	}
+	return int64(u), true
 }
 
 // BuildHeartbeatLine returns the HeartbeatLine "hb <seq>\n".
