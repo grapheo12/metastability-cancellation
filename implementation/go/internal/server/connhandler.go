@@ -1,4 +1,4 @@
-// Source: abstraction/server/connection_handler/design.md (connection_handler v0.4.0)
+// Source: abstraction/server/connection_handler/design.md (connection_handler v0.5.0)
 package server
 
 import (
@@ -190,6 +190,9 @@ func (h *connectionHandler) writeResponse(w http.ResponseWriter, task *StreamTas
 		hdr.Set("content-type", protocol.ContentTypeJSON)
 	}
 	hdr.Set("content-length", strconv.Itoa(len(resp.Body)))
+	if task.Path == protocol.PingPath && (resp.Status == protocol.StatusOK || resp.Status == protocol.StatusRejected) {
+		hdr.Set(protocol.WorkerThreadsHeader, strconv.FormatUint(uint64(h.cfg.NWorkerThreads), 10)) // WorkerCount
+	}
 	w.WriteHeader(resp.Status)
 	_, _ = w.Write(resp.Body) // errors on a reset stream are ignored
 }

@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.12.0)
+// Source: abstraction/server/design.md (server v0.12.1)
 package server
 
 import (
@@ -620,4 +620,42 @@ func TestProcessStartLine(t *testing.T) {
 	if got := ProcessStartLine(time.Unix(1700000000, 12)); got != "process_start_unix_ns 1700000000000000012" {
 		t.Fatalf("got %q", got)
 	}
+}
+
+// /ping 202 and 503 carry the WorkerCount header; 400/405/404 and /cancel do not.
+//
+// Design: abstraction/server/connection_handler/design.md#response-writing
+func TestWorkerCountHeader(t *testing.T) {
+	s := startTestServerN(t, CancelCooperative, 100000, 3)
+	addr := s.Addr().String()
+	client, canceller := dialTest(t, addr), dialTest(t, addr)
+	header := func(c *testClient, method, path string, body []byte) (int, string) {
+		t.Helper()
+		req, _ := http.NewRequest(method, "http://"+c.addr+path, bytes.NewReader(body))
+		req.ContentLength = int64(len(body))
+		resp, err := c.cc.RoundTrip(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		_, _ = io.ReadAll(resp.Body)
+		return resp.StatusCode, resp.Header.Get(protocol.WorkerThreadsHeader)
+	}
+	id0, id1 := protocol.MakeRequestID(0, 5), protocol.MakeRequestID(1, 5)
+	if st, h := header(client, "POST", "/ping", protocol.BuildBody(id0, 0, nil, 128)); st != 202 || h != "3" {
+		t.Fatalf("202: %d %q", st, h)
+	}
+	if st, h := header(canceller, "DELETE", "/cancel", protocol.BuildCancelBody(id1)); st != 202 || h != "" {
+		t.Fatalf("/cancel: %d %q", st, h)
+	}
+	if st, h := header(client, "POST", "/ping", protocol.BuildBody(id1, 0, nil, 128)); st != 503 || h != "3" {
+		t.Fatalf("503: %d %q", st, h)
+	}
+	if st, h := header(client, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(2, 6), 0, nil, 128)); st != 400 || h != "" {
+		t.Fatalf("400: %d %q", st, h)
+	}
+	if st, h := header(client, "GET", "/ping", nil); st != 405 || h != "" {
+		t.Fatalf("405: %d %q", st, h)
+	}
+	s.Shutdown()
 }
