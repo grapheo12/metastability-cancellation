@@ -20,7 +20,7 @@
 | `STATUS_METHOD_NOT_ALLOWED` | `405` | Wrong method for the path. Empty body | [../api.md#wire-contract-ping](../api.md#wire-contract-ping), [../api.md#wire-contract-cancel](../api.md#wire-contract-cancel) |
 | `STATUS_BAD_GATEWAY` | `502` | Sent only by an Ingress: the backend could not be reached or its stream failed. Empty body | [design.md#status-classification-load-generator-client](design.md#status-classification-load-generator-client) |
 | `RST_CODE_CANCEL` | `0x8` | HTTP/2 error code the client uses in `RST_STREAM` to cancel | [../load_generator/client/design.md#slocancellation](../load_generator/client/design.md#slocancellation) |
-| `MIN_BODY_BYTES` | `42` | Smallest allowed `response_bytes` | [design.md#minimum-body-size](design.md#minimum-body-size) |
+| `MIN_BODY_BYTES` | `115` | Smallest allowed `response_bytes` | [design.md#minimum-body-size](design.md#minimum-body-size) |
 | `MIN_REQUEST_BODY_BYTES` | `76` | Smallest allowed `request_bytes` (a PingRequestBody) | [design.md#minimum-body-size](design.md#minimum-body-size) |
 
 ## Functions
@@ -32,10 +32,10 @@ Returns `(client_id << 32) | seq`. See [design.md#requestid](design.md#requestid
 Inverse of `make_request_id`: `client_id = id >> 32`, `seq = id & 0xFFFFFFFF`. See
 [design.md#requestid](design.md#requestid).
 
-### `build_body(id: u64, total_bytes: integer) -> bytes`
-Returns a PaddedJsonBody whose length is exactly `total_bytes`. Precondition:
+### `build_body(id: u64, exec_ns: u64, start_slack_ns: i64 | none, total_bytes: integer) -> bytes`
+Returns a PaddedJsonBody carrying the ExecReport, exactly `total_bytes` long. Precondition:
 `total_bytes >= MIN_BODY_BYTES`. Used for `/ping` responses (both `202` and `503`). See
-[design.md#paddedjsonbody](design.md#paddedjsonbody).
+[design.md#paddedjsonbody](design.md#paddedjsonbody) and [design.md#execreport](design.md#execreport).
 
 ### `build_request_body(id: u64, deadline_unix_ns: u64, total_bytes: integer) -> bytes`
 Returns a PingRequestBody carrying the RequestDeadline, exactly `total_bytes` long. Precondition:
@@ -59,6 +59,11 @@ Pulls the RequestId out of a PingRequestBody, a PaddedJsonBody or a CancelBody. 
 ### `parse_deadline(body: bytes) -> u64 | none`
 Pulls the RequestDeadline out of a PingRequestBody; `none` if it is missing or malformed (never an error). The
 server's Ping Handler calls it when admitting a `/ping`. See [design.md#parsing](design.md#parsing).
+
+### `parse_exec_report(body: bytes) -> (u64 | none, i64 | none)`
+Pulls the ExecReport (`exec_ns`, `start_slack_ns`) out of a PaddedJsonBody; each is `none` if missing or malformed
+(never an error). The load-generator client and the Ingress Frontend call it on every `202` and `503`. See
+[design.md#parsing](design.md#parsing).
 
 ### `build_heartbeat_line(seq: u64) -> bytes`
 Returns the HeartbeatLine `hb <seq>\n`. The server writes one per heartbeat. See

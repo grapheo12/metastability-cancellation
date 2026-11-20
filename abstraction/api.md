@@ -14,7 +14,7 @@ three on remote machines. Its interface is in [Benchmark runner](#benchmark-runn
 | `listen_addr` | `host:port` | `0.0.0.0:8080` | Address to accept connections on |
 | `workload` | `cpu_burn` \| `message_buffer` \| `sleep` | `cpu_burn` | The ServerWorkload. `cpu_burn`: each `/ping` burns its ServiceTime. `sleep`: each `/ping` sleeps its ServiceTime in 20 ms quanta, using no CPU ([server/sleeper/design.md](server/sleeper/design.md#quantumsleep)). `message_buffer`: each `/ping` writes `n_messages_per_request` new messages into the MessageBuffer ([server/design.md](server/design.md#why-a-messagebuffer-workload)) |
 | `response_rate` | float, requests/s, `> 0` | required when `workload` is `cpu_burn` or `sleep` | Rate of the exponential ServiceTime. Mean CPU time (or sleep time) per request is `1/response_rate` s |
-| `response_bytes` | integer, bytes, `>= 42` | required | Exact byte length of every `/ping` response body (`202` and `503`) |
+| `response_bytes` | integer, bytes, `>= 115` | required | Exact byte length of every `/ping` response body (`202` and `503`) |
 | `cancel_mode` | `ignore` \| `cooperative` | `cooperative` | `ignore`: never cancel work (RST and `/cancel` both ignored). `cooperative`: stop work on RST or on a matching `/cancel` |
 | `cancel_check_interval_us` | integer, µs, `>= 1` | `50` | How often CooperativeCpuBurn checks the RST flag |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for ServiceTime sampling |
@@ -87,7 +87,8 @@ details are in [protocol/api.md](protocol/api.md).
   ([protocol/design.md](protocol/design.md#pingrequestbody)). A body without a valid deadline is still accepted.
 - **Response:** status `202` (completed) or `503` (cancelled by `/cancel`), `content-type:
   application/json`, body is a PaddedJsonBody of exactly `response_bytes` bytes echoing the same
-  RequestId.
+  RequestId and carrying the server's ExecReport: the ExecutionTime `exec_ns` and the StartSlack `start_slack_ns`
+  ([protocol/design.md](protocol/design.md#execreport)).
 - **Other routes:** a method other than `POST` on `/ping` returns `405`. Any path other than `/ping`,
   `/cancel` and `/heartbeat` returns `404`. A body that cannot be parsed, or a RequestId whose client id differs
   from the one this connection is bound to, returns `400`. These responses have an empty body.
