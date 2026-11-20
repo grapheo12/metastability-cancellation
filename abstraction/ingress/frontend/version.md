@@ -7,3 +7,4 @@
 | 0.2.1 | 2026-11-11T00:00:00Z | ForwardTask keeps the ForwardTicket from `pick` and gives it to `finish` (Load Balancer 0.2.0) |
 | 0.2.2 | 2026-11-12T00:00:00Z | StartOnce also records `run_start_unix_ns` (wall clock) for the summary |
 | 0.3.0 | 2026-11-20T00:00:00Z | ForwardTask: on `ok`/`rejected`, read `exec_ns` from the relayed body (`parse_exec_report`) and pass it to `finish`; body still relayed unchanged |
+| 0.4.0 | 2026-11-20T00:00:00Z | DeadlineFilter: `handle_ping` passes `remaining_ns` (RequestDeadline minus the wall clock) to `pick`; on `Dropped` answers `503 {"id"}` without forwarding; state machine and table |
