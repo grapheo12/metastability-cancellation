@@ -45,16 +45,18 @@ function admit_ping(task, config, rng, conn_state):
 ## run_ping
 
 ```
-function run_ping(job, config, registry, counters, buf):        # buf: MessageBuffer, or NONE for cpu_burn and sleep
+function run_ping(job, config, registry, counters, buf, queue):  # buf: MessageBuffer, or NONE for cpu_burn and sleep
     id = job.request_id
+    freeze = () -> worker_pool.freeze_wait(queue)                         # WorkerFreeze: returns at once unless frozen
     slot = cancel_tracker.registry_client(registry, job.client_id)      # none if the registry is full
     cancel_tracker.registry_start(registry, slot, id)                    # CancelMatching: started, not finished
     finish = (completed) -> cancel_tracker.registry_publish_finished(registry, slot, id, completed, counters)
 
     if config.cancel_mode == cooperative:
-        id_check = () -> cancel_tracker.should_cancel(registry, slot, counters, id)
+        id_check = () -> { freeze(); return cancel_tracker.should_cancel(registry, slot, counters, id) }
 
         # CancelCheckPoint 1: before processing
+        freeze()
         if job.task.cancelled.load():
             finish(false); return Aborted                                # RST wins
         if id_check():
@@ -75,12 +77,13 @@ function run_ping(job, config, registry, counters, buf):        # buf: MessageBu
             counters.cancelled_during_processing.fetch_add(1, relaxed)
             finish(false); return Response(503, protocol.build_body(id, config.response_bytes))
     else:  # ignore
+        freeze_check = (() -> { freeze(); return false }) if config.freeze_after_ms is set else NONE
         if config.workload == cpu_burn:
-            cpu_burner.burn(job.service_us, NONE, config.cancel_check_interval_us, NONE, CHECK_ITER)
+            cpu_burner.burn(job.service_us, NONE, config.cancel_check_interval_us, freeze_check, CHECK_ITER)
         else if config.workload == sleep:
-            sleeper.sleep(job.service_us, NONE, NONE)                                      # always COMPLETED
+            sleeper.sleep(job.service_us, NONE, freeze_check)                              # always COMPLETED
         else:
-            fill_messages(job, config, buf, NONE, NONE)                                    # always COMPLETED
+            fill_messages(job, config, buf, NONE, freeze_check)                            # always COMPLETED
 
     finish(true)                                                         # completed: feeds completed_before_cancel
     return Response(202, protocol.build_body(id, config.response_bytes))
@@ -165,6 +168,21 @@ still occupies its place in the line until then, but costs no burn.
 
 In `ignore` mode no check point runs. The RST flag is never read and `handle_cancel` throws away
 every id, so `should_cancel` is never needed.
+
+**WorkerFreeze checks.** Every check of a running request first calls `worker_pool.freeze_wait(queue)`
+([../worker_pool/design.md#workerfreeze](../worker_pool/design.md#workerfreeze)), which returns at once unless the
+queue is frozen, and then blocks until `queue_close`. In `cooperative` mode it runs at the start of check point 1
+and inside `id_check`, so at every check of check point 2. In `ignore` mode, when `freeze_after_ms` is set, the burn,
+the sleep and the MessageWork get a `freeze_check` in place of `id_check` that only waits and always answers
+`false`, so it never cancels anything. The freeze therefore stops a running request at its next check:
+
+| Workload | Next check after `freeze_at_ns` |
+|---|---|
+| `cpu_burn` | the next `CHECK_ITER` spin units |
+| `sleep` | the next wake-up that does not reach the deadline (at most one 20 ms quantum) |
+| `message_buffer` | after the next message, before the buffer is written |
+
+After `queue_close` ends the wait, the check goes on as usual: the RST flag, then CancelMatching.
 
 ## FinishedWatermark
 

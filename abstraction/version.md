@@ -143,3 +143,4 @@
 | 0.18.0 | 2026-11-19T00:00:00Z | Child bump: benchmark_runner 0.5.0 (servers on several machines) |
 | 0.18.1 | 2026-11-19T00:00:00Z | Child bump: benchmark_runner 0.5.1 (experiment_executor 0.8.0) |
 | 0.19.0 | 2026-11-19T00:00:00Z | Server parameter `freeze_after_ms`; glossary WorkerFreeze. Child bump: server 0.10.0 (worker_pool 0.6.0) |
+| 0.19.1 | 2026-11-19T00:00:00Z | Child bump: server 0.10.1 (ping_handler 0.10.0) |
