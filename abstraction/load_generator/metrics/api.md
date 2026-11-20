@@ -16,6 +16,8 @@
 | `end_ns` | integer or empty | When the request resolved. Empty for `not_sent` |
 | `copies` | u32 | RequestCopies the client started, `1 ..= 1 + max_retries`; `0` for `not_sent` ([../client/design.md#retrytimer](../client/design.md#retrytimer)) |
 | `in_stall_window` | boolean | First sent in the StallWindow (`send_ns < initial_stall_ns`); always false for `not_sent` ([../client/design.md#stallwindow](../client/design.md#stallwindow)) |
+| `exec_ns` | u64 or empty | The server's ExecutionTime from the deciding response's ExecReport ([../../protocol/design.md#execreport](../../protocol/design.md#execreport)). Empty unless the outcome is `ok` or `rejected` and the body carried a valid `exec_ns` |
+| `start_slack_ns` | i64 or empty | The server's StartSlack from the same ExecReport: time left before the RequestDeadline when a worker picked the request up, negative when already late. Empty under the same conditions, or when the server reported none |
 
 Derived: `e2e_latency_ns = end_ns - scheduled_ns` and `service_latency_ns = end_ns - send_ns`,
 both empty for `not_sent`. See [design.md#requestrecord](design.md#requestrecord).
@@ -46,11 +48,12 @@ Writes [Summary JSON](#summary-json). See [design.md#summary](design.md#summary)
 UTF-8, comma-separated, `\n` line endings, one header line, rows sorted by `(client_id, seq)`:
 
 ```
-request_id,client_id,seq,outcome,http_status,scheduled_ns,send_ns,end_ns,e2e_latency_ns,service_latency_ns,copies,in_stall_window
+request_id,client_id,seq,outcome,http_status,scheduled_ns,send_ns,end_ns,e2e_latency_ns,service_latency_ns,copies,in_stall_window,exec_ns,start_slack_ns
 ```
 
-`copies` and `in_stall_window` are last, so readers that find columns by header name keep working.
-`in_stall_window` is written `1` or `0`.
+`copies`, `in_stall_window`, `exec_ns` and `start_slack_ns` are last, in the order they were added, so readers that
+find columns by header name keep working. `in_stall_window` is written `1` or `0`. `start_slack_ns` is a signed
+decimal (`-` for negative values).
 
 Integers are written in decimal. Empty fields are written as nothing between the commas. One row
 per [design.md#requestrecord](design.md#requestrecord).

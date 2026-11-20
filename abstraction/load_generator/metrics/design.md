@@ -6,6 +6,10 @@ Each client creates its records and keeps them in its own list. There is no shar
 run. The Run Controller concatenates the lists after every client has returned. Before writing,
 records are sorted by `(client_id, seq)`.
 
+`exec_ns` and `start_slack_ns` are copied from the ExecReport of the response that decided the outcome
+([../client/design.md#outcome-classification](../client/design.md#outcome-classification)). They are only written to
+the Requests CSV; `aggregate` does not use them, and the Summary JSON is unchanged.
+
 ## Collection
 
 ```
