@@ -18,6 +18,8 @@ Leaf component. It turns the operator's TOML file into a validated **BenchConfig
   addresses.
 - The Ingress's cancel rate can be given as a **CancelRateFraction** of the load generator's `global_rate`, so a
   sweep over offered load keeps the cancel load proportional. The fraction itself can be swept.
+- A **FreezeTarget** injects the server's WorkerFreeze into a single server instance, so one server fails while the
+  others keep working.
 - A **LinkedSweep** pairs an array parameter with a swept key element by element instead of crossing them, so a
   parameter can follow another one (for example a retry timeout chosen per offered rate) without adding a sweep
   dimension.

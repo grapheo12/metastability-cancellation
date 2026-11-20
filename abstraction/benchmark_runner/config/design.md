@@ -7,13 +7,13 @@ PROGRAM_PARAMS = {
   "server":    ["response_rate", "response_bytes", "cancel_mode", "cancel_check_interval_us", "seed",
                 "n_worker_threads", "queue_sample_interval_ms", "initial_stall_ms",
                 "workload", "window_size", "n_gc_binary_tree_size", "n_messages_per_request",
-                "queue_discipline"],
+                "queue_discipline", "freeze_after_ms"],
   "load_gen":  ["num_clients", "global_rate", "request_bytes", "slo_ms", "duration_s", "seed",
                 "n_waiting_requests", "retry_timeout_ms", "max_retries", "initial_stall_ms"],
   "ingress":   ["lb_policy", "ewma_beta", "cancel_rate", "duration_s", "seed", "initial_stall_ms"],
 }
 PLACEMENT_KEYS = ["threads", "cpu_set"]                                  # ProcessPlacement
-RUNNER_KEYS = { "server":    ["listen_port", "instances", "gc_trace"] + PLACEMENT_KEYS,
+RUNNER_KEYS = { "server":    ["listen_port", "instances", "gc_trace", "freeze_instance"] + PLACEMENT_KEYS,
                 "load_gen":  PLACEMENT_KEYS,
                 "ingress":   ["machine", "listen_port", "cancel_rate_fraction"] + PLACEMENT_KEYS }
 SWEEPABLE_RUNNER_KEYS = ["ingress.cancel_rate_fraction"]                 # CancelRateFraction
@@ -46,6 +46,7 @@ function load_config(path):
     require server.listen_port + server.instances - 1 <= 65535
                          else ConfigError("server.listen_port + server.instances - 1 must be <= 65535")
     check_ingress_placement(config)                           # IngressPlacement: one server machine, port collision
+    check_freeze_target(config)                               # FreezeTarget
     validate run table; fill defaults
     link = run.link or empty map                              # LinkedSweep
     # swept keys: every array-valued program parameter and every array-valued SWEEPABLE_RUNNER_KEY,
@@ -66,6 +67,7 @@ Error messages for the runner keys added with ProcessPlacement and CancelRateFra
 | `instances` not an integer in `1..=64` | `server.instances must be an integer in 1..=64` |
 | `gc_trace` not a boolean (an array included: it cannot be swept) | `server.gc_trace must be true or false` |
 | `machine` not `"client"` or `"server"` | `ingress.machine must be "client" or "server"` |
+| `freeze_instance` problems | see [FreezeTarget](#freezetarget) |
 | `[machines.server]` problems | see [ServerMachines](#servermachines) |
 | a `[canceller]` table (from before the Ingress) | `unknown table [canceller]` |
 | `run.link` problems | see [LinkedSweep](#linkedsweep) |
@@ -127,6 +129,11 @@ function expand_sweep(config):
         if config.ingress has cancel_rate_fraction:                             # CancelRateFraction
             f = choose.get("ingress.cancel_rate_fraction", config.ingress.cancel_rate_fraction)
             ingress_args.append(("cancel_rate", derived_cancel_rate(value of global_rate in loadgen_args, f)))
+        freeze = none                                                           # FreezeTarget
+        if config.server has freeze_instance:
+            freeze = { "instance": config.server.freeze_instance,
+                       "freeze_after_ms": value of freeze_after_ms in server_args }
+            remove ("freeze_after_ms", ...) from server_args
         placement = { program: { "threads": config[section].threads or none,     # ProcessPlacement
                                  "cpu_set": config[section].cpu_set or none }
                       for (program, section) in [("server", "server"), ("loadgen", "load_gen"),
@@ -134,7 +141,7 @@ function expand_sweep(config):
         points.append(SweepPoint(id, swept, linked, server_args, loadgen_args, ingress_args,
                                  len(config.machines.server) × config.server.instances,   # ServerMachines
                                  server_hosts(config), config.ingress.machine, loadgen_target(config),
-                                 placement))
+                                 placement, freeze))
     return points          # with no swept keys: exactly one point, id 0
 ```
 
@@ -399,6 +406,40 @@ Edge and error cases:
 | lengths 4 and 3 | ConfigError `run.link: load_gen.retry_timeout_ms and load_gen.global_rate must have the same number of values` |
 | linked key listed in `sweep_order` | ConfigError `run.sweep_order must list every swept key exactly once` |
 | `link = { "load_gen.retry_timeout_ms" = 5 }` | ConfigError `run.link must map "<section>.<param>" keys to "<section>.<param>" keys` |
+
+## FreezeTarget
+
+The server's WorkerFreeze ([../../server/worker_pool/design.md#workerfreeze](../../server/worker_pool/design.md#workerfreeze))
+is an injected failure, and an experiment usually wants it in **one** server instance while the others keep working.
+The runner-owned key `[server] freeze_instance` names that instance, the **FreezeTarget**. `freeze_after_ms` then
+goes to that instance only, instead of to every instance like other server parameters.
+
+```
+function check_freeze_target(config):
+    if "freeze_instance" not in config.server: return
+    total = len(config.machines.server) × config.server.instances           # ServerMachines
+    i = config.server.freeze_instance
+    i is an integer and 0 <= i <= total - 1
+        else ConfigError("server.freeze_instance must be an integer in 0..=<total - 1>")
+    "freeze_after_ms" in config.server
+        else ConfigError("server.freeze_instance needs server.freeze_after_ms")
+```
+
+- `freeze_instance` cannot be swept (the generic runner-key rule). `freeze_after_ms` is a program parameter and can
+  be swept; each point's value goes to `SweepPoint.freeze`.
+- Without `freeze_instance`, `freeze_after_ms` is an ordinary server parameter: it stays in `server_args`, and every
+  instance freezes.
+- Instance ids are the global ids of [ServerMachines](#servermachines), so the target picks a machine too.
+
+| `[server]` keys | `server_args` has `freeze_after_ms` | `SweepPoint.freeze` |
+|---|---|---|
+| neither | no | none |
+| `freeze_after_ms = 60000` | yes, every instance freezes | none |
+| `freeze_after_ms = 60000`, `freeze_instance = 0` | no | `{instance: 0, freeze_after_ms: 60000}` |
+| `freeze_after_ms = [30000, 60000]`, `freeze_instance = 1` (swept) | no | `{instance: 1, freeze_after_ms: 30000}` or `60000`, per point |
+| `freeze_instance = 2` with 2 server machines × 1 instance | — | ConfigError `server.freeze_instance must be an integer in 0..=1` |
+| `freeze_instance = 0` only | — | ConfigError `server.freeze_instance needs server.freeze_after_ms` |
+| `freeze_instance = [0, 1]` | — | ConfigError `server.freeze_instance cannot be swept` |
 
 ## Argument formatting
 
