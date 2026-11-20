@@ -228,6 +228,38 @@ not invalid. Callers parse the id first; a body whose id is invalid is rejected 
 | `{"id":"7","deadline":1000}` (number, not string) | 7 | none |
 | `{"id":"7","deadline":"18446744073709551616"}` (2^64) | 7 | none |
 
+## HeartbeatLine
+
+A **HeartbeatStream** is the body of a `200` answer to `GET /heartbeat`: a sequence of **HeartbeatLines**, written
+by the server one per heartbeat, that never ends on its own. The response has `content-type: text/plain` and no
+`content-length`. Each line is ASCII:
+
+```
+function build_heartbeat_line(seq):                 # seq: u64
+    return "hb " + decimal(seq) + "\n"              # decimal: no sign, no leading zeros ("0" for 0)
+
+function parse_heartbeat_line(line):                 # line: the bytes before one "\n", without it
+    if line does not start with "hb ":               return ParseError
+    s = line after "hb "
+    if s is empty or contains a non-digit or has more than 20 chars: return ParseError
+    n = parse_unsigned_decimal(s)
+    if n > 2^64 - 1:                                  return ParseError
+    return n
+```
+
+- `seq` counts from 0 on each stream, one per line. A reader may use gaps to see lost lines, but nothing requires it.
+- Each line is sent in its own DATA frame (or frames) and flushed, so a reader sees it when it is written.
+- The stream ends with RST or a closed connection, never with END_STREAM in normal operation; a reader treats any
+  end as "no more heartbeats on this stream".
+
+| Bytes | `parse_heartbeat_line` |
+|---|---|
+| `hb 0` | 0 |
+| `hb 41` | 41 |
+| `hb 18446744073709551615` | 2^64 - 1 |
+| `hb 18446744073709551616` | ParseError (2^64) |
+| `hb ` or `hb -1` or `ping 3` | ParseError |
+
 ## Status classification (load-generator client)
 
 | Received for `/ping` | Meaning for the client |

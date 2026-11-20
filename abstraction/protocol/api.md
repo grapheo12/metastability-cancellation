@@ -8,11 +8,15 @@
 | `PING_METHOD` | `POST` | Only allowed method on `/ping` | [../api.md#wire-contract-ping](../api.md#wire-contract-ping) |
 | `CANCEL_PATH` | `/cancel` | Cancellation route | [../api.md#wire-contract-cancel](../api.md#wire-contract-cancel) |
 | `CANCEL_METHOD` | `DELETE` | Only allowed method on `/cancel` | [../api.md#wire-contract-cancel](../api.md#wire-contract-cancel) |
+| `HEARTBEAT_PATH` | `/heartbeat` | HeartbeatStream route | [../api.md#wire-contract-heartbeat](../api.md#wire-contract-heartbeat) |
+| `HEARTBEAT_METHOD` | `GET` | Only allowed method on `/heartbeat` | [../api.md#wire-contract-heartbeat](../api.md#wire-contract-heartbeat) |
+| `CONTENT_TYPE_TEXT` | `text/plain` | Content type of a HeartbeatStream body | [design.md#heartbeatline](design.md#heartbeatline) |
+| `STATUS_STREAM_OK` | `200` | `/heartbeat`: the HeartbeatStream follows | [design.md#heartbeatline](design.md#heartbeatline) |
 | `CONTENT_TYPE_JSON` | `application/json` | Content type of every non-empty body | [design.md#paddedjsonbody](design.md#paddedjsonbody), [design.md#cancelbody](design.md#cancelbody), [design.md#cancelreplybody](design.md#cancelreplybody) |
 | `STATUS_OK` | `202` | `/ping`: work completed. `/cancel`: id accepted, body is a CancelReplyBody | [design.md#status-classification-load-generator-client](design.md#status-classification-load-generator-client), [design.md#status-classification-load-canceller](design.md#status-classification-load-canceller) |
 | `STATUS_REJECTED` | `503` | `/ping`: work cancelled by `/cancel` (padded body). `/cancel`: registry full (empty body) | [design.md#status-classification-load-generator-client](design.md#status-classification-load-generator-client), [design.md#status-classification-load-canceller](design.md#status-classification-load-canceller) |
 | `STATUS_BAD_REQUEST` | `400` | Body could not be parsed, or a `/ping` client id differs from the connection's. Empty body | [design.md#parsing](design.md#parsing), [design.md#status-classification-load-canceller](design.md#status-classification-load-canceller) |
-| `STATUS_NOT_FOUND` | `404` | Path other than `/ping` and `/cancel`. Empty body | [../api.md#wire-contract-ping](../api.md#wire-contract-ping) |
+| `STATUS_NOT_FOUND` | `404` | Path other than `/ping`, `/cancel` and `/heartbeat`. Empty body | [../api.md#wire-contract-ping](../api.md#wire-contract-ping) |
 | `STATUS_METHOD_NOT_ALLOWED` | `405` | Wrong method for the path. Empty body | [../api.md#wire-contract-ping](../api.md#wire-contract-ping), [../api.md#wire-contract-cancel](../api.md#wire-contract-cancel) |
 | `STATUS_BAD_GATEWAY` | `502` | Sent only by an Ingress: the backend could not be reached or its stream failed. Empty body | [design.md#status-classification-load-generator-client](design.md#status-classification-load-generator-client) |
 | `RST_CODE_CANCEL` | `0x8` | HTTP/2 error code the client uses in `RST_STREAM` to cancel | [../load_generator/client/design.md#slocancellation](../load_generator/client/design.md#slocancellation) |
@@ -56,6 +60,14 @@ Pulls the RequestId out of a PingRequestBody, a PaddedJsonBody or a CancelBody. 
 Pulls the RequestDeadline out of a PingRequestBody; `none` if it is missing or malformed (never an error). The
 server's Ping Handler calls it when admitting a `/ping`. See [design.md#parsing](design.md#parsing).
 
+### `build_heartbeat_line(seq: u64) -> bytes`
+Returns the HeartbeatLine `hb <seq>\n`. The server writes one per heartbeat. See
+[design.md#heartbeatline](design.md#heartbeatline).
+
+### `parse_heartbeat_line(line: bytes) -> u64 | ParseError`
+Pulls `seq` out of one line of a HeartbeatStream, without its `\n`. The Ingress's Heartbeat Monitor calls it on
+every line. See [design.md#heartbeatline](design.md#heartbeatline).
+
 ### `validate_body_size(total_bytes: integer) -> ok | ConfigError`
 Returns `ConfigError` if `total_bytes < MIN_BODY_BYTES`. The server calls it for `response_bytes` at startup.
 
@@ -67,12 +79,12 @@ startup. See [design.md#minimum-body-size](design.md#minimum-body-size).
 
 | Header | Value |
 |---|---|
-| `:method` | `POST` (for `/ping`) or `DELETE` (for `/cancel`) |
-| `:path` | `/ping` or `/cancel` |
+| `:method` | `POST` (for `/ping`), `DELETE` (for `/cancel`) or `GET` (for `/heartbeat`) |
+| `:path` | `/ping`, `/cancel` or `/heartbeat` |
 | `:scheme` | `http` |
 | `:authority` | the `target` parameter |
-| `content-type` | `application/json` |
-| `content-length` | decimal byte length of the body |
+| `content-type` | `application/json` (not sent for `/heartbeat`, which has no body) |
+| `content-length` | decimal byte length of the body (`0` for `/heartbeat`) |
 
 ## Response headers (server → client or canceller)
 
@@ -80,4 +92,4 @@ startup. See [design.md#minimum-body-size](design.md#minimum-body-size).
 |---|---|
 | `:status` | see the status constants above |
 | `content-type` | `application/json` (only when the body is non-empty) |
-| `content-length` | decimal byte length of the body (`0` when empty) |
+| `content-length` | decimal byte length of the body (`0` when empty). Not sent on a `200` HeartbeatStream, whose length is unknown |
