@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.19.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.20.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -177,6 +177,13 @@ class ConfigTest(unittest.TestCase):
                    .replace("cancel_rate = 100", "cancel_rate = 100\nheartbeat_timeout_ms = 1000")
         p = cfg.expand_sweep(self.load(text))[0]
         self.assertEqual((p.arg("server", "heartbeat_interval_ms"), p.arg("ingress", "heartbeat_timeout_ms")), (500, 1000))
+
+    # Design: abstraction/benchmark_runner/config/design.md#benchconfig
+    def test_drain_params_pass_through(self):
+        text = BASE.replace("duration_s = 2", "duration_s = 2\nslo_cancel = false\ndrain_timeout_ms = 60000")
+        p = cfg.expand_sweep(self.load(text))[0]
+        self.assertEqual((p.arg("loadgen", "slo_cancel"), p.arg("loadgen", "drain_timeout_ms")), (False, 60000))
+        self.assertEqual(cfg.format_arg(False), "false")  # written as --slo_cancel false
 
     # Design: abstraction/benchmark_runner/config/design.md#freezetarget
     def test_freeze_target(self):
