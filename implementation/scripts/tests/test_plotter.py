@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.14.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.15.0)
 import csv
 import json
 import os
@@ -248,6 +248,19 @@ class ForwardTimelinePlotsTest(unittest.TestCase):
             self.assertIsNone(gc)  # ewma_latency never has an overlay
             self.assertEqual(med, [(0.0, 2.11), (0.02, 2.377), (0.06, 4.6639)])
             self.assertEqual(p99, med)
+
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#forwardtimelineplots
+    def test_forward_log_with_appended_columns(self):
+        """The Ingress appends exec_ns and ewma_exec_ns: only the first five columns are read."""
+        with tempfile.TemporaryDirectory() as out:
+            path = os.path.join(out, "ingress.forwards.csv")
+            with open(path, "w") as f:
+                f.write("t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns\n"
+                        "1000,0,ok,2000000,1300000,1500000,1500000\n"
+                        "2000,1,reset,7,850000.5,,\n"
+                        "3000,0,o")                                            # truncated last line
+            self.assertEqual(plotter.read_forward_log(path),
+                             [(1000, 0, "ok", 2000000, 1300000.0), (2000, 1, "reset", 7, 850000.5)])
 
     # Design: abstraction/benchmark_runner/result_plotter/design.md#forwardtimelineplots
     def test_edge_cases(self):

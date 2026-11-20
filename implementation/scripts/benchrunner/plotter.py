@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.14.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.15.0)
 """PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot, QueueLengthPlot and ForwardTimelinePlots,
 drawn as interactive HTML FigurePages with plotly."""
 
@@ -366,7 +366,8 @@ FORWARD_HEADER = "t_ns,server_id,outcome,latency_ns,ewma_latency_ns"
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#forwardtimelineplots
 def read_forward_log(path):
-    """ForwardLog rows [(t_ns, server_id, outcome, latency_ns, ewma_ns)], or None if the file is missing."""
+    """ForwardLog rows [(t_ns, server_id, outcome, latency_ns, ewma_ns)] from the first five columns
+    (later ones, such as exec_ns and ewma_exec_ns, are ignored), or None if the file is missing."""
     if not os.path.exists(path):
         return None
     rows = []
@@ -374,7 +375,7 @@ def read_forward_log(path):
         lines = f.read().split("\n")
     for line in lines[1:]:  # after the header
         parts = line.split(",")
-        if len(parts) != 5 or not (parts[0].isdigit() and parts[1].isdigit() and parts[3].isdigit()) \
+        if len(parts) < 5 or not (parts[0].isdigit() and parts[1].isdigit() and parts[3].isdigit()) \
                 or not parts[2]:
             break  # e.g. a truncated last line, or the final empty string
         try:
@@ -492,7 +493,7 @@ def read_gc_log(path):
         lines = f.read().split("\n")
     for line in lines[1:]:  # after the header
         parts = line.split(",")
-        if len(parts) != 5 or not (parts[0].isdigit() and parts[1].isdigit()):
+        if len(parts) < 5 or not (parts[0].isdigit() and parts[1].isdigit()):
             break  # e.g. a truncated last line, or the final empty string
         try:
             rows.append((int(parts[0]), int(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])))
