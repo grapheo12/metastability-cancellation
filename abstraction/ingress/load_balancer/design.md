@@ -8,7 +8,7 @@ are final. `monotonic_now_ns()` is the Ingress's monotonic clock ([../design.md#
 ## LoadBalancer
 
 ```
-lb = { policy, beta: ewma_beta,
+lb = { policy, beta: ewma_beta, monitor: HeartbeatMonitor or none,         # BackendLiveness
        stats: array[B] of BackendStats (counters 0, ewma_latency_ns = EWMA_INITIAL_LATENCY_NS),
        rr: atomic u64 = 0,
        rng: rng_new(derive_seed(seed, STREAM_INGRESS_LB, 0)), rng_lock: mutex,
@@ -88,30 +88,40 @@ race is accepted, as for the other counters.
 
 ```
 function choose(lb):
-    if B == 1: return 0                              # every policy; no random draw, no counter change
+    L = [ s for s in 0 ..= B-1 if heartbeat_monitor.is_live(lb.monitor, s) ]     # LiveSet, in id order
+    if L is empty: L = [0 ..= B-1]                   # every backend silent: use them all, as without a monitor
+    n = len(L)
+    if n == 1: return L[0]                           # every policy; no random draw, no counter change
     match lb.policy:
         round_robin:
-            return lb.rr.fetch_add(1) mod B          # u64 counter: cannot wrap in any realistic run
+            return L[lb.rr.fetch_add(1) mod n]       # u64 counter: cannot wrap in any realistic run
         least_outstanding:
-            best = 0
-            for s in 1 ..= B-1:
+            best = L[0]
+            for s in L[1 ..= n-1]:
                 if outstanding[s].load() < outstanding[best].load(): best = s      # strict <: ties go to lower id
             return best
         power_of_two:
-            (a, b) = random_pair(lb)
+            (a, b) = random_pair(lb, L)
             return b if outstanding[b].load() < outstanding[a].load() else a       # ties go to lower id
         ewma:
-            (a, b) = random_pair(lb)
+            (a, b) = random_pair(lb, L)
             return b if ewma_score(lb, b) < ewma_score(lb, a) else a               # EwmaScore; ties go to lower id
 
-function random_pair(lb):                            # two different backends, a < b
+function random_pair(lb, L):                         # two different members of L (n >= 2), a < b
+    n = len(L)
     with lb.rng_lock:
-        i = uniform_int(lb.rng, 0, B-1)
-        j = uniform_int(lb.rng, 0, B-2)
-    if j >= i: j = j + 1                             # j is uniform over the B-1 backends other than i
-    return (min(i, j), max(i, j))
+        i = uniform_int(lb.rng, 0, n-1)
+        j = uniform_int(lb.rng, 0, n-2)
+    if j >= i: j = j + 1                             # j is uniform over the n-1 positions other than i
+    return (L[min(i, j)], L[max(i, j)])              # L is in id order, so a < b
 ```
 
+- **LiveSet.** `L` holds the backends the Heartbeat Monitor reports live
+  ([../heartbeat_monitor/design.md#backendliveness](../heartbeat_monitor/design.md#backendliveness)). Without a
+  monitor every backend is live, so `L = [0 ..= B-1]` and every policy is exactly as before: same choices, same
+  draws, same counter. A dead backend gets no new forwards; forwards already in progress on it are left alone and
+  end as they would have. When no backend is live, `L` falls back to all of them, so requests still go somewhere.
+  `L` is read once per pick; a backend that changes state during the pick is seen in either state.
 - **Concurrent picks race.** Two picks at the same moment may read the same counters and choose the same backend.
   That is accepted: the policies are heuristics, and the counters correct themselves on the next pick. No lock is
   taken around the read and the increment.
@@ -199,6 +209,17 @@ ForwardLog, `ewma_beta = 0.7`, one backend starting at `1_000_000`, three forwar
 | 300 | 500_300 | `ok` | 500_000 | 1_060_000 | 1_300_000 × 0.7 + 500_000 × 0.3 = 910_000 + 150_000 |
 
 `B = 1`: every policy returns 0 and draws nothing.
+
+LiveSet, `B = 3`, backend 1 not live, so `L = [0, 2]` and `n = 2`:
+
+| Policy | State | Draws `(i, j)` | Choice | Check |
+|---|---|---|---|---|
+| `round_robin` | rr = 0, 1, 2 | none | 0, 2, 0 | `L[0]`, `L[1]`, `L[2 mod 2]` |
+| `least_outstanding` | `outstanding = (3, 0, 1)` | none | 2 | backend 1 is skipped although its 0 is smallest |
+| `power_of_two` | `outstanding = (3, 0, 1)` | (0, 0) | 2 | `j` → 1; pair `(L[0], L[1]) = (0, 2)`; 1 < 3 |
+| `ewma` | any | (1, 0) | — | pair `(L[0], L[1]) = (0, 2)`; the scores of 0 and 2 decide |
+| any | only backend 2 live | none | 2 | `n = 1`: no draw |
+| any | no backend live | as for `B = 3` | as without a monitor | `L = [0, 1, 2]` |
 
 ## Design specific to Go
 
