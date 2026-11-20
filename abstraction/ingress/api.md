@@ -51,6 +51,7 @@ an atomic binary64 starting at `EWMA_INITIAL_LATENCY_NS` ([load_balancer/api.md]
 | `bad_gateway` | Answered `502` (upstream failure) |
 | `reset` | Ended because the client reset its stream |
 | `ewma_latency_ns` | EwmaLatency: moving average of the latency of `ok` forwards, in ns (float), under every policy ([load_balancer/design.md](load_balancer/design.md#ewmalatency)) |
+| `ewma_exec_ns` | EwmaExecTime: moving average of the ExecutionTime the backend reported on `ok` and `rejected` forwards, in ns (float), or none before the first sample ([load_balancer/design.md](load_balancer/design.md#ewmaexectime)) |
 
 ## Behavior visible on the wire
 
@@ -77,7 +78,7 @@ The LoadBalancer's ForwardLog ([load_balancer/api.md#forwardrecord](load_balance
 per finished forward. UTF-8, comma-separated, `\n` line endings, one header line:
 
 ```
-t_ns,server_id,outcome,latency_ns,ewma_latency_ns
+t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns
 ```
 
 | Column | Type / unit | Meaning |
@@ -87,9 +88,11 @@ t_ns,server_id,outcome,latency_ns,ewma_latency_ns
 | `outcome` | `ok` \| `rejected` \| `bad_request` \| `bad_gateway` \| `reset` | How the forward ended |
 | `latency_ns` | u64, ns | From `pick` to `finish` |
 | `ewma_latency_ns` | float, ns | The backend's EwmaLatency right after this forward |
+| `exec_ns` | u64, ns, or empty | The ExecutionTime the backend reported in the relayed body's ExecReport; empty unless `ok` or `rejected` with a valid one |
+| `ewma_exec_ns` | float, ns, or empty | The backend's EwmaExecTime right after this forward; empty before its first sample |
 
 Rows are sorted by `t_ns`; rows with equal `t_ns` keep their ForwardLog order. Integers are decimal. `ewma_latency_ns`
-is written in decimal without an exponent, as the shortest string that reads back as the same binary64 (for example
+and `ewma_exec_ns` are written in decimal without an exponent, as the shortest string that reads back as the same binary64 (for example
 `1300000` or `850000.5`). The file is written at shutdown, header only when no `/ping` was ever forwarded
 ([design.md#shutdown](design.md#shutdown)).
 
@@ -109,13 +112,13 @@ monitor is off. Written at shutdown ([design.md#shutdown](design.md#shutdown)).
   "counts":      { "scheduled", "sent", "accepted", "rejected", "bad_request", "error", "timeout", "skipped" },
   "rates_per_s": { "offered", "sent", "accepted" },
   "clients_targeted": integer,
-  "backends": [ { "server_id", "addr", "forwarded", "ok", "rejected", "bad_request", "bad_gateway", "reset", "ewma_latency_ns" }, ... ]
+  "backends": [ { "server_id", "addr", "forwarded", "ok", "rejected", "bad_request", "bad_gateway", "reset", "ewma_latency_ns", "ewma_exec_ns" }, ... ]
 }
 ```
 
 `counts`, `rates_per_s` and `clients_targeted` describe the LoadCanceller and keep the names they had when it was a
 separate program, so result tools can read them unchanged (all zero when it is disabled). `backends` is in
-`server_id` order and holds the final BackendStats. `run_start_unix_ns` is the wall-clock time (Unix epoch, ns) of
+`server_id` order and holds the final BackendStats; `ewma_exec_ns` is `null` for a backend with no ExecutionTime sample. `run_start_unix_ns` is the wall-clock time (Unix epoch, ns) of
 `run_start`, or `0` when no `/ping` was received ([design.md#time-base](design.md#time-base)). Written by [design.md#shutdown](design.md#shutdown).
 
 ## Lifecycle

@@ -14,6 +14,7 @@ From the Ingress parameters ([../api.md#program-parameters](../api.md#program-pa
 | Name | Value | Meaning |
 |---|---|---|
 | `EWMA_INITIAL_LATENCY_NS` | `1_000_000` (1 ms) | Every backend's EwmaLatency before its first sample. Not 0, so that the `ewma` policy still weighs `outstanding` before any response |
+| `EXEC_NO_SAMPLE` | binary64 quiet NaN, bits `0x7FF8000000000000` | Stored in `ewma_exec_ns` until the backend's first ExecutionTime sample ([design.md#ewmaexectime](design.md#ewmaexectime)) |
 
 ## Types
 
@@ -46,6 +47,8 @@ Returned by `pick`, given back unchanged to `finish`. See [design.md#forwardtick
 | `outcome` | ForwardOutcome | How the forward ended |
 | `latency_ns` | u64, ns | `end_ns - start_ns` of the ForwardTicket, for every outcome |
 | `ewma_latency_ns` | float (binary64), ns | The backend's EwmaLatency right after this `finish` |
+| `exec_ns` | u64, ns, or none | The ExecutionTime the backend reported for this forward; none unless `ok` or `rejected` with a valid ExecReport |
+| `ewma_exec_ns` | float (binary64), ns, or none | The backend's EwmaExecTime right after this `finish`; none before its first sample |
 
 One per `finish`, kept in the **ForwardLog**. See [design.md#forwardlog](design.md#forwardlog).
 
@@ -58,7 +61,8 @@ concurrent callers. See [design.md#loadbalancer](design.md#loadbalancer).
 ## Functions
 
 ### `lb_new(config: IngressConfig, monitor: HeartbeatMonitor | none) -> LoadBalancer`
-`B = len(config.backends)` BackendStats, all counters zero and every `ewma_latency_ns = EWMA_INITIAL_LATENCY_NS`.
+`B = len(config.backends)` BackendStats, all counters zero, every `ewma_latency_ns = EWMA_INITIAL_LATENCY_NS` and
+every `ewma_exec_ns = EXEC_NO_SAMPLE`.
 `monitor` gives the BackendLiveness; with `none` every backend is live.
 The random stream is `rng_new(derive_seed(config.seed, STREAM_INGRESS_LB, 0))`.
 See [design.md#loadbalancer](design.md#loadbalancer).
@@ -68,13 +72,14 @@ Chooses a backend by the policy among the live ones (all of them if none is live
 current monotonic time. Every `pick` must be followed by exactly one `finish` with the same ticket.
 See [design.md#lbpolicy](design.md#lbpolicy) and [design.md#forwardticket](design.md#forwardticket).
 
-### `finish(lb, ticket: ForwardTicket, outcome: ForwardOutcome) -> nothing`
+### `finish(lb, ticket: ForwardTicket, outcome: ForwardOutcome, exec_ns: u64 | none) -> nothing`
 Decrements `outstanding` and increments the outcome's counter. If `outcome == ok`, also folds the forward's latency
-into the backend's EwmaLatency, under every policy. Then appends one ForwardRecord to the ForwardLog. See [design.md#loadbalancer](design.md#loadbalancer) and
+into the backend's EwmaLatency, under every policy. If `outcome` is `ok` or `rejected` and `exec_ns` is given, folds
+it into the backend's EwmaExecTime ([design.md#ewmaexectime](design.md#ewmaexectime)). Then appends one ForwardRecord to the ForwardLog. See [design.md#loadbalancer](design.md#loadbalancer) and
 [design.md#ewmalatency](design.md#ewmalatency).
 
 ### `stats_snapshot(lb) -> list of BackendStats values`
-Reads every counter and `ewma_latency_ns` (acquire), in `server_id` order, for the summary.
+Reads every counter, `ewma_latency_ns` and `ewma_exec_ns` (acquire), in `server_id` order, for the summary.
 See [design.md#loadbalancer](design.md#loadbalancer).
 
 ### `forward_log(lb) -> list of ForwardRecord`
