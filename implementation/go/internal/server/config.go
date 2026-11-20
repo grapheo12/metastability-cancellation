@@ -1,7 +1,7 @@
 // Package server implements the HTTP/2 /ping + /cancel server. Each file maps
 // to one component of abstraction/server.
 //
-// Source: abstraction/server/design.md (server v0.10.1)
+// Source: abstraction/server/design.md (server v0.11.1)
 package server
 
 import (
@@ -50,6 +50,7 @@ type Config struct {
 	NWorkerThreads        uint32
 	QueueLogPath          string // empty: no QueueLengthLog
 	QueueSampleIntervalMs uint64
+	HeartbeatIntervalMs   uint64 // HeartbeatSender: time between HeartbeatLines
 	InitialStallMs        uint64 // StallGate; 0: no stall
 	FreezeAfterMs         uint64 // WorkerFreeze; 0: never (the parameter itself must be empty or >= 1)
 	QueueDiscipline       QueueDiscipline
@@ -70,6 +71,7 @@ type Params struct {
 	NWorkerThreads        string
 	QueueLogPath          string
 	QueueSampleIntervalMs string
+	HeartbeatIntervalMs   string
 	InitialStallMs        string
 	FreezeAfterMs         string // empty: never
 	QueueDiscipline       string
@@ -88,6 +90,7 @@ func DefaultParams() Params {
 		Seed:                  "0",
 		NWorkerThreads:        "1",
 		QueueSampleIntervalMs: "10",
+		HeartbeatIntervalMs:   "500",
 		InitialStallMs:        "1000",
 		QueueDiscipline:       "fifo",
 		Workload:              "cpu_burn",
@@ -162,6 +165,11 @@ func Validate(p Params) (Config, error) {
 		return c, errors.New("queue_sample_interval_ms must be an integer >= 1")
 	}
 	c.QueueSampleIntervalMs = qi
+	hb, err := strconv.ParseUint(p.HeartbeatIntervalMs, 10, 64)
+	if err != nil || hb < 1 {
+		return c, errors.New("heartbeat_interval_ms must be an integer >= 1")
+	}
+	c.HeartbeatIntervalMs = hb
 	c.QueueLogPath = p.QueueLogPath
 	st, err := strconv.ParseUint(p.InitialStallMs, 10, 64)
 	if err != nil {

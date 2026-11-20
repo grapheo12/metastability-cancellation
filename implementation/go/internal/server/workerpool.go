@@ -202,6 +202,15 @@ func (q *WorkQueue) Pop() *PingJob {
 	return q.takeItem()
 }
 
+// Closed reports whether Close has run (the HeartbeatSender's shutdown check).
+//
+// Design: abstraction/server/heartbeat/design.md#heartbeatsender
+func (q *WorkQueue) Closed() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.closed
+}
+
 // frozenLocked reports whether the WorkerFreeze has started. Called with mu held.
 //
 // Design: abstraction/server/worker_pool/design.md#workerfreeze

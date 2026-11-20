@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.10.1)
+// Source: abstraction/server/design.md (server v0.11.1)
 package server
 
 import (

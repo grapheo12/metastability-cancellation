@@ -1,4 +1,4 @@
-// Source: abstraction/server/connection_handler/design.md (connection_handler v0.3.0)
+// Source: abstraction/server/connection_handler/design.md (connection_handler v0.4.0)
 package server
 
 import (
@@ -32,9 +32,10 @@ type StreamTask struct {
 // Response is what the router or a worker hands to the stream for writing.
 // Aborted means "write nothing".
 type Response struct {
-	Status  int
-	Body    []byte
-	Aborted bool
+	Status   int
+	Body     []byte
+	Aborted  bool
+	Streamed bool // route's Streamed: GET /heartbeat, written by the HeartbeatSender
 }
 
 // connectionHandler owns one accepted connection. In Go the per-stream
@@ -100,6 +101,10 @@ func (h *connectionHandler) frameReader(w http.ResponseWriter, r *http.Request) 
 	defer h.streams.Done()
 	task := &StreamTask{Method: r.Method, Path: r.URL.Path, Body: body}
 	resp, job := h.route(task)
+	if resp.Streamed { // GET /heartbeat: this stream goroutine is the sender's own coroutine
+		serveHeartbeat(w, r.Context().Done(), task, h.cfg, h.queue)
+		return
+	}
 	if job != nil {
 		select {
 		case resp = <-job.reply:
@@ -139,6 +144,11 @@ func (h *connectionHandler) route(task *StreamTask) (Response, *PingJob) {
 			return Response{Status: protocol.StatusMethodNotAllowed}, nil
 		}
 		return HandleCancel(task.Body, h.cfg, h.registry), nil // never queued
+	case protocol.HeartbeatPath:
+		if task.Method != protocol.HeartbeatMethod {
+			return Response{Status: protocol.StatusMethodNotAllowed}, nil
+		}
+		return Response{Streamed: true}, nil // never queued
 	}
 	return Response{Status: protocol.StatusNotFound}, nil
 }

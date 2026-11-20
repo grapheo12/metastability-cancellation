@@ -1,6 +1,6 @@
 // Command server runs the HTTP/2 /ping + /cancel server.
 //
-// Source: abstraction/server/api.md (server v0.10.1)
+// Source: abstraction/server/api.md (server v0.11.1)
 package main
 
 import (
@@ -35,6 +35,7 @@ func main() {
 	fs.StringVar(&p.WindowSize, "window_size", p.WindowSize, "MessageBuffer slots (message_buffer)")
 	fs.StringVar(&p.NGCBinaryTreeSize, "n_gc_binary_tree_size", p.NGCBinaryTreeSize, "nodes per MessageTree, 1..=65536 (message_buffer)")
 	fs.StringVar(&p.NMessagesPerRequest, "n_messages_per_request", p.NMessagesPerRequest, "messages per /ping (message_buffer)")
+	fs.StringVar(&p.HeartbeatIntervalMs, "heartbeat_interval_ms", p.HeartbeatIntervalMs, "ms between two HeartbeatLines on GET /heartbeat (>= 1)")
 	fs.StringVar(&p.QueueSampleIntervalMs, "queue_sample_interval_ms", p.QueueSampleIntervalMs, "QueueLengthLog sample interval in ms (>= 1)")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)

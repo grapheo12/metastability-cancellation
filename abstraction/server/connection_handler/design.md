@@ -169,6 +169,7 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 
 ### Go choices
 
+- Route `Streamed` is `Response{Streamed: true}`. `frameReader` then calls `serveHeartbeat(w, r.Context().Done(), task, cfg, queue)` on the stream's own handler goroutine, which x/net/http2 already gives every stream, so the design's `spawn` needs no extra goroutine; the handler returns when the sender does. `TestHeartbeatStreamAndFreeze` checks the `405` for `POST /heartbeat`.
 - File `internal/server/connhandler.go`.
 - The FrameReader is split in two. The x/net/http2 read loop does the framing, and each stream's `http.Handler` goroutine (`frameReader`) does the rest: it runs once the body is read to END_STREAM, builds the `StreamTask`, routes it, and for a queued `/ping` acts as the stream responder. It turns `r.Context().Done()`, which fires on RST_STREAM or when the connection closes, into the RST flag. Each handler goroutine holds its own `*StreamTask`, which takes the place of `stream_table`.
 - Stream handlers of one connection run concurrently, so Admission takes the per-connection admission lock `mu` around `admitPing` plus `WorkQueue.Push`, as the design requires for per-stream handlers. Go does not promise that handler goroutines reach the lock in exact END_STREAM order. Clients keep one request outstanding, so in practice this does not matter.
@@ -185,12 +186,12 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [Shared state](#shared-state) | [connhandler.go:46](../../../implementation/go/internal/server/connhandler.go#L46) |
-| [FrameReader](#framereader) | [connhandler.go:92](../../../implementation/go/internal/server/connhandler.go#L92), [server_test.go:136](../../../implementation/go/internal/server/server_test.go#L136) |
-| [Admission](#admission) | [connhandler.go:150](../../../implementation/go/internal/server/connhandler.go#L150) |
-| [Routing](#routing) | [connhandler.go:130](../../../implementation/go/internal/server/connhandler.go#L130) |
-| [Response writing](#response-writing) | [connhandler.go:171](../../../implementation/go/internal/server/connhandler.go#L171) |
-| [Concurrency requirement](#concurrency-requirement) | [connhandler.go:78](../../../implementation/go/internal/server/connhandler.go#L78) |
-| [State machine (per `/ping` StreamTask)](#state-machine-per-ping-streamtask) | [connhandler.go:92](../../../implementation/go/internal/server/connhandler.go#L92) |
-| [Connection close](#connection-close) | [connhandler.go:192](../../../implementation/go/internal/server/connhandler.go#L192) |
+| [Shared state](#shared-state) | [connhandler.go:47](../../../implementation/go/internal/server/connhandler.go#L47) |
+| [FrameReader](#framereader) | [connhandler.go:93](../../../implementation/go/internal/server/connhandler.go#L93), [server_test.go:136](../../../implementation/go/internal/server/server_test.go#L136) |
+| [Admission](#admission) | [connhandler.go:160](../../../implementation/go/internal/server/connhandler.go#L160) |
+| [Routing](#routing) | [connhandler.go:135](../../../implementation/go/internal/server/connhandler.go#L135), [heartbeat_test.go:33](../../../implementation/go/internal/server/heartbeat_test.go#L33) |
+| [Response writing](#response-writing) | [connhandler.go:181](../../../implementation/go/internal/server/connhandler.go#L181) |
+| [Concurrency requirement](#concurrency-requirement) | [connhandler.go:79](../../../implementation/go/internal/server/connhandler.go#L79) |
+| [State machine (per `/ping` StreamTask)](#state-machine-per-ping-streamtask) | [connhandler.go:93](../../../implementation/go/internal/server/connhandler.go#L93) |
+| [Connection close](#connection-close) | [connhandler.go:202](../../../implementation/go/internal/server/connhandler.go#L202) |
 <!-- trace:end -->
