@@ -23,7 +23,8 @@ function aggregate(records, config, run_end_ns, run_start_unix_ns):
     counts.copies_sent = sum of r.copies over records     # RequestCopies, >= counts.sent
     rates.offered = counts.scheduled / D_s
     rates.sent    = counts.sent / D_s
-    rates.goodput = counts.ok / D_s
+    counts.ok_late = number of records with outcome == ok and r.end_ns - r.send_ns > config.slo_ns   # late answers
+    rates.goodput = (counts.ok - counts.ok_late) / D_s                 # ok within the SLO only
     ok = records with outcome == ok
     e2e     = [ (r.end_ns - r.scheduled_ns) / 1000.0 for r in ok ]      # µs
     service = [ (r.end_ns - r.send_ns)      / 1000.0 for r in ok ]      # µs
@@ -43,6 +44,23 @@ function aggregate(records, config, run_end_ns, run_start_unix_ns):
   `copies_sent` counts copies, and `copies_sent - sent` is the number of retries. A request's latency runs from
   its first send to the answer of its newest copy.
 - `run_start_unix_ns` is passed through unchanged from the Run Controller; it is only reported.
+- **Late answers.** With `slo_cancel = false` an `ok` can arrive after the SLO
+  ([../client/design.md#draindeadline](../client/design.md#draindeadline)). It stays in `counts.ok` and in the latency
+  statistics, is counted in `counts.ok_late`, and is left out of `rates.goodput`, which counts only answers within
+  the SLO (the same test as Availability: `end_ns - send_ns <= slo_ns`). With `slo_cancel = true` the SLO timer
+  cancels any request not answered by then, so `ok_late` is 0 apart from a response that wins the race with the
+  timer by a few microseconds.
+
+  Worked example, `slo_ns = 5_000_000_000`, `D_s = 10`:
+
+  | outcome | `end_ns - send_ns` | `ok` | `ok_late` | In goodput |
+  |---|---|---|---|---|
+  | `ok` | 4 s | +1 | | yes |
+  | `ok` | 5 s (exactly the SLO) | +1 | | yes: `<=` |
+  | `ok` | 7 s | +1 | +1 | no |
+  | `cancelled` | 80 s (DrainDeadline) | | | no |
+
+  `counts.ok = 3`, `counts.ok_late = 1`, `rates.goodput = (3 - 1) / 10 = 0.2` requests/s.
 - **Latency statistics cover only `ok` requests.** Cancelled requests end at about `slo_ms` by
   construction, so their share is reported through `counts.cancelled` instead. All per-request
   latencies remain in the CSV for other analyses.

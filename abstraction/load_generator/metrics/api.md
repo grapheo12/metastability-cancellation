@@ -66,7 +66,7 @@ per [design.md#requestrecord](design.md#requestrecord).
   "run_end_s": float,
   "run_start_unix_ns": integer,
   "counts":   { "scheduled", "sent", "ok", "rejected", "cancelled", "dropped", "error", "not_sent",
-                "copies_sent", "stall_window" },
+                "copies_sent", "stall_window", "ok_late" },
   "rates_per_s": { "offered", "sent", "goodput" },
   "e2e_latency_us":     { "count", "mean", "p50", "p90", "p99", "p999", "max" },
   "service_latency_us": { "count", "mean", "p50", "p90", "p99", "p999", "max" }
