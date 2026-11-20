@@ -56,7 +56,7 @@ runs after `job.reply` is filled without holding up the reader (a coroutine, a t
 ## Admission
 
 ```
-function route(task):                                     # Immediate(Response) | Queued(PingJob)
+function route(task):                                     # Immediate(Response) | Queued(PingJob) | Streamed
     if task.path == "/ping":
         if task.method != "POST":   return Immediate(Response(405, empty))
         r = ping_handler.admit_ping(task, config, rng, conn_state)
@@ -67,6 +67,10 @@ function route(task):                                     # Immediate(Response) 
     if task.path == "/cancel":
         if task.method != "DELETE": return Immediate(Response(405, empty))
         return Immediate(cancel_tracker.handle_cancel(task.body, config, registry))   # never queued
+    if task.path == "/heartbeat":
+        if task.method != "GET":    return Immediate(Response(405, empty))
+        spawn heartbeat.serve_heartbeat(task, config, queue)   # its own coroutine; never queued
+        return Streamed                                  # the sender writes the stream; nothing else does
     return Immediate(Response(404, empty))
 ```
 
@@ -77,6 +81,9 @@ function route(task):                                     # Immediate(Response) 
   `queue_push`. This is what keeps the connection's ServiceTime sequence
   ([../ping_handler/design.md#sampling-order](../ping_handler/design.md#sampling-order)) and its push order
   ([../worker_pool/design.md#ordering](../worker_pool/design.md#ordering)) tied to arrival order.
+- **`/heartbeat` is never queued.** It gets its own coroutine at once, so the FrameReader goes on reading, and
+  the HeartbeatSender writes the stream until it ends ([../heartbeat/design.md#heartbeatsender](../heartbeat/design.md#heartbeatsender)).
+  The stream's RST flag is set as for any stream, and the sender reads it.
 - **`/cancel` is never queued.** `handle_cancel` is lock-free and short, so answering it on the reader cannot delay
   the reader by more than one registry push.
 
@@ -90,6 +97,8 @@ function route(task):                                     # Immediate(Response) 
 | `/ping` | other | router | no | `405`, empty |
 | `/cancel` | `DELETE` | `handle_cancel` | never | `202`, `400` or `503` |
 | `/cancel` | other | router | no | `405`, empty |
+| `/heartbeat` | `GET` | `heartbeat.serve_heartbeat` on its own coroutine | never | `200`, then a HeartbeatStream |
+| `/heartbeat` | other | router | no | `405`, empty |
 | other | any | router | no | `404`, empty |
 
 ## Response writing
