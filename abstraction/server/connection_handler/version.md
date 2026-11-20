@@ -7,3 +7,4 @@
 | 0.2.1 | 2026-10-30T00:00:00Z | API style: Types / Functions sections, explicit `Response` type, design links. No behavior change |
 | 0.3.0 | 2026-11-10T00:00:00Z | Shared WorkQueue: SerialStreamWorker and the per-connection queue removed. The FrameReader routes at once: `/ping` is admitted (`admit_ping` + `queue_push`, one at a time per connection) and answered by a stream responder; `/cancel`, `400`, `404`, `405` answered inline. New sections Admission, Routing table; state machine, concurrency requirement and connection close updated |
 | 0.4.0 | 2026-11-20T00:00:00Z | Routing: `GET /heartbeat` spawns `heartbeat.serve_heartbeat` on its own coroutine (route result `Streamed`, never queued); other methods `405` |
+| 0.5.0 | 2026-11-20T00:00:00Z | Response writing: `/ping` `202` and `503` answers carry the WorkerCount header `x-worker-threads: <n_worker_threads>` |

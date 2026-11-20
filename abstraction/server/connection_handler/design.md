@@ -107,11 +107,17 @@ function route(task):                                     # Immediate(Response) 
 procedure write_response(task, response):
     if response is Aborted: return                                   # RST skip/abort, or dropped at shutdown
     if config.cancel_mode == cooperative and task.cancelled.load(): return
-    send HEADERS(:status, content-type if body non-empty, content-length)
+    worker_count = config.n_worker_threads if task.path == "/ping" and response.status in {202, 503} else none
+    send HEADERS(:status, content-type if body non-empty, content-length,
+                 x-worker-threads: decimal(worker_count) if worker_count is not none)       # WorkerCount
     send DATA(body, END_STREAM)
     # If the stream was reset, the HTTP/2 layer drops these frames. Any write error
     # on a reset stream is ignored and does not close the connection.
 ```
+
+Every `/ping` answer from a worker (`202`, or `503` from a `/cancel` match) carries the WorkerCount header
+([../../protocol/design.md#workercount](../../protocol/design.md#workercount)); `400`, `404`, `405` and `/cancel`
+answers do not.
 
 `503` responses from a `/cancel` match are written like any other response. The client is still
 waiting for them. Writing hands the frames to the connection's writer; it never waits for the peer, so a write
