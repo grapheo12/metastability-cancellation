@@ -1,7 +1,7 @@
 // Package loadgen implements the load generator: one file per component of
 // abstraction/load_generator.
 //
-// Source: abstraction/load_generator/design.md (load_generator v0.7.1)
+// Source: abstraction/load_generator/design.md (load_generator v0.8.0)
 package loadgen
 
 import (
@@ -25,11 +25,14 @@ type Config struct {
 	RetryTimeoutMs   float64 // RetryTimer of each RequestCopy
 	MaxRetries       uint32  // RequestCopies after the first
 	InitialStallMs   uint64  // StallWindow length
+	SloCancel        bool    // SLOCancellation on (default) or the DrainDeadline instead
+	DrainTimeoutMs   uint64  // DrainDeadline after duration_s, used only without SloCancel
 	PerClientRate    float64 // global_rate / N
 	SloNs            int64   // round(slo_ms * 1e6)
 	RetryTimeoutNs   int64   // round(retry_timeout_ms * 1e6)
 	InitialStallNs   int64   // initial_stall_ms * 1_000_000
 	DurationNs       int64   // round(duration_s * 1e9)
+	DrainTimeoutNs   int64   // drain_timeout_ms * 1_000_000
 }
 
 // Params holds the raw command-line values, named after the API parameters.
@@ -46,12 +49,14 @@ type Params struct {
 	RetryTimeoutMs   string
 	MaxRetries       string
 	InitialStallMs   string
+	SloCancel        string
+	DrainTimeoutMs   string
 }
 
 // DefaultParams returns the defaults from abstraction/load_generator/api.md#program-parameters.
 func DefaultParams() Params {
 	return Params{Target: "127.0.0.1:8080", Seed: "0", OutputPath: "results", NWaitingRequests: "100",
-		RetryTimeoutMs: "150", MaxRetries: "1", InitialStallMs: "1000"}
+		RetryTimeoutMs: "150", MaxRetries: "1", InitialStallMs: "1000", SloCancel: "true", DrainTimeoutMs: "10000"}
 }
 
 // nowNs is monotonic nanoseconds since runStart (time.Time keeps a monotonic reading).

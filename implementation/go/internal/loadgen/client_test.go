@@ -376,3 +376,30 @@ func TestRetryCopiesShareDeadline(t *testing.T) {
 		}
 	}
 }
+
+// Design: abstraction/load_generator/run_controller/design.md#configuration-validation
+func TestValidateSloCancelAndDrain(t *testing.T) {
+	p := DefaultParams()
+	p.NumClients, p.GlobalRate, p.RequestBytes, p.SloMs, p.DurationS = "1", "1", "128", "300", "10"
+	c, err := Validate(p)
+	if err != nil || !c.SloCancel || c.DrainTimeoutNs != 10_000_000_000 {
+		t.Fatalf("defaults: %+v %v", c, err)
+	}
+	p.SloCancel, p.DrainTimeoutMs = "false", "60000"
+	if c, err := Validate(p); err != nil || c.SloCancel || c.DrainTimeoutNs != 60_000_000_000 {
+		t.Fatalf("false/60000: %+v %v", c, err)
+	}
+	for _, bad := range []string{"True", "1", "", "yes"} {
+		p.SloCancel = bad
+		if _, err := Validate(p); err == nil {
+			t.Fatalf("slo_cancel %q must be rejected", bad)
+		}
+	}
+	p.SloCancel = "true"
+	for _, bad := range []string{"0", "-1", "1.5", "", "9223372036855"} {
+		p.DrainTimeoutMs = bad
+		if _, err := Validate(p); err == nil {
+			t.Fatalf("drain_timeout_ms %q must be rejected", bad)
+		}
+	}
+}

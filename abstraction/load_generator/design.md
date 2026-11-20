@@ -69,8 +69,8 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [Structure](#structure) | [runcontroller.go:102](../../implementation/go/internal/loadgen/runcontroller.go#L102) |
-| [Time base](#time-base) | [config.go:60](../../implementation/go/internal/loadgen/config.go#L60), [config.go:67](../../implementation/go/internal/loadgen/config.go#L67) |
-| [Concurrency](#concurrency) | [runcontroller.go:116](../../implementation/go/internal/loadgen/runcontroller.go#L116) |
-| [Phases](#phases) | [runcontroller.go:102](../../implementation/go/internal/loadgen/runcontroller.go#L102) |
+| [Structure](#structure) | [runcontroller.go:116](../../implementation/go/internal/loadgen/runcontroller.go#L116) |
+| [Time base](#time-base) | [config.go:65](../../implementation/go/internal/loadgen/config.go#L65), [config.go:72](../../implementation/go/internal/loadgen/config.go#L72) |
+| [Concurrency](#concurrency) | [runcontroller.go:130](../../implementation/go/internal/loadgen/runcontroller.go#L130) |
+| [Phases](#phases) | [runcontroller.go:116](../../implementation/go/internal/loadgen/runcontroller.go#L116) |
 <!-- trace:end -->

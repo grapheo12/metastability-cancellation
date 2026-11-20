@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/run_controller/design.md (run_controller v0.6.0)
+// Source: abstraction/load_generator/run_controller/design.md (run_controller v0.7.0)
 package loadgen
 
 import (
@@ -40,6 +40,19 @@ func Validate(p Params) (Config, error) {
 	if c.SloMs, err = parsePositive(p.SloMs); err != nil {
 		return c, errors.New("slo_ms " + err.Error())
 	}
+	switch p.SloCancel { // exactly "true" or "false"
+	case "true":
+		c.SloCancel = true
+	case "false":
+		c.SloCancel = false
+	default:
+		return c, errors.New("slo_cancel must be true or false")
+	}
+	dt, err := strconv.ParseUint(p.DrainTimeoutMs, 10, 64)
+	if err != nil || dt < 1 || dt > math.MaxInt64/1_000_000 { // checked even when unused; ns must fit an int64
+		return c, errors.New("drain_timeout_ms must be an integer > 0")
+	}
+	c.DrainTimeoutMs = dt
 	if c.DurationS, err = parsePositive(p.DurationS); err != nil {
 		return c, errors.New("duration_s " + err.Error())
 	}
@@ -78,6 +91,7 @@ func Validate(p Params) (Config, error) {
 	c.RetryTimeoutNs = int64(math.Round(c.RetryTimeoutMs * 1e6))
 	c.InitialStallNs = int64(c.InitialStallMs) * 1_000_000 // < duration_ns, so it fits
 	c.DurationNs = int64(math.Round(c.DurationS * 1e9))
+	c.DrainTimeoutNs = int64(c.DrainTimeoutMs) * 1_000_000
 	return c, nil
 }
 
