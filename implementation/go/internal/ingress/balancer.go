@@ -248,7 +248,11 @@ func (lb *LoadBalancer) ewmaUpdate(s uint32, sampleNs uint64) float64 {
 //
 // Design: abstraction/ingress/load_balancer/design.md#ewmalatency
 func ewmaNext(old float64, sampleNs uint64, beta float64) float64 {
-	return old*beta + float64(sampleNs)*(1-beta)
+	// The explicit float64 conversions round each product, as the design's
+	// "binary64, round to nearest" requires: without them Go may fuse the
+	// multiply and add (FMA, e.g. on arm64), which rounds once and gives a
+	// slightly different value at different call sites.
+	return float64(old*beta) + float64(float64(sampleNs)*(1-beta))
 }
 
 // ewmaExecUpdate folds one ExecutionTime into the backend's EwmaExecTime with
