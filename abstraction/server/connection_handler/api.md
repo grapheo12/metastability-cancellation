@@ -38,5 +38,5 @@ Asks the handler to shut down ([design.md#connection-close](design.md#connection
 - [../ping_handler/api.md](../ping_handler/api.md): `admit_ping(task, config, rng, conn_state) -> PingJob | Response`
 - [../worker_pool/api.md](../worker_pool/api.md): `PingJob`, `queue_push`
 - [../cancel_tracker/api.md](../cancel_tracker/api.md): `ConnectionCancelState`, `handle_cancel`
-- [../../protocol/api.md](../../protocol/api.md): route and status constants
+- [../../protocol/api.md](../../protocol/api.md): route and status constants, `WORKER_THREADS_HEADER`
 - [../heartbeat/api.md](../heartbeat/api.md): `serve_heartbeat` for `GET /heartbeat`
