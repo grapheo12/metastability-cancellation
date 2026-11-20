@@ -1,0 +1,69 @@
+# Failure case with failure detection and NO SLO cancellation: one of two servers freezes halfway through each run
+# (WorkerFreeze, FreezeTarget), and the Ingress drops it once its Heartbeat stops (BackendLiveness).
+# The load generator does not cancel requests at the SLO (slo_cancel = false): late requests run to completion, are
+# recorded ok and count against Availability (counts.ok_late; goodput counts only answers within the SLO). Requests
+# still outstanding 60 s after the active phase (those stuck on the frozen server) are cancelled at the DrainDeadline.
+# Otherwise identical to sleep_aws_40-70rps_slo5s_10w_200ms_freeze-half_heartbeat_noretry-2s_fifo-edf.toml, for
+# comparison. Each point lasts about 120 + 60 s plus setup.
+# Server instance 0 (metafail-exp-2) gets freeze_after_ms = 60000, half of duration_s = 120: from 60 s after its first
+# /ping, its workers stop for good (mid-request too) while the process keeps admitting and queueing. Instance 1
+# (metafail-exp-3) keeps working. Capacity: 2 x 10 workers x 5/s = 100 req/s before the freeze, 50 req/s after it.
+# Sweep: global_rate [40, 50, 60, 70] x max_retries [0, 1] (1 retry after 2 s) x [fifo, edf] = 16 points.
+# workload = sleep (QuantumSleep, 20 ms quanta, no CPU), 200 ms mean service time, SLO 5 s, no initial stall,
+# n_waiting_requests 500, 120 s per point. Ingress (EWMA) and load generator on metafail-exp-1.
+#
+# Meant to be run ON metafail-exp-1 (client = "local"), detached, so the operator laptop can go away:
+#   python3 implementation/scripts/bench.py run implementation/scripts/sleep_aws_40-70rps_slo5s_10w_200ms_freeze-half_heartbeat_noretry-2s_nocancel_fifo-edf.toml
+# exp-1 reaches the servers over their private addresses with its own key ~/.ssh/id_ed25519_bench.
+[repo]
+url = "https://github.com/grapheo12/metastability-cancellation.git"
+
+[[machines.server]]
+host = "172.31.30.174"   # metafail-exp-2
+user = "ubuntu"
+ssh_key = "~/.ssh/id_ed25519_bench"
+data_addr = "172.31.30.174"
+
+[[machines.server]]
+host = "172.31.21.15"    # metafail-exp-3
+user = "ubuntu"
+ssh_key = "~/.ssh/id_ed25519_bench"
+data_addr = "172.31.21.15"
+
+[machines.client]
+host = "local"           # metafail-exp-1, where this runner runs
+
+[server]
+listen_port = 8080
+instances = 1   # per server machine: 2 servers in total
+workload = "sleep"
+response_rate = 5   # per worker: 200 ms mean
+initial_stall_ms = 0
+n_worker_threads = 10
+queue_discipline = ["fifo", "edf"]
+response_bytes = 128
+freeze_after_ms = 60000   # half of load_gen.duration_s
+freeze_instance = 0       # FreezeTarget: only the metafail-exp-2 server freezes
+heartbeat_interval_ms = 500  # Heartbeat: one HeartbeatLine every 500 ms
+
+[load_gen]
+num_clients = 16
+global_rate = [40, 50, 60, 70]
+request_bytes = 128
+slo_ms = 5000
+duration_s = 120
+n_waiting_requests = 500
+retry_timeout_ms = 2000
+max_retries = [0, 1]
+slo_cancel = false        # late requests run to completion (DrainDeadline instead of SLOCancellation)
+drain_timeout_ms = 60000  # DrainDeadline: 60 s after duration_s; lets the overloaded survivor's backlog drain
+
+[ingress]
+machine = "client"   # Ingress next to the load generator on metafail-exp-1
+listen_port = 9090
+lb_policy = "ewma"
+heartbeat_timeout_ms = 1000  # BackendLiveness: no new requests after 2 missed heartbeats
+
+[run]
+sweep_order = ["load_gen.global_rate", "load_gen.max_retries", "server.queue_discipline"]
+cooldown_s = 2
