@@ -72,8 +72,9 @@ procedure main(argv):
   times relative to the process start. The BenchmarkRunner turns them into wall-clock times with this line.
 - **Accuracy.** The line is read at the start of the program's entry point. A runtime starts its own clock a
   little earlier, during its initialization; the difference is well under 1 ms and is accepted.
-- This is the server's only wall-clock read; every duration still uses the monotonic clock
-  ([Concurrency model](#concurrency-model)).
+- Apart from this line, the only wall-clock read is the StartSlack of each request's ExecReport
+  ([ping_handler/design.md#execreport](ping_handler/design.md#execreport)); every duration still uses the monotonic
+  clock ([Concurrency model](#concurrency-model)).
 
 ## Listener
 
@@ -119,8 +120,10 @@ shift. Reproducing the server's random sequence therefore needs the same connect
 
 Rules every subcomponent shares:
 
-- **Time base.** Durations are measured with a monotonic clock in whole microseconds. Nothing depends on wall time; the
-  only wall-clock read is the [ProcessStart](#processstart) line, which is an output, never an input.
+- **Time base.** Durations are measured with a monotonic clock, in whole microseconds except the ExecutionTime, which
+  is in nanoseconds. Nothing depends on wall time; the only wall-clock reads are the [ProcessStart](#processstart)
+  line and each request's StartSlack ([ping_handler/design.md#execreport](ping_handler/design.md#execreport)), which
+  are outputs, never inputs.
 - **No blocking on work.** A Connection Handler never waits for a worker except on the one stream whose reply it
   is writing. `/cancel` never waits for a worker or for a client's lock.
 - **Locks.** The WorkQueue lock is held only to move one job. A client's cancel lock

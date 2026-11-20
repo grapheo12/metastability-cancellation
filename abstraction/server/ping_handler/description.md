@@ -17,7 +17,8 @@ On a worker of the WorkerPool (**run**):
   every `cancel_check_interval_us` and `/cancel` every `CHECK_ITER` spin units; for a sleep, both at each wake-up;
   for MessageWork, both after each message).
 - Answer `202` if the work completed, `503` if a `/cancel` stopped it, or nothing if an RST stopped it.
-  Responses echo the RequestId in a PaddedJsonBody of `response_bytes`.
+  Responses echo the RequestId in a PaddedJsonBody of `response_bytes`, with the **ExecReport**: the request's
+  ExecutionTime and its StartSlack when a worker picked it up.
 - Publish the request's id as the client's **FinishedWatermark** whichever way it finished, so `/cancel` replies
   can report it.
 

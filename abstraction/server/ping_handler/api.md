@@ -21,8 +21,8 @@ order the requests were fully received, so it uses `rng` and `conn_state` exclus
 ### `run_ping(job: PingJob, config: ServerConfig, registry: CancelRegistry, counters: CancelCounters, buf: MessageBuffer | NONE, queue: WorkQueue) -> Response | Aborted`
 
 - `Response(202, body)`: the burn (`cpu_burn`), the sleep (`sleep`) or the MessageWork (`message_buffer`, which writes into `buf`)
-  completed. Body is a PaddedJsonBody. See [design.md#messagework](design.md#messagework).
-- `Response(503, body)`: a `/cancel` matched (`cooperative` only). Body is a PaddedJsonBody.
+  completed. Body is a PaddedJsonBody carrying the ExecReport ([design.md#execreport](design.md#execreport)). See [design.md#messagework](design.md#messagework).
+- `Response(503, body)`: a `/cancel` matched (`cooperative` only). Body is a PaddedJsonBody carrying the ExecReport.
 - `Aborted`: the RST flag stopped the request (`cooperative` only). Nothing is written.
 - Does not return while the WorkerFreeze holds it: every check calls `freeze_wait(queue)` first
   ([design.md#cancelcheckpoints](design.md#cancelcheckpoints)).

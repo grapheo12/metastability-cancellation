@@ -47,6 +47,8 @@ function admit_ping(task, config, rng, conn_state):
 ```
 function run_ping(job, config, registry, counters, buf, queue):  # buf: MessageBuffer, or NONE for cpu_burn and sleep
     id = job.request_id
+    report = start_exec_report(job)                                      # ExecReport: stamped first, right after the pop
+    body = () -> protocol.build_body(id, exec_ns(report), report.start_slack_ns, config.response_bytes)
     freeze = () -> worker_pool.freeze_wait(queue)                         # WorkerFreeze: returns at once unless frozen
     slot = cancel_tracker.registry_client(registry, job.client_id)      # none if the registry is full
     cancel_tracker.registry_start(registry, slot, id)                    # CancelMatching: started, not finished
@@ -61,7 +63,7 @@ function run_ping(job, config, registry, counters, buf, queue):  # buf: MessageB
             finish(false); return Aborted                                # RST wins
         if id_check():
             counters.cancelled_before_processing.fetch_add(1, relaxed)
-            finish(false); return Response(503, protocol.build_body(id, config.response_bytes))
+            finish(false); return Response(503, body())
 
         # CancelCheckPoint 2: during processing
         if config.workload == cpu_burn:
@@ -75,7 +77,7 @@ function run_ping(job, config, registry, counters, buf, queue):  # buf: MessageB
             finish(false); return Aborted
         if outcome == CANCELLED_ID:
             counters.cancelled_during_processing.fetch_add(1, relaxed)
-            finish(false); return Response(503, protocol.build_body(id, config.response_bytes))
+            finish(false); return Response(503, body())
     else:  # ignore
         freeze_check = (() -> { freeze(); return false }) if config.freeze_after_ms is set else NONE
         if config.workload == cpu_burn:
@@ -86,12 +88,59 @@ function run_ping(job, config, registry, counters, buf, queue):  # buf: MessageB
             fill_messages(job, config, buf, NONE, freeze_check)                            # always COMPLETED
 
     finish(true)                                                         # completed: feeds completed_before_cancel
-    return Response(202, protocol.build_body(id, config.response_bytes))
+    return Response(202, body())
 ```
 
 `run_ping` never fails. If the registry is full and the client has no slot, `slot` is `none`: `should_cancel` returns
 `false` and `finish` does nothing, so the request just runs to `202` (or `Aborted` by RST). `/cancel`s for such a
 client are answered `503` by `handle_cancel`, because they would need the same missing slot.
+
+## ExecReport
+
+`run_ping` stamps the ExecReport ([../../protocol/design.md#execreport](../../protocol/design.md#execreport)) as its
+very first step, which is right after the worker popped the job:
+
+```
+NO_DEADLINE = 2^64 - 1
+I64_MIN = -2^63
+I64_MAX = 2^63 - 1
+
+function start_exec_report(job):
+    t0_mono_ns = monotonic_now_ns()
+    t0_wall_ns = wall_clock_unix_ns()                       # u64
+    if job.deadline_unix_ns == NO_DEADLINE:
+        slack = none
+    else:
+        slack = job.deadline_unix_ns - t0_wall_ns           # exact signed arithmetic (no wrap), then:
+        slack = min(max(slack, I64_MIN), I64_MAX)           # saturate to i64
+    return { t0_mono_ns, start_slack_ns: slack }
+
+function exec_ns(report):                                   # u64; read when the body is built
+    return monotonic_now_ns() - report.t0_mono_ns
+```
+
+- **ExecutionTime** is read when the `202` or `503` body is built, so it covers everything the worker did for the
+  request: the ServiceTime burn, sleep or MessageWork, CancelCheckPoints, a WorkerFreeze, and the CancelMatching
+  bookkeeping. Queueing delay (push to pop) is outside it.
+- **StartSlack** uses the server's wall clock, read once per request. The RequestDeadline is the client's wall clock,
+  so clock offset between the machines adds directly to it.
+- `Aborted` requests write no body, so their ExecReport is dropped. A job dropped by `queue_close` never reaches
+  `run_ping`.
+
+Worked examples (`t0_wall_ns = 1794533185000000000`):
+
+| deadline_unix_ns | start_slack_ns | check |
+|---|---|---|
+| `1794533190000000000` | `5000000000` | 5 s left |
+| `1794533184965000000` | `-35000000` | 35 ms late |
+| `1794533185000000000` | `0` | exactly at the deadline |
+| `NO_DEADLINE` | none (empty in the body) | no deadline |
+| `0` | `-1794533185000000000` | fits in i64, no saturation |
+
+| t0_mono_ns | monotonic_now_ns() when the body is built | exec_ns |
+|---|---|---|
+| `1000` | `200001000` | `200000000` (a 200 ms sleep) |
+| `5000` | `5000` | `0` (503 at CancelCheckPoint 1, same tick) |
 
 ## MessageWork
 
@@ -218,8 +267,8 @@ Worked example for client 0 in `cooperative` mode, `/cancel` for id 1 registered
 
 | Status | Returned by | When | Body |
 |---|---|---|---|
-| `202` | `run_ping` | Burn or MessageWork completed | PaddedJsonBody of `response_bytes` |
-| `503` | `run_ping` | `/cancel` matched at check point 1 or 2 | PaddedJsonBody of `response_bytes` |
+| `202` | `run_ping` | Burn or MessageWork completed | PaddedJsonBody of `response_bytes`, with the [ExecReport](#execreport) |
+| `503` | `run_ping` | `/cancel` matched at check point 1 or 2 | PaddedJsonBody of `response_bytes`, with the [ExecReport](#execreport) |
 | `400` | `admit_ping` | Unparseable body or client id mismatch | empty |
 | none (`Aborted`) | `run_ping` | RST at check point 1 or 2 | — |
 

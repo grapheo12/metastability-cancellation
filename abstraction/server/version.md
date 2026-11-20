@@ -31,3 +31,4 @@
 | 0.10.1 | 2026-11-19T00:00:00Z | Child bump: ping_handler 0.10.0 (WorkerFreeze at every check) |
 | 0.11.0 | 2026-11-20T00:00:00Z | New subcomponent Heartbeat 0.1.0 (HeartbeatSender on `GET /heartbeat`); server parameter `heartbeat_interval_ms` (validation `>= 1`, default 500); Structure, Shutdown |
 | 0.11.1 | 2026-11-20T00:00:00Z | Child bump: connection_handler 0.4.0 (route `/heartbeat`) |
+| 0.12.0 | 2026-11-20T00:00:00Z | `response_bytes >= 115` (ExecReport); time base notes the StartSlack wall-clock read. Child bump: ping_handler 0.11.0 |
