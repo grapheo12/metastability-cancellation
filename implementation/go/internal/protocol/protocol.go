@@ -1,7 +1,7 @@
 // Package protocol implements the /ping, /cancel and /heartbeat wire formats shared by
 // the server, the load generator and the load canceller.
 //
-// Source: abstraction/protocol/design.md (protocol v0.6.0)
+// Source: abstraction/protocol/design.md (protocol v0.7.0)
 package protocol
 
 import (
@@ -19,6 +19,7 @@ const (
 	HeartbeatPath          = "/heartbeat"
 	HeartbeatMethod        = "GET"
 	ContentTypeJSON        = "application/json"
+	WorkerThreadsHeader    = "x-worker-threads" // WorkerCount on /ping 202 and 503
 	ContentTypeText        = "text/plain"
 	StatusStreamOK         = 200 // /heartbeat: the HeartbeatStream follows
 	StatusOK               = 202
@@ -292,6 +293,26 @@ func parseSignedDecimalString(raw json.RawMessage) (int64, bool) {
 		return 0, false
 	}
 	return int64(u), true
+}
+
+// ParseWorkerCount reads the WorkerCount from an x-worker-threads header
+// value: 1 ..= 2^32-1 in decimal; ok is false (none) otherwise, never an error.
+//
+// Design: abstraction/protocol/design.md#workercount
+func ParseWorkerCount(value string) (uint32, bool) {
+	if len(value) == 0 || len(value) > 10 {
+		return 0, false
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] < '0' || value[i] > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.ParseUint(value, 10, 64)
+	if err != nil || n < 1 || n > 1<<32-1 {
+		return 0, false
+	}
+	return uint32(n), true
 }
 
 // BuildHeartbeatLine returns the HeartbeatLine "hb <seq>\n".

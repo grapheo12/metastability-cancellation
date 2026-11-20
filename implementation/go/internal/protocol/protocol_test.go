@@ -1,4 +1,4 @@
-// Source: abstraction/protocol/design.md (protocol v0.6.0)
+// Source: abstraction/protocol/design.md (protocol v0.7.0)
 package protocol
 
 import (
@@ -224,6 +224,20 @@ func TestHeartbeatLine(t *testing.T) {
 	for _, bad := range []string{"hb 18446744073709551616", "hb ", "hb -1", "ping 3", "", "hb 1x"} {
 		if _, err := ParseHeartbeatLine([]byte(bad)); err != ErrParse {
 			t.Fatalf("%q: want ErrParse, got %v", bad, err)
+		}
+	}
+}
+
+// Design: abstraction/protocol/design.md#workercount
+func TestParseWorkerCount(t *testing.T) {
+	for _, c := range []struct {
+		v  string
+		n  uint32
+		ok bool
+	}{{"10", 10, true}, {"1", 1, true}, {"4294967295", 4294967295, true}, {"0", 0, false},
+		{"4294967296", 0, false}, {"", 0, false}, {"ten", 0, false}, {"-3", 0, false}, {"12345678901", 0, false}} {
+		if n, ok := ParseWorkerCount(c.v); n != c.n || ok != c.ok {
+			t.Errorf("%q: %d %v", c.v, n, ok)
 		}
 	}
 }
