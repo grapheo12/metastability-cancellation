@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.10.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.11.0)
 import contextlib
 import io
 import json
@@ -70,6 +70,34 @@ class ClientRunTest(unittest.TestCase):
         p.loadgen_target = "172.31.23.63:9090"  # Ingress on the server machine
         executor.client_run(p, config, client, "/rd")
         self.assertIn("/b/loadgen --target 172.31.23.63:9090", t.commands[-1])
+
+
+class TimeoutRecorder(Recorder):
+    def __init__(self):
+        super().__init__()
+        self.timeouts = []
+
+    def run(self, command, timeout_s=120.0):
+        self.timeouts.append(timeout_s)
+        return super().run(command, timeout_s)
+
+
+class ClientRunTimeoutTest(unittest.TestCase):
+    # The timeout adds drain_timeout_ms only with slo_cancel = false (default 10000).
+    # Design: abstraction/benchmark_runner/experiment_executor/design.md#clientrun
+    def test_timeout_covers_the_drain(self):
+        t = TimeoutRecorder()
+        client = MachineReady(t, "client", "/w", "/w/repo", {"loadgen": "/b/loadgen"}, None, "GOMAXPROCS", True)
+        config = SimpleNamespace(ingress_port=9090, run=SimpleNamespace(client_timeout_margin_s=60.0))
+        cases = [([("duration_s", 120), ("slo_ms", 5000)], 185.0),
+                 ([("duration_s", 120), ("slo_ms", 5000), ("slo_cancel", True), ("drain_timeout_ms", 60000)], 185.0),
+                 ([("duration_s", 120), ("slo_ms", 5000), ("slo_cancel", False), ("drain_timeout_ms", 60000)], 245.0),
+                 ([("duration_s", 120), ("slo_ms", 5000), ("slo_cancel", False)], 195.0)]
+        for args, want in cases:
+            p = point()
+            p.loadgen_args = args
+            executor.client_run(p, config, client, "/rd")
+            self.assertEqual(t.timeouts[-1], want, args)
 
 
 class LocalMachine:

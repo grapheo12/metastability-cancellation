@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.10.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.11.0)
 """run_point: ServerLifecycle, IngressLifecycle, ClientRun and point outputs for one SweepPoint."""
 
 import json
@@ -218,6 +218,8 @@ def client_run(point, config, client, rd):
              'echo "loadgen_exit=$L"',
              '[ "$L" -eq 0 ]']
     expected = _float(point.arg("loadgen", "duration_s")) + _float(point.arg("loadgen", "slo_ms")) / 1000
+    if point.arg("loadgen", "slo_cancel") is False:  # DrainDeadline: the run may last drain_timeout_ms longer
+        expected += _float(point.arg("loadgen", "drain_timeout_ms"), 10000.0) / 1000
     r = client.transport.run("\n".join(lines), expected + config.run.client_timeout_margin_s)
     if r.exit_status == -1:  # timed out: kill what is left
         pid = quote(f"{rd}/loadgen.pid")
