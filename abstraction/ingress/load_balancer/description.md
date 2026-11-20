@@ -9,6 +9,10 @@ the **LbPolicy** named in `lb_policy`, and keeps the **BackendStats** of every b
 - `ewma`: two different random backends, then the one with the lower **EwmaScore**, which weighs its forwards in
   progress by its **EwmaLatency** (a moving average of its recent response times).
 
+With `lb_filter = deadline`, the **DeadlineFilter** first narrows the candidates to the backends expected to reach
+the request before its RequestDeadline (`(outstanding + 1) × EwmaExecTime` within its time left); if none is, the
+request is dropped instead of forwarded.
+
 It counts each backend's forwards in progress (`outstanding`) and how each forward ended, for the policies and for
 the Ingress summary. Each `pick` hands out a **ForwardTicket** that its `finish` gives back, so the LoadBalancer
 measures every forward's latency itself. Every `finish` appends a **ForwardRecord** (time, backend, outcome,
