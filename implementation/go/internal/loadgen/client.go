@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/client/design.md (client v0.7.0)
+// Source: abstraction/load_generator/client/design.md (client v0.8.0)
 package loadgen
 
 import (
@@ -138,7 +138,7 @@ func startRequest(clientID, seq uint32, tSched int64, conn *h2client.Conn, cfg C
 	r.rec.InStallWindow = r.stall
 	// Design: abstraction/load_generator/client/design.md#slocancellation
 	r.sloTimer = time.AfterFunc(time.Duration(r.rec.SendNs+cfg.SloNs-nowNs(runStart)), func() {
-		if !r.settle(OutcomeCancelled, 0) {
+		if !r.settle(OutcomeCancelled, 0, nil) {
 			return
 		}
 		r.mu.Lock()
@@ -155,12 +155,17 @@ func startRequest(clientID, seq uint32, tSched int64, conn *h2client.Conn, cfg C
 // settle records the request once; later calls return false.
 //
 // Design: abstraction/load_generator/client/design.md#start_request
-func (r *pendingRequest) settle(outcome Outcome, status int) bool {
+func (r *pendingRequest) settle(outcome Outcome, status int, respBody []byte) bool {
 	if !r.settled.CompareAndSwap(false, true) {
 		return false
 	}
 	rec := r.rec
 	rec.EndNs, rec.Outcome, rec.HTTPStatus = nowNs(r.runStart), outcome, status
+	if outcome == OutcomeOK || outcome == OutcomeRejected {
+		// ExecReport of the deciding (newest copy's) response; never fails.
+		// Design: abstraction/load_generator/client/design.md#outcome-classification
+		rec.ExecNs, rec.HasExec, rec.StartSlackNs, rec.HasSlack = protocol.ParseExecReport(respBody)
+	}
 	r.mu.Lock()
 	rec.Copies = r.current + 1
 	r.mu.Unlock()
@@ -204,7 +209,7 @@ func (r *pendingRequest) sendCopy(k uint32) {
 		resp, err := r.conn.CC.RoundTrip(req)
 		if err != nil {
 			if r.newest(k) {
-				r.settle(OutcomeError, 0)
+				r.settle(OutcomeError, 0, nil)
 			}
 			return
 		}
@@ -214,10 +219,10 @@ func (r *pendingRequest) sendCopy(k uint32) {
 			return // superseded copy: ignored
 		}
 		if err != nil {
-			r.settle(OutcomeError, 0)
+			r.settle(OutcomeError, 0, nil)
 			return
 		}
-		r.settle(classify(resp.StatusCode, b, r.id), resp.StatusCode)
+		r.settle(classify(resp.StatusCode, b, r.id), resp.StatusCode, b)
 	}()
 	if r.stall {
 		return // StallWindowRequest: no RetryTimer

@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/client/design.md (client v0.7.0)
+// Source: abstraction/load_generator/client/design.md (client v0.8.0)
 package loadgen
 
 import (
@@ -115,7 +115,8 @@ func TestValidateNWaitingRequests(t *testing.T) {
 
 // scriptedServer is a prior-knowledge h2c server whose answer to the n-th
 // copy (0-based) of a RequestId waits delays[n], or returns at once if its
-// stream is reset. It reports how each copy ended on done.
+// stream is reset. It reports how each copy ended on done. The answer to copy n
+// carries the ExecReport exec_ns = 1000 + n, start_slack_ns = -(n + 1).
 type copyEnd struct {
 	copy     int
 	reset    bool   // the client reset the stream before the answer
@@ -142,7 +143,8 @@ func scriptedServer(t *testing.T, delays []time.Duration) (*h2client.Conn, chan 
 		select {
 		case <-time.After(delays[n]):
 			w.WriteHeader(protocol.StatusOK)
-			w.Write(protocol.BuildBody(id, 0, nil, 128))
+			slack := -int64(n + 1)
+			w.Write(protocol.BuildBody(id, uint64(1000+n), &slack, 128))
 			done <- copyEnd{copy: n, deadline: dl}
 		case <-req.Context().Done():
 			done <- copyEnd{copy: n, reset: true, deadline: dl}
@@ -191,7 +193,8 @@ func TestRetryTimerWorkedExamples(t *testing.T) {
 	t.Run("fast answer", func(t *testing.T) {
 		conn, _ := scriptedServer(t, []time.Duration{10 * ms, 10 * ms})
 		r := oneRequest(t, conn, 300, 150, 1)
-		if r.Outcome != OutcomeOK || r.Copies != 1 || service(r) >= 150*ms {
+		if r.Outcome != OutcomeOK || r.Copies != 1 || service(r) >= 150*ms ||
+			!r.HasExec || r.ExecNs != 1000 || !r.HasSlack || r.StartSlackNs != -1 {
 			t.Fatalf("%+v", r)
 		}
 	})
@@ -207,8 +210,9 @@ func TestRetryTimerWorkedExamples(t *testing.T) {
 		// RetryTimer) answers at 100+60.
 		conn, done := scriptedServer(t, []time.Duration{130 * ms, 60 * ms})
 		r := oneRequest(t, conn, 1000, 100, 1)
-		if r.Outcome != OutcomeOK || r.Copies != 2 || service(r) < 155*ms {
-			t.Fatalf("%+v: the superseded copy's answer must not count", r)
+		// Design: abstraction/load_generator/client/design.md#outcome-classification
+		if r.Outcome != OutcomeOK || r.Copies != 2 || service(r) < 155*ms || r.ExecNs != 1001 || r.StartSlackNs != -2 {
+			t.Fatalf("%+v: the superseded copy's answer (and ExecReport) must not count", r)
 		}
 		if e := <-done; e.copy != 0 || e.reset {
 			t.Fatalf("copy 0 must be answered, not reset: %+v", e)
@@ -217,7 +221,7 @@ func TestRetryTimerWorkedExamples(t *testing.T) {
 	t.Run("no answer: SLO resets every copy", func(t *testing.T) {
 		conn, done := scriptedServer(t, []time.Duration{time.Hour, time.Hour})
 		r := oneRequest(t, conn, 150, 100, 1)
-		if r.Outcome != OutcomeCancelled || r.Copies != 2 || service(r) < 150*ms {
+		if r.Outcome != OutcomeCancelled || r.Copies != 2 || service(r) < 150*ms || r.HasExec || r.HasSlack {
 			t.Fatalf("%+v", r)
 		}
 		for i := 0; i < 2; i++ {
