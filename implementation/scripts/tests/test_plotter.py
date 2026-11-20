@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.16.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.17.0)
 import csv
 import json
 import os
@@ -485,12 +485,13 @@ class StartSlackHistogramTest(unittest.TestCase):
             write_requests(pd(1), [("ok", 1, 2)])                                # before the ExecReport
             # point 2: no Requests CSV
             path = os.path.join(pd(0), "loadgen.requests.csv")
-            self.assertEqual(plotter.read_start_slacks(path), [4950000000, -35000000])
+            self.assertEqual(plotter.read_start_slacks(path), [(1, 4950000000), (1, -35000000)])
             self.assertEqual(plotter.read_start_slacks(os.path.join(pd(1), "loadgen.requests.csv")), [])
             self.assertIsNone(plotter.read_start_slacks(os.path.join(pd(2), "loadgen.requests.csv")))
             table, keys = plotter.build_table(out)
-            (label, h, color), = plotter.start_slack_lines(out, table, keys)
+            (label, (h, before, after), color), = plotter.start_slack_lines(out, table, keys)
             self.assertEqual((label, color, len(h)), ("load_gen.global_rate=40", 0, 51))   # bins -1 ..= 49
+            self.assertEqual((before, after), (None, None))                              # no FailureTime
             try:
                 import plotly  # noqa: F401
             except ImportError:
@@ -501,6 +502,26 @@ class StartSlackHistogramTest(unittest.TestCase):
             os.remove(path)
             plotter.plot(out)
             self.assertFalse(os.path.exists(page))                                       # stale page removed
+
+
+class StartSlackSplitTest(unittest.TestCase):
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
+    def test_split_worked_example(self):
+        samples = [(59_999_999_999, 4_950_000_000), (60_000_000_000, -1_440_000_000), (61_000_000_000, -2_000_000_000)]
+        everything, before, after = plotter.split_histograms(samples, 60000)
+        self.assertEqual([(round(x, 2), f) for x, f in before], [(4.95, 1.0)])
+        self.assertEqual(len(after), 6)                                               # bins -20 ..= -15
+        self.assertEqual([f for _, f in after], [0.5, 0, 0, 0, 0, 0.5])
+        self.assertEqual(sum(f for _, f in everything), 1.0)
+        self.assertEqual(plotter.split_histograms(samples, None)[1:], (None, None))
+        self.assertIsNone(plotter.split_histograms(samples[:1], 60000)[2])            # nothing after
+
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
+    def test_failure_time(self):
+        self.assertEqual(plotter.failure_time_ms({"freeze": {"instance": 0, "freeze_after_ms": 60000}}), 60000)
+        self.assertEqual(plotter.failure_time_ms({"freeze": None, "server_args": [["freeze_after_ms", 500]]}), 500)
+        self.assertIsNone(plotter.failure_time_ms({"freeze": None, "server_args": [["response_rate", 5]]}))
+        self.assertIsNone(plotter.failure_time_ms({}))
 
 
 if __name__ == "__main__":

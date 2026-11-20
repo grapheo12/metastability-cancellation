@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.16.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.17.0)
 """PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot, QueueLengthPlot and ForwardTimelinePlots,
 drawn as interactive HTML FigurePages with plotly."""
 
@@ -649,16 +649,16 @@ START_SLACK_BIN_MS = 100
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
 def read_start_slacks(path):
-    """The start_slack_ns samples of a Requests CSV ([] without the column), skipping
+    """[(send_ns, start_slack_ns)] of a Requests CSV ([] without the slack column), skipping
     StallWindowRequests and empty cells; None if the file is missing."""
     if not os.path.exists(path):
         return None
-    slacks = []
+    samples = []
     with open(path, encoding="utf-8", errors="replace") as f:
         header = f.readline().rstrip("\n").split(",")
-        if "start_slack_ns" not in header:
+        if "start_slack_ns" not in header or "send_ns" not in header:
             return []  # a run made before the ExecReport
-        i_slack = header.index("start_slack_ns")
+        i_slack, i_send = header.index("start_slack_ns"), header.index("send_ns")
         i_stall = header.index("in_stall_window") if "in_stall_window" in header else None
         for line in f:
             parts = line.rstrip("\n").split(",")
@@ -669,10 +669,10 @@ def read_start_slacks(path):
             if not parts[i_slack]:
                 continue
             try:
-                slacks.append(int(parts[i_slack]))
+                samples.append((int(parts[i_send]), int(parts[i_slack])))
             except ValueError:
                 break
-    return slacks
+    return samples
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
@@ -689,16 +689,37 @@ def start_slack_histogram(slacks):
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
+def failure_time_ms(params):
+    """The FailureTime: params.json freeze.freeze_after_ms, else a freeze_after_ms in server_args, else None."""
+    freeze = params.get("freeze")
+    if freeze and freeze.get("freeze_after_ms") is not None:
+        return freeze["freeze_after_ms"]
+    return dict((k, v) for k, v in params.get("server_args") or []).get("freeze_after_ms")
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
+def split_histograms(samples, failure_ms):
+    """(all, before, after) histograms; before/after are None without a FailureTime or without samples."""
+    hist = lambda vs: start_slack_histogram(vs) if vs else None
+    everything = start_slack_histogram([v for _, v in samples])
+    if failure_ms is None:
+        return everything, None, None
+    f = failure_ms * 1_000_000
+    return (everything, hist([v for t, v in samples if t < f]), hist([v for t, v in samples if t >= f]))
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
 def start_slack_lines(output_dir, done, swept_keys):
-    """[(label, histogram, color index)] for the done points with StartSlack samples."""
+    """[(label, (all, before, after), color index)] for the done points with StartSlack samples."""
     lines = []
     for row in sorted(done, key=lambda r: int(r["point"])):
         pdir = os.path.join(output_dir, "points", f"point_{int(row['point']):04d}")
-        slacks = read_start_slacks(os.path.join(pdir, "loadgen.requests.csv"))
-        if not slacks:
+        samples = read_start_slacks(os.path.join(pdir, "loadgen.requests.csv"))
+        if not samples:
             continue
+        params = _read_json(os.path.join(pdir, "params.json")) or {}
         label = ", ".join(f"{k}={_cell(row[k])}" for k in swept_keys) or f"point {row['point']}"
-        lines.append((label, start_slack_histogram(slacks), len(lines)))
+        lines.append((label, split_histograms(samples, failure_time_ms(params)), len(lines)))
     return lines
 
 
@@ -710,13 +731,24 @@ def draw_start_slack(output_dir, done, swept_keys):
         if os.path.exists(path):
             os.remove(path)
         return
-    fig = new_figure([f"start slack per {START_SLACK_BIN_MS} ms bin (deadline - worker pick-up)"])
-    for label, h, color in lines:
-        add_line(fig, 1, (p[0] for p in h), (p[1] for p in h), label, "lines+markers", True,
-                 color=palette_color(color))
+    split = any(h[1] is not None or h[2] is not None for _, h, _ in lines)
+    titles = [f"all requests (per {START_SLACK_BIN_MS} ms bin)"]
+    if split:
+        titles += ["sent before the failure", "sent after the failure"]
+    fig = new_figure(titles)
+    for col in range(1, len(titles) + 1):
+        for label, hists, color in lines:
+            h = hists[col - 1]
+            if h is None:
+                continue
+            # one legend group per point: its entry (shown in the first subplot it appears in) toggles every subplot
+            first = all(hists[c] is None for c in range(col - 1))
+            add_line(fig, col, (p[0] for p in h), (p[1] for p in h), label, "lines+markers", first,
+                     color=palette_color(color))
+        fig.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="deadline", row=1, col=col)
     fig.update_traces(marker=dict(size=3), line=dict(width=1))
-    fig.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="deadline")
     fig.update_xaxes(title_text="start slack: RequestDeadline - worker pick-up (s)")
-    fig.update_yaxes(title_text="fraction of requests", rangemode="tozero")
+    fig.update_yaxes(title_text="fraction of requests", rangemode="tozero", row=1, col=1)
+    fig.update_yaxes(rangemode="tozero")
     fig.update_layout(title_text="start_slack", showlegend=len(lines) > 1)
     save_page(fig, path)
