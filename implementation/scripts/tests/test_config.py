@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.16.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.17.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -125,17 +125,56 @@ class ConfigTest(unittest.TestCase):
         with mock.patch.object(cfg.transport, "ssh_hostname", return_value="18.144.18.190") as resolve:
             c = self.load(text)
         resolve.assert_called_once_with("metafail-exp-1")
-        s = c.machines["server"]
+        s = c.machines["server"][0]
         self.assertEqual((s.user, s.ssh_key, s.ssh_port, s.data_addr), (None, None, None, "18.144.18.190"))
         with mock.patch.object(cfg.transport, "ssh_hostname") as resolve:
             c = self.load(text.replace('host = "metafail-exp-1"', 'host = "metafail-exp-1"\ndata_addr = "172.31.23.63"'))
         resolve.assert_not_called()
-        self.assertEqual(c.machines["server"].data_addr, "172.31.23.63")
+        self.assertEqual(c.machines["server"][0].data_addr, "172.31.23.63")
+
+    # Design: abstraction/benchmark_runner/config/design.md#servermachines
+    def test_server_machines(self):
+        two = BASE.replace('[machines.server]\nhost = "local"',
+                           '[[machines.server]]\nhost = "a"\ndata_addr = "172.31.30.174"\n'
+                           '[[machines.server]]\nhost = "b"\ndata_addr = "172.31.21.15"')
+        c = self.load(two)
+        self.assertEqual([m.host for m in c.machines["server"]], ["a", "b"])
+        p = cfg.expand_sweep(c)[0]
+        self.assertEqual((p.server_instances, p.server_hosts), (2, [0, 1]))
+        self.assertEqual(p.arg("ingress", "backends"), "172.31.30.174:8080,172.31.21.15:8080")
+        self.assertEqual(p.to_json()["server_hosts"], [0, 1])
+        self.assertEqual(p.loadgen_target, "127.0.0.1:9090")
+        # worked example: two tables, two instances each
+        p = cfg.expand_sweep(self.load(two.replace("response_rate = 2000", "response_rate = 2000\ninstances = 2")))[0]
+        self.assertEqual((p.server_instances, p.server_hosts), (4, [0, 0, 1, 1]))
+        self.assertEqual(p.arg("ingress", "backends"),
+                         "172.31.30.174:8080,172.31.30.174:8081,172.31.21.15:8080,172.31.21.15:8081")
+        # one table: unchanged
+        p = cfg.expand_sweep(self.load(BASE.replace("response_rate = 2000", "response_rate = 2000\ninstances = 2")))[0]
+        self.assertEqual((p.server_instances, p.server_hosts), (2, [0, 0]))
+        self.assertEqual(p.arg("ingress", "backends"), "127.0.0.1:8080,127.0.0.1:8081")
+
+    # Design: abstraction/benchmark_runner/config/design.md#servermachines
+    def test_server_machines_errors(self):
+        tables = lambda n: "".join(f'[[machines.server]]\nhost = "h{i}"\ndata_addr = "10.0.0.{i}"\n' for i in range(n))
+        base = BASE.replace('[machines.server]\nhost = "local"\n', "")
+        msg = "machines.server must be a table or an array of 1..=16 tables"
+        self.assertConfigError(base.replace("[machines.client]", "[machines]\nserver = []\n[machines.client]"), msg)
+        self.assertConfigError(base.replace("[machines.client]", tables(17) + "[machines.client]"), msg)
+        self.assertConfigError(base.replace("[machines.client]", '[machines]\nserver = "x"\n[machines.client]'), msg)
+        self.assertConfigError(base.replace("[machines.client]", tables(2) + 'user = ""\n[machines.client]'),
+                               "machines.server[1].user must be a non-empty string")
+        same = '[[machines.server]]\nhost = "h"\ndata_addr = "1.1.1.1"\n' * 2
+        self.assertConfigError(base.replace("[machines.client]", same + "[machines.client]"),
+                               "machines.server[0] and machines.server[1] are the same machine (use server.instances)")
+        self.assertConfigError(base.replace("[machines.client]", tables(2) + "[machines.client]")
+                               .replace("cancel_rate = 100", 'cancel_rate = 100\nmachine = "server"'),
+                               'ingress.machine = "server" needs exactly one server machine')
 
     def test_defaults(self):
         c = self.load(BASE)
         self.assertEqual(c.listen_port, 8080)
-        self.assertEqual(c.machines["server"].data_addr, "127.0.0.1")
+        self.assertEqual(c.machines["server"][0].data_addr, "127.0.0.1")
         self.assertEqual(c.machines["client"].workdir, "~/cancellation-bench")
         self.assertTrue(c.run.output_dir.startswith("/runner/results/"))
         self.assertEqual((c.run.cooldown_s, c.run.on_failure), (2.0, "continue"))

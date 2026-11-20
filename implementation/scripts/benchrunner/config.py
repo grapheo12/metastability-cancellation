@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.16.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.17.0)
 """BenchConfig loading and validation, SweepExpansion, argument formatting."""
 
 import datetime
@@ -34,6 +34,7 @@ SWEEPABLE_RUNNER_KEYS = ["ingress.cancel_rate_fraction"]
 CPU_LIST = re.compile(r"[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*")
 PROGRAM_OF = {"server": "server", "load_gen": "loadgen", "ingress": "ingress"}
 MAX_INSTANCES = 64
+MAX_SERVER_MACHINES = 16  # ServerMachines
 FORBIDDEN = {
     "server": ["listen_addr", "queue_log_path"],
     "load_gen": ["target", "output_path"],
@@ -79,10 +80,10 @@ class RunOptions:
 @dataclass
 class BenchConfig:
     repo_url: str
-    machines: dict  # role -> Machine
+    machines: dict  # "server" -> list of Machine (ServerMachines, file order), "client" -> Machine
     params: dict  # section -> {program parameter: scalar or list}, file order kept
-    listen_port: int  # server instance k listens on listen_port + k
-    instances: int
+    listen_port: int  # the k-th instance on a server machine listens on listen_port + k
+    instances: int  # per server machine
     ingress_port: int
     ingress_machine: str  # IngressPlacement: "client" | "server"
     run: RunOptions
@@ -96,6 +97,9 @@ class BenchConfig:
             return list(self.run.sweep_order)
         # Design: abstraction/benchmark_runner/config/design.md#linkedsweep
         return [k for k in (self.file_swept or []) if k not in (self.run.link or {})]
+
+    def total_instances(self):
+        return len(self.machines["server"]) * self.instances
 
     def lookup(self, key):
         if key == "ingress.cancel_rate_fraction":
@@ -132,24 +136,25 @@ def _check_keys(table, allowed, where):
 
 
 # Design: abstraction/benchmark_runner/config/design.md#benchconfig
-def _machine(role, t):
+def _machine(role, t, label=None):
     """validate_machine: unset SSH keys stay None and come from the operator's ~/.ssh/config."""
+    label = label or f"machines.{role}"
     _check_keys(t, {"host", "user", "ssh_key", "ssh_port", "workdir"} | ({"data_addr"} if role == "server" else set()),
-                f"machines.{role}")
+                label)
     host = t.get("host")
     if not isinstance(host, str) or not host:
-        raise ConfigError(f"machines.{role}.host is required")
+        raise ConfigError(f"{label}.host is required")
     local = host == "local"
     for key in ("user", "ssh_key"):
         if key in t and not (isinstance(t[key], str) and t[key]):
-            raise ConfigError(f"machines.{role}.{key} must be a non-empty string")
+            raise ConfigError(f"{label}.{key} must be a non-empty string")
     user, key = t.get("user"), t.get("ssh_key")
     port = t.get("ssh_port")
     if port is not None and (not _is_int(port) or not 1 <= port <= 65535):
-        raise ConfigError(f"machines.{role}.ssh_port must be an integer in 1..=65535")
+        raise ConfigError(f"{label}.ssh_port must be an integer in 1..=65535")
     workdir = t.get("workdir", "~/cancellation-bench")
     if not isinstance(workdir, str) or not workdir:
-        raise ConfigError(f"machines.{role}.workdir must be a non-empty string")
+        raise ConfigError(f"{label}.workdir must be a non-empty string")
     data_addr = None
     if role == "server":
         if "data_addr" in t:
@@ -157,8 +162,38 @@ def _machine(role, t):
         else:  # an alias only the operator's SSH config knows is resolved to its HostName
             data_addr = "127.0.0.1" if local else transport.ssh_hostname(host)
         if not isinstance(data_addr, str) or not data_addr:
-            raise ConfigError("machines.server.data_addr must be a non-empty string")
+            raise ConfigError(f"{label}.data_addr must be a non-empty string")
     return Machine(role, host, user, os.path.expanduser(key) if key else None, port, workdir, data_addr)
+
+
+# Design: abstraction/benchmark_runner/config/design.md#servermachines
+def _server_machines(value):
+    """validate_server_machines: one table, or an array of 1..=16 tables naming distinct machines."""
+    if isinstance(value, dict):
+        return [_machine("server", value, "machines.server")]
+    if (not isinstance(value, list) or not 1 <= len(value) <= MAX_SERVER_MACHINES
+            or not all(isinstance(t, dict) for t in value)):
+        raise ConfigError("machines.server must be a table or an array of 1..=16 tables")
+    machines = [_machine("server", t, f"machines.server[{m}]") for m, t in enumerate(value)]
+    for a, b in itertools.combinations(range(len(machines)), 2):
+        ma, mb = machines[a], machines[b]
+        if (ma.host, ma.user, ma.ssh_port, ma.workdir) == (mb.host, mb.user, mb.ssh_port, mb.workdir):
+            raise ConfigError(f"machines.server[{a}] and machines.server[{b}] are the same machine "
+                              "(use server.instances)")
+    return machines
+
+
+# Design: abstraction/benchmark_runner/config/design.md#servermachines
+def instance_machine(config, sid):
+    return sid // config.instances
+
+
+def instance_port(config, sid):
+    return config.listen_port + sid % config.instances
+
+
+def server_hosts(config):
+    return [instance_machine(config, sid) for sid in range(config.total_instances())]
 
 
 def _positive(run, key, default, allow_zero=False):
@@ -189,7 +224,7 @@ def load_config(path, runner_dir, now=None):
     machines = doc.get("machines")
     if not isinstance(machines, dict) or set(machines) != {"server", "client"}:
         raise ConfigError("[machines.server] and [machines.client] are both required, and nothing else")
-    machines = {role: _machine(role, machines[role]) for role in ("server", "client")}
+    machines = {"server": _server_machines(machines["server"]), "client": _machine("client", machines["client"])}
 
     params, fraction, file_swept = {}, None, []
     ports = {"server": 8080, "ingress": 9090}
@@ -262,7 +297,7 @@ def load_config(path, runner_dir, now=None):
     check_cancel_rate_fraction(params, fraction)
     if ports["server"] + instances - 1 > 65535:
         raise ConfigError("server.listen_port + server.instances - 1 must be <= 65535")
-    check_ingress_placement(ingress_machine, ports, instances)
+    check_ingress_placement(ingress_machine, ports, instances, len(machines["server"]))
 
     run = doc.get("run", {})
     _check_keys(run, {"output_dir", "sweep_order", "cooldown_s", "on_failure", "server_ready_timeout_s",
@@ -334,19 +369,24 @@ def check_cancel_rate_fraction(params, fraction):
 # Design: abstraction/benchmark_runner/config/design.md#backends
 def backend_list(config):
     """host:port of every server instance as the Ingress sees it, in server_id order."""
-    host = "127.0.0.1" if config.ingress_machine == "server" else config.machines["server"].data_addr
-    return ",".join(f"{host}:{config.listen_port + k}" for k in range(config.instances))
+    def host(sid):  # an Ingress on the (only) server machine reaches the instances locally
+        if config.ingress_machine == "server":
+            return "127.0.0.1"
+        return config.machines["server"][instance_machine(config, sid)].data_addr
+    return ",".join(f"{host(sid)}:{instance_port(config, sid)}" for sid in range(config.total_instances()))
 
 
 # Design: abstraction/benchmark_runner/config/design.md#ingressplacement
 def loadgen_target(config):
     """The Ingress as seen from the client machine."""
-    host = "127.0.0.1" if config.ingress_machine == "client" else config.machines["server"].data_addr
+    host = "127.0.0.1" if config.ingress_machine == "client" else config.machines["server"][0].data_addr
     return f"{host}:{config.ingress_port}"
 
 
 # Design: abstraction/benchmark_runner/config/design.md#ingressplacement
-def check_ingress_placement(ingress_machine, ports, instances):
+def check_ingress_placement(ingress_machine, ports, instances, n_server_machines=1):
+    if ingress_machine == "server" and n_server_machines > 1:
+        raise ConfigError('ingress.machine = "server" needs exactly one server machine')
     if ingress_machine == "server" and ports["server"] <= ports["ingress"] <= ports["server"] + instances - 1:
         raise ConfigError("ingress.listen_port collides with a server instance port")
 
@@ -368,6 +408,10 @@ class SweepPoint:
     loadgen_target: str = ""
     placement: dict = None  # program -> {"threads", "cpu_set"} (ProcessPlacement)
     linked: dict = None  # LinkedSweep: linked key -> this point's value; {} when unused
+    server_hosts: list = None  # ServerMachines: server machine index of each instance id; None = all on machine 0
+
+    def hosts(self):
+        return self.server_hosts if self.server_hosts is not None else [0] * self.server_instances
 
     def to_json(self):
         return {
@@ -378,6 +422,7 @@ class SweepPoint:
             "loadgen_args": [[k, v] for k, v in self.loadgen_args],
             "ingress_args": [[k, v] for k, v in self.ingress_args],
             "server_instances": self.server_instances,
+            "server_hosts": self.hosts(),
             "ingress_machine": self.ingress_machine,
             "loadgen_target": self.loadgen_target,
             "placement": self.placement,
@@ -419,8 +464,10 @@ def expand_sweep(config):
             ingress_args.append(("cancel_rate", derived_cancel_rate(dict(loadgen_args)["global_rate"], f)))
         # Design: abstraction/benchmark_runner/config/design.md#processplacement
         placement = {PROGRAM_OF[section]: dict(config.placement[section]) for section in SECTIONS}
-        points.append(SweepPoint(pid, swept, server_args, loadgen_args, ingress_args, config.instances,
-                                 config.ingress_machine, loadgen_target(config), placement, linked))
+        # Design: abstraction/benchmark_runner/config/design.md#servermachines
+        points.append(SweepPoint(pid, swept, server_args, loadgen_args, ingress_args, config.total_instances(),
+                                 config.ingress_machine, loadgen_target(config), placement, linked,
+                                 server_hosts(config)))
     return points
 
 
