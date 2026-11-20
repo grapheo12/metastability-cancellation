@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/design.md (benchmark_runner v0.4.1)
+# Source: abstraction/benchmark_runner/design.md (benchmark_runner v0.5.1)
 """bench: the BenchmarkRunner.
 
 Usage (from anywhere inside an impl/<lang> checkout):
     python3 implementation/scripts/bench.py run   <config.toml>   # setup, every SweepPoint, plots
-    python3 implementation/scripts/bench.py setup <config.toml>   # setup both machines only
+    python3 implementation/scripts/bench.py setup <config.toml>   # setup every machine only
     python3 implementation/scripts/bench.py plot  <output_dir>    # rebuild table and plots
     python3 implementation/scripts/bench.py retry-timeout --workers K --mean_service_ms S [--eta E] RATE [RATE ...]
                                                                   # RetryTimeout per rate (M/M/k), with RetryFeedback
@@ -69,11 +69,12 @@ def check_placement_support(config, pin):
 
 
 # Design: abstraction/benchmark_runner/design.md#run-flow
-def warn_unpinned(config, server, client):
+def warn_unpinned(config, servers, client):
     on_server = config.ingress_machine == "server"  # IngressPlacement
-    for role, ready, sections in (("server", server, ["server"] + (["ingress"] if on_server else [])),
-                                  ("client", client, ["load_gen"] + ([] if on_server else ["ingress"]))):
-        if any(config.placement[s]["cpu_set"] is not None for s in sections) and not ready.cpu_pinning:
+    for role, readies, sections in (("server", servers, ["server"] + (["ingress"] if on_server else [])),
+                                    ("client", [client], ["load_gen"] + ([] if on_server else ["ingress"]))):
+        if (any(config.placement[s]["cpu_set"] is not None for s in sections)
+                and not all(r.cpu_pinning for r in readies)):
             print(f"warning: cpu_set ignored on {role}: taskset not found", file=sys.stderr, flush=True)
 
 
@@ -98,16 +99,16 @@ def bench_run(config_path, setup_only):
         check_placement_support(config, pin)
         if not setup_only:
             prepare_output_dir(config, config_path, pin, len(points))
-        server_t = transport.open_transport(config.machines["server"])
+        server_ts = [transport.open_transport(m) for m in config.machines["server"]]  # ServerMachines
         client_t = transport.open_transport(config.machines["client"])
         # Design: abstraction/benchmark_runner/design.md#why-setup-happens-once
-        log("setting up both machines (clone, checkout, tool check, build)")
-        server, client = remote_setup.setup_machines(server_t, client_t, config, pin)
+        log(f"setting up {len(server_ts) + 1} machines (clone, checkout, tool check, build)")
+        servers, client = remote_setup.setup_machines(server_ts, client_t, config, pin)
     except (cfgmod.ConfigError, remote_setup.PinError, remote_setup.SetupError, transport.TransportError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     log("setup done")
-    warn_unpinned(config, server, client)
+    warn_unpinned(config, servers, client)
     if setup_only:
         return 0
 
@@ -116,7 +117,7 @@ def bench_run(config_path, setup_only):
     try:
         for i, point in enumerate(points):
             log(f"point {point.id}/{len(points) - 1} {json.dumps(point.swept)}")
-            result = executor.run_point(point, config, server, client, run_id)
+            result = executor.run_point(point, config, servers, client, run_id)
             log(f"point {point.id}: {result.status}" + (f" ({result.reason})" if result.reason else ""))
             if result.status == "failed":
                 any_failed = True

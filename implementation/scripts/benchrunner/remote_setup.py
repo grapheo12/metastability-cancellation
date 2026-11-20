@@ -192,17 +192,21 @@ def setup_machine(t, role, machine, pin, timeout_s):
 
 
 # Design: abstraction/benchmark_runner/remote_setup/design.md#machine-setup
-def setup_machines(server_t, client_t, config, pin):
-    """Both machines in parallel; once if they are the same host and workdir."""
-    s, c = config.machines["server"], config.machines["client"]
+# Design: abstraction/benchmark_runner/design.md#run-flow
+def setup_machines(server_ts, client_t, config, pin):
+    """Every server machine and the client in parallel. The server machines are distinct (Config), so the client
+    can share at most one server machine's setup: when it is the same host and workdir, that setup runs once."""
+    servers, c = config.machines["server"], config.machines["client"]
     timeout = config.run.setup_timeout_s
-    same = (s.host, s.user, s.ssh_port, s.workdir) == (c.host, c.user, c.ssh_port, c.workdir)
-    if same:
-        ready = setup_machine(server_t, "server", s, pin, timeout)
-        return ready, MachineReady(client_t, "client", ready.workdir, ready.repo_dir, ready.binaries, None,
-                                   ready.thread_env, ready.cpu_pinning,
-                                   gc_trace_env=ready.gc_trace_env, gc_trace_regex=ready.gc_trace_regex)
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        fs = pool.submit(setup_machine, server_t, "server", s, pin, timeout)
-        fc = pool.submit(setup_machine, client_t, "client", c, pin, timeout)
-        return fs.result(), fc.result()
+    key = lambda m: (m.host, m.user, m.ssh_port, m.workdir)
+    same = next((i for i, s in enumerate(servers) if key(s) == key(c)), None)
+    with ThreadPoolExecutor(max_workers=len(servers) + 1) as pool:
+        fs = [pool.submit(setup_machine, t, "server", s, pin, timeout) for t, s in zip(server_ts, servers)]
+        fc = pool.submit(setup_machine, client_t, "client", c, pin, timeout) if same is None else None
+        ready_servers = [f.result() for f in fs]
+        if fc is not None:
+            return ready_servers, fc.result()
+    ready = ready_servers[same]
+    return ready_servers, MachineReady(client_t, "client", ready.workdir, ready.repo_dir, ready.binaries, None,
+                                       ready.thread_env, ready.cpu_pinning,
+                                       gc_trace_env=ready.gc_trace_env, gc_trace_regex=ready.gc_trace_regex)

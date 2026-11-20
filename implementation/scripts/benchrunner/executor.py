@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.7.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.8.0)
 """run_point: ServerLifecycle, IngressLifecycle, ClientRun and point outputs for one SweepPoint."""
 
 import json
@@ -16,7 +16,6 @@ from .transport import TransportError, join, quote
 READY_LINE = "listening on"
 COUNTERS_PREFIX = '{"cancelled_before_processing":'
 POLL_INTERVAL_S = 0.2
-MAX_INSTANCES = 64
 
 
 @dataclass
@@ -37,6 +36,17 @@ def remote_dir(machine, run_id, pid):
     return f"{machine.workdir}/runs/{run_id}/point_{pid:04d}"
 
 
+def _as_list(x):
+    """servers (and their remote dirs) may be given as one machine for a single ServerMachine."""
+    return x if isinstance(x, list) else [x]
+
+
+# Design: abstraction/benchmark_runner/experiment_executor/design.md#serverlifecycle
+def local_index(hosts, k):
+    """Position of instance k on its own server machine: it listens on listen_port + local_index."""
+    return sum(1 for j in range(k) if hosts[j] == hosts[k])
+
+
 def _float(value, default=0.0):
     try:
         return float(value)
@@ -45,7 +55,7 @@ def _float(value, default=0.0):
 
 
 # Design: abstraction/benchmark_runner/experiment_executor/design.md#run_point
-def run_point(point, config, server, client, run_id):
+def run_point(point, config, servers, client, run_id):
     pdir = point_dir(config.run.output_dir, point.id)
     if os.path.exists(os.path.join(pdir, "done")):
         return PointResult("skipped")
@@ -54,19 +64,22 @@ def run_point(point, config, server, client, run_id):
     with open(os.path.join(pdir, "params.json"), "w") as f:
         json.dump(point.to_json(), f, indent=2)
     # Design: abstraction/benchmark_runner/experiment_executor/design.md#ingresslifecycle
+    servers = _as_list(servers)  # ServerMachines, in config order
     on_server = getattr(point, "ingress_machine", "client") == "server"
-    ingress_host = server if on_server else client
-    write_placement(point, server, client, ingress_host, pdir)
-    rd_server, rd_client = remote_dir(server, run_id, point.id), remote_dir(client, run_id, point.id)
-    rd_ingress = rd_server if on_server else rd_client
+    ingress_host = servers[0] if on_server else client  # Config allows "server" with one server machine only
+    write_placement(point, servers, client, ingress_host, pdir)
+    rd_servers = [remote_dir(m, run_id, point.id) for m in servers]
+    rd_client = remote_dir(client, run_id, point.id)
+    rd_ingress = rd_servers[0] if on_server else rd_client
     reason, interrupted = None, False
     try:
-        server.transport.run(f"mkdir -p {quote(rd_server)}", 30)
-        client.transport.run(f"mkdir -p {quote(rd_client)}", 30)
-        for m in (server, client):  # leftovers from a crash, either placement
+        for m, rd in list(zip(servers, rd_servers)) + [(client, rd_client)]:
+            m.transport.run(f"mkdir -p {quote(rd)}", 30)
+        for m in servers + [client]:  # leftovers from a crash, either placement
             stop_ingress(m, config.run.stop_timeout_s)
-        stop_leftover_servers(server, config.run.stop_timeout_s)
-        start_servers(point, config, server, rd_server)
+        for m in servers:
+            stop_leftover_servers(m, config.run.stop_timeout_s)
+        start_servers(point, config, servers, rd_servers)
         start_ingress(point, config, ingress_host, rd_ingress)
         if not client_run(point, config, client, rd_client):
             reason = "client run failed or timed out"
@@ -78,9 +91,9 @@ def run_point(point, config, server, client, run_id):
         try:
             if not stop_ingress(ingress_host, config.run.stop_timeout_s) and reason is None:
                 reason = "ingress did not stop on SIGINT"
-            if not stop_servers(server, point.server_instances, config.run.stop_timeout_s) and reason is None:
+            if not stop_servers(servers, point.hosts(), config.run.stop_timeout_s) and reason is None:
                 reason = "server did not stop on SIGINT"
-            collect_outputs(point, server, client, rd_server, rd_client, pdir, ingress_host, rd_ingress,
+            collect_outputs(point, servers, client, rd_servers, rd_client, pdir, ingress_host, rd_ingress,
                             gc_trace=config.gc_trace)
         except TransportError as e:
             reason = reason or f"while stopping/collecting: {e}"
@@ -145,33 +158,35 @@ def _ingress_pid_file(client):
 
 
 # Design: abstraction/benchmark_runner/experiment_executor/design.md#serverlifecycle
-def start_servers(point, config, server, rd):
-    for k in range(point.server_instances):
-        words = placement_prefix("server", point, server) + gc_trace_prefix(config, server) + \
-            [server.binaries["server"], "--listen_addr", f"0.0.0.0:{config.listen_port + k}",
+def start_servers(point, config, servers, rds):
+    """Instance k (global id) on servers[hosts[k]], port listen_port + local_index, files under that machine's rd."""
+    servers, rds, hosts = _as_list(servers), _as_list(rds), point.hosts()
+    for k in range(point.server_instances):  # in id order; each waits for readiness
+        m, rd = servers[hosts[k]], rds[hosts[k]]
+        words = placement_prefix("server", point, m) + gc_trace_prefix(config, m) + \
+            [m.binaries["server"], "--listen_addr", f"0.0.0.0:{config.listen_port + local_index(hosts, k)}",
              "--queue_log_path", f"{rd}/server_{k}.queue.csv"] + \
             arg_words(point.server_args)
-        start_program(server, f"server {k}", words, f"{rd}/server_{k}.out", _server_pid_file(server, k),
+        start_program(m, f"server {k}", words, f"{rd}/server_{k}.out", _server_pid_file(m, k),
                       config.run.server_ready_timeout_s)
 
 
 # Design: abstraction/benchmark_runner/experiment_executor/design.md#serverlifecycle
-def stop_servers(server, count, stop_timeout_s):
-    ok = True
-    for k in range(count):
-        ok = stop_program(server, _server_pid_file(server, k), stop_timeout_s) and ok
+def stop_servers(servers, server_hosts, stop_timeout_s):
+    servers, ok = _as_list(servers), True
+    for k, h in enumerate(server_hosts):
+        ok = stop_program(servers[h], _server_pid_file(servers[h], k), stop_timeout_s) and ok
     return ok
 
 
-# Design: abstraction/benchmark_runner/experiment_executor/design.md#run_point
-def stop_leftover_servers(server, stop_timeout_s):
-    """Stop every server_<k>.pid present (k < MAX_INSTANCES), listed in one command."""
-    r = server.transport.run(f"cd {quote(server.workdir)} 2>/dev/null && ls -1 server_*.pid 2>/dev/null; true", 30)
+# Design: abstraction/benchmark_runner/experiment_executor/design.md#serverlifecycle
+def stop_leftover_servers(m, stop_timeout_s):
+    """Stop every server_<k>.pid present on machine m, listed in one command."""
+    r = m.transport.run(f"cd {quote(m.workdir)} 2>/dev/null && ls -1 server_*.pid 2>/dev/null; true", 30)
     ks = sorted(int(n[len("server_"):-len(".pid")]) for n in r.stdout.split()
                 if n.startswith("server_") and n.endswith(".pid") and n[len("server_"):-len(".pid")].isdigit())
     for k in ks:
-        if k < MAX_INSTANCES:
-            stop_program(server, _server_pid_file(server, k), stop_timeout_s)
+        stop_program(m, _server_pid_file(m, k), stop_timeout_s)
 
 
 # Design: abstraction/benchmark_runner/experiment_executor/design.md#ingresslifecycle
@@ -220,8 +235,8 @@ def placement_prefix(program, point, ready):
 
 
 # Design: abstraction/benchmark_runner/experiment_executor/design.md#processplacement
-def write_placement(point, server, client, ingress_host, pdir):
-    doc = {"server": placement_prefix("server", point, server),  # the same for every instance
+def write_placement(point, servers, client, ingress_host, pdir):
+    doc = {"server": placement_prefix("server", point, _as_list(servers)[0]),  # the same for every instance
            "loadgen": placement_prefix("loadgen", point, client),
            "ingress": placement_prefix("ingress", point, ingress_host)}
     with open(os.path.join(pdir, "placement.json"), "w") as f:
@@ -229,11 +244,11 @@ def write_placement(point, server, client, ingress_host, pdir):
 
 
 # Design: abstraction/benchmark_runner/experiment_executor/design.md#gcevents
-def gc_trace_prefix(config, server):
-    """`env NAME=value ...` from the GcTraceHook, after any ProcessPlacement prefix (env commands chain)."""
+def gc_trace_prefix(config, m):
+    """`env NAME=value ...` from the GcTraceHook of the instance's machine m, after any ProcessPlacement prefix."""
     if not config.gc_trace:
         return []
-    return ["env"] + list(server.gc_trace_env)
+    return ["env"] + list(m.gc_trace_env)
 
 
 # Design: abstraction/benchmark_runner/experiment_executor/design.md#gcevents
@@ -282,8 +297,9 @@ COUNTER_KEYS = ("cancelled_before_processing", "cancelled_during_processing", "c
 
 
 # Design: abstraction/benchmark_runner/experiment_executor/design.md#point-outputs
-def collect_outputs(point, server, client, rd_server, rd_client, pdir, ingress_host=None, rd_ingress=None,
+def collect_outputs(point, servers, client, rd_servers, rd_client, pdir, ingress_host=None, rd_ingress=None,
                     gc_trace=False):
+    servers, rd_servers, hosts = _as_list(servers), _as_list(rd_servers), point.hosts()
     for name in ("loadgen.requests.csv", "loadgen.summary.json", "loadgen.log"):
         client.transport.fetch(f"{rd_client}/{name}", os.path.join(pdir, name))
     ingress_host, rd_ingress = ingress_host or client, rd_ingress or rd_client
@@ -294,15 +310,16 @@ def collect_outputs(point, server, client, rd_server, rd_client, pdir, ingress_h
         print(f"point {point.id}: ingress.forwards.csv missing (left out of the forward timeline plots)")
     counters = []
     for k in range(point.server_instances):
+        m, rd = servers[hosts[k]], rd_servers[hosts[k]]  # fetched from the machine the instance ran on
         out = os.path.join(pdir, f"server_{k}.out")
-        server.transport.fetch(f"{rd_server}/server_{k}.out", out)
+        m.transport.fetch(f"{rd}/server_{k}.out", out)
         # QueueLengthLog: optional, a missing one only warns and never fails the point
         queue_csv = os.path.join(pdir, f"server_{k}.queue.csv")
-        server.transport.fetch(f"{rd_server}/server_{k}.queue.csv", queue_csv)
+        m.transport.fetch(f"{rd}/server_{k}.queue.csv", queue_csv)
         if not os.path.exists(queue_csv):
             print(f"point {point.id}: server_{k}.queue.csv missing (left out of queue_length)")
         if gc_trace:
-            write_gc_events(point, k, pdir, server.gc_trace_regex)  # GcEvents
+            write_gc_events(point, k, pdir, m.gc_trace_regex)  # GcEvents
         c = _last_counters(out)
         if c is not None:
             with open(os.path.join(pdir, f"server_counters_{k}.json"), "w") as f:

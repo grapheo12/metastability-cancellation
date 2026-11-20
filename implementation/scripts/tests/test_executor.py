@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.7.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.8.0)
 import contextlib
 import io
 import json
@@ -235,6 +235,51 @@ class ServerLifecycleTest(unittest.TestCase):
                                           "--queue_log_path", "/rd/server_1.queue.csv"])
         self.assertIn("--response_rate", started[1])
         self.assertEqual(started[2][:3], ["env", "GODEBUG=gctrace=1", "/b/server"])  # GcTraceHook prefix
+
+    # Design: abstraction/benchmark_runner/experiment_executor/design.md#serverlifecycle
+    def test_local_index_worked_example(self):
+        for hosts, want in (([0, 0], [0, 1]), ([0, 1], [0, 0]), ([0, 0, 1, 1], [0, 1, 0, 1])):
+            self.assertEqual([executor.local_index(hosts, k) for k in range(len(hosts))], want)
+
+    # Design: abstraction/benchmark_runner/experiment_executor/design.md#serverlifecycle
+    def test_instances_across_server_machines(self):
+        started, stopped = [], []
+        orig_start, orig_stop = executor.start_program, executor.stop_program
+        executor.start_program = lambda m, name, words, log, pid_file, *rest: started.append((m.role, words[:3], log,
+                                                                                              pid_file))
+        executor.stop_program = lambda m, pid_file, timeout: stopped.append((m.role, pid_file)) or True
+        try:
+            a = MachineReady(None, "a", "/wa", "/wa/repo", {"server": "/a/server"}, "10.0.0.1", "GOMAXPROCS", True)
+            b = MachineReady(None, "b", "/wb", "/wb/repo", {"server": "/b/server"}, "10.0.0.2", "GOMAXPROCS", True)
+            config = SimpleNamespace(listen_port=8080, gc_trace=False, run=SimpleNamespace(server_ready_timeout_s=1.0))
+            p = point(instances=4)
+            p.server_hosts = [0, 0, 1, 1]
+            executor.start_servers(p, config, [a, b], ["/rda", "/rdb"])
+            self.assertTrue(executor.stop_servers([a, b], p.server_hosts, 1.0))
+        finally:
+            executor.start_program, executor.stop_program = orig_start, orig_stop
+        self.assertEqual(started, [
+            ("a", ["/a/server", "--listen_addr", "0.0.0.0:8080"], "/rda/server_0.out", "/wa/server_0.pid"),
+            ("a", ["/a/server", "--listen_addr", "0.0.0.0:8081"], "/rda/server_1.out", "/wa/server_1.pid"),
+            ("b", ["/b/server", "--listen_addr", "0.0.0.0:8080"], "/rdb/server_2.out", "/wb/server_2.pid"),
+            ("b", ["/b/server", "--listen_addr", "0.0.0.0:8081"], "/rdb/server_3.out", "/wb/server_3.pid")])
+        self.assertEqual(stopped, [("a", "/wa/server_0.pid"), ("a", "/wa/server_1.pid"),
+                                   ("b", "/wb/server_2.pid"), ("b", "/wb/server_3.pid")])
+
+    # Design: abstraction/benchmark_runner/experiment_executor/design.md#point-outputs
+    def test_outputs_fetched_from_each_instances_machine(self):
+        with tempfile.TemporaryDirectory() as ra, tempfile.TemporaryDirectory() as rb, \
+                tempfile.TemporaryDirectory() as pdir:
+            a, b = LocalMachine(ra), LocalMachine(rb)
+            for d, k, c in ((ra, 0, (1, 0, 2)), (rb, 1, (3, 1, 4))):
+                with open(os.path.join(d, f"server_{k}.out"), "w") as f:
+                    f.write(json.dumps(dict(zip(executor.COUNTER_KEYS, c))) + "\n")
+            p = point(instances=2)
+            p.server_hosts = [0, 1]
+            with contextlib.redirect_stdout(io.StringIO()):
+                executor.collect_outputs(p, [a, b], a, [ra, rb], ra, pdir)
+            with open(os.path.join(pdir, "server_counters.json")) as f:
+                self.assertEqual(json.load(f), dict(zip(executor.COUNTER_KEYS, (4, 1, 6))))
 
 
 if __name__ == "__main__":

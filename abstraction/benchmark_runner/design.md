@@ -118,6 +118,7 @@ Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t imple
 - `check_placement_support` raises `PinError`, which `bench_run` already maps to exit `2`. `warn_unpinned` prints to standard error right after the `setup done` log line.
 - `run` checks that `plotly` can be imported *before* setup and exits `2` if it can't, so a long sweep never ends without plots. `setup` doesn't need it.
 - An operator interrupt is Python's `KeyboardInterrupt`. `run_point` finishes its cleanup and re-raises it, and `bench_run` catches it, plots, and exits `1`.
+- ServerMachines: `bench_run` opens one Transport per server machine. The parallel setup is `remote_setup.setup_machines(server_ts, client_t, config, pin)` (a `ThreadPoolExecutor` with one worker per machine), which returns the list of server `MachineReady` and the client's; when the client is the same machine as one server machine, it reuses that server machine's setup. `warn_unpinned` warns for the server role if any server machine lacks `taskset`.
 
 ### Traceability
 
@@ -127,8 +128,8 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [Structure](#structure) | [bench.py:90](../../implementation/scripts/bench.py#L90) |
-| [Run flow](#run-flow) | [bench.py:44](../../implementation/scripts/bench.py#L44), [bench.py:62](../../implementation/scripts/bench.py#L62), [bench.py:72](../../implementation/scripts/bench.py#L72), [bench.py:90](../../implementation/scripts/bench.py#L90), [bench.py:137](../../implementation/scripts/bench.py#L137), [bench.py:152](../../implementation/scripts/bench.py#L152), [bench.py:164](../../implementation/scripts/bench.py#L164) |
-| [Why setup happens once](#why-setup-happens-once) | [bench.py:104](../../implementation/scripts/bench.py#L104) |
-| [Interrupts](#interrupts) | [bench.py:128](../../implementation/scripts/bench.py#L128) |
+| [Structure](#structure) | [bench.py:91](../../implementation/scripts/bench.py#L91) |
+| [Run flow](#run-flow) | [bench.py:44](../../implementation/scripts/bench.py#L44), [bench.py:62](../../implementation/scripts/bench.py#L62), [bench.py:72](../../implementation/scripts/bench.py#L72), [bench.py:91](../../implementation/scripts/bench.py#L91), [bench.py:138](../../implementation/scripts/bench.py#L138), [bench.py:153](../../implementation/scripts/bench.py#L153), [bench.py:165](../../implementation/scripts/bench.py#L165), [remote_setup.py:196](../../implementation/scripts/benchrunner/remote_setup.py#L196) |
+| [Why setup happens once](#why-setup-happens-once) | [bench.py:105](../../implementation/scripts/bench.py#L105) |
+| [Interrupts](#interrupts) | [bench.py:129](../../implementation/scripts/bench.py#L129) |
 <!-- trace:end -->

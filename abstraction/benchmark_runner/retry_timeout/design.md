@@ -371,5 +371,5 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [Validation](#validation) | [retry_timeout.py:73](../../../implementation/scripts/benchrunner/retry_timeout.py#L73), [test_retry_timeout.py:58](../../../implementation/scripts/tests/test_retry_timeout.py#L58) |
 | [Output format](#output-format) | [retry_timeout.py:185](../../../implementation/scripts/benchrunner/retry_timeout.py#L185), [retry_timeout.py:197](../../../implementation/scripts/benchrunner/retry_timeout.py#L197), [test_retry_timeout.py:74](../../../implementation/scripts/tests/test_retry_timeout.py#L74), [test_retry_timeout.py:153](../../../implementation/scripts/tests/test_retry_timeout.py#L153) |
 | [Worked examples](#worked-examples) | [test_retry_timeout.py:17](../../../implementation/scripts/tests/test_retry_timeout.py#L17) |
-| [Failure and edge cases](#failure-and-edge-cases) | [bench.py:152](../../../implementation/scripts/bench.py#L152), [bench.py:164](../../../implementation/scripts/bench.py#L164) |
+| [Failure and edge cases](#failure-and-edge-cases) | [bench.py:153](../../../implementation/scripts/bench.py#L153), [bench.py:165](../../../implementation/scripts/bench.py#L165) |
 <!-- trace:end -->
