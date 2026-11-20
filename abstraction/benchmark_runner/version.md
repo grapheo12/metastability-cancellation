@@ -51,3 +51,4 @@
 | 0.5.0 | 2026-11-19T00:00:00Z | Several server machines: Run flow opens and sets up every ServerMachine in parallel and passes the list on; Config 0.17.0 (ServerMachines) |
 | 0.5.1 | 2026-11-19T00:00:00Z | Child bump: experiment_executor 0.8.0 (server instances across ServerMachines) |
 | 0.6.0 | 2026-11-19T00:00:00Z | Child bump: config 0.18.0 (FreezeTarget) |
+| 0.6.1 | 2026-11-19T00:00:00Z | Child bump: experiment_executor 0.9.0 (FreezeTarget) |

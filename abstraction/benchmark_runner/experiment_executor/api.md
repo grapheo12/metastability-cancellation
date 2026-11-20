@@ -41,6 +41,6 @@ operator interrupt, on the Ingress's machine. See [design.md#ingresslifecycle](d
 
 ## Uses
 
-- [../config/api.md](../config/api.md): `SweepPoint` (including `ingress_args`, `server_instances`, `server_hosts`, `ingress_machine`, `loadgen_target`, `placement`), `format_arg`
+- [../config/api.md](../config/api.md): `SweepPoint` (including `ingress_args`, `server_instances`, `server_hosts`, `freeze`, `ingress_machine`, `loadgen_target`, `placement`), `format_arg`
 - [../remote_transport/api.md](../remote_transport/api.md): `run`, `start_background`, `signal`, `alive`, `fetch`, `quote`
 - [../remote_setup/api.md](../remote_setup/api.md): `MachineReady` (including `thread_env`, `cpu_pinning`)
