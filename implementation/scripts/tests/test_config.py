@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.20.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.21.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -184,6 +184,11 @@ class ConfigTest(unittest.TestCase):
         p = cfg.expand_sweep(self.load(text))[0]
         self.assertEqual((p.arg("loadgen", "slo_cancel"), p.arg("loadgen", "drain_timeout_ms")), (False, 60000))
         self.assertEqual(cfg.format_arg(False), "false")  # written as --slo_cancel false
+
+    # Design: abstraction/benchmark_runner/config/design.md#benchconfig
+    def test_lb_filter_passes_through(self):
+        p = cfg.expand_sweep(self.load(BASE.replace("cancel_rate = 100", 'cancel_rate = 100\nlb_filter = "deadline"')))[0]
+        self.assertEqual(p.arg("ingress", "lb_filter"), "deadline")
 
     # Design: abstraction/benchmark_runner/config/design.md#freezetarget
     def test_freeze_target(self):
