@@ -46,7 +46,7 @@ function plot(output_dir):
         y-axis log scale if the figure says so
         legend with series labels when there is more than one series
         x-axis label = x_key
-        save as output_dir/plots/<figure name>.html (create plots/ first), about 600 px wide per subplot column
+        save as output_dir/plots/<figure name>.html (create plots/ first), full page width (see FigurePage)
 ```
 
 | Figure (file name) | x | Subplots (metric) | y scale |
@@ -85,7 +85,10 @@ Every figure is an interactive page (**FigurePage**), `plots/<figure name>.html`
 - **Interactive.** Each line can be hidden or shown from the legend, the axes can be zoomed and panned, and
   hovering over a point shows its x value, its y value and its line's label.
 - **Layout.** A figure's subplots sit side by side in one row, each with its title above it, sharing the
-  figure's legend. "About 600 px wide per subplot column" is the page's initial size; the page may resize.
+  figure's legend. The figure spans the full width of the browser window and follows it when the window is
+  resized; the subplots split that width equally. Its height is fixed at `FIGURE_HEIGHT_PX = 600`.
+- **Legend below.** The legend is horizontal and placed below the subplots, left-aligned, wrapping onto as many
+  rows as it needs. The space below the plots grows to fit it, so it never covers a plot or an axis title.
 - **Log scale.** A "log" y-axis is used only when every plotted y value of that subplot is above 0; otherwise the
   subplot stays linear, so an empty or zero-valued line never breaks the page.
 
@@ -105,7 +108,7 @@ function draw_throughput_latency(figure, done, x_key, series, position):
     x-axis linear, label "lg_goodput (requests/s)"
     y-axis log scale (same positivity rule as the other figures)
     legend with series labels when there is more than one series
-    save as output_dir/plots/throughput_latency.html, about 600 px wide per subplot column
+    save as output_dir/plots/throughput_latency.html, full page width (see FigurePage)
 ```
 
 Points are joined in swept order, so past saturation, where goodput stops growing or falls while offered load
@@ -229,7 +232,7 @@ function draw_queue_length(output_dir, done, swept_keys):
     x-axis linear, label "time since server start (s)"
     y-axis linear from 0, label "queue_len (waiting jobs, all instances)"
     legend with the labels when there is more than one line
-    save as output_dir/plots/queue_length.html, about 600 px wide
+    save as output_dir/plots/queue_length.html, full page width (see FigurePage)
 ```
 
 - **Instances are summed by row index.** All instances of a point use the same `queue_sample_interval_ms` and start
@@ -324,7 +327,7 @@ function draw_forward_timelines(output_dir, done, swept_keys):
             legend with the labels when there is more than one line
             if name == "forward_latency": overlay gc_events(pdir, [k or 0], origin(pdir, "ingress.summary.json"),
                                                          t_end_s) on both subplots ([GcOverlay](#gcoverlay))
-            save as output_dir/plots/<file>.html, about 600 px wide per subplot
+            save as output_dir/plots/<file>.html, full page width (see FigurePage)
             produced.append(file)
     delete every output_dir/plots/forward_latency*.html and ewma_latency*.html not in produced   # stale ones
 ```
@@ -423,7 +426,7 @@ function draw_availability(output_dir, done, swept_keys):
     overlay each line's gc as in [GcOverlay](#gcoverlay), from y 0 to 1
     x-axis linear, label "time since the load generator's run start (s)"; y-axis linear 0 to 1, label "availability"
     legend with the labels when there is more than one line
-    save as output_dir/plots/availability.html, about 600 px wide
+    save as output_dir/plots/availability.html, full page width (see FigurePage)
 ```
 
 - **Window and x.** The window centred on `t` is `[t - 100 ms, t + 100 ms)`. Evaluating it at the centres
