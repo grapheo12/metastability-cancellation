@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.13.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.14.0)
 """PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot, QueueLengthPlot and ForwardTimelinePlots,
 drawn as interactive HTML FigurePages with plotly."""
 
@@ -206,7 +206,7 @@ X_VALUES = {"lg_goodput": lambda r: r.get("lg_goodput"), "lg_goodput_normalized"
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
-COLUMN_PX, HEIGHT_PX = 600, 450  # FigurePage: about 600 px per subplot column
+FIGURE_HEIGHT_PX = 600  # FigurePage: fixed height; the width follows the browser window
 HOVER = "%{fullData.name}<br>x=%{x}<br>y=%{y}<extra></extra>"
 
 
@@ -215,8 +215,12 @@ def new_figure(titles):
     """One row of subplots, titles above them, one shared legend."""
     from plotly.subplots import make_subplots
     fig = make_subplots(rows=1, cols=len(titles), subplot_titles=titles)
-    fig.update_layout(width=COLUMN_PX * len(titles), height=HEIGHT_PX, template="plotly_white",
-                      legend=dict(font=dict(size=10)))
+    # FigurePage Legend below: horizontal, left-aligned, under the subplots; plotly
+    # grows the bottom margin to fit the legend's rows.
+    fig.update_layout(autosize=True, height=FIGURE_HEIGHT_PX, template="plotly_white",
+                      legend=dict(font=dict(size=10), orientation="h", x=0, xanchor="left",
+                                  yref="container", y=0, yanchor="bottom"),
+                      margin=dict(l=60, r=20))
     return fig
 
 
@@ -239,7 +243,8 @@ def set_log_y_if_positive(fig, col, ys):
 # Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
 def save_page(fig, path):
     """Writes the FigurePage; plotly.min.js is written once next to it, so pages open offline."""
-    fig.write_html(path, include_plotlyjs="directory", full_html=True)
+    fig.write_html(path, include_plotlyjs="directory", full_html=True, default_width="100%",
+                   config={"responsive": True})
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#sweepplots
