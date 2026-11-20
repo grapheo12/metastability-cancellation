@@ -86,8 +86,8 @@ details are in [protocol/api.md](protocol/api.md).
 - **Response:** status `202` (completed) or `503` (cancelled by `/cancel`), `content-type:
   application/json`, body is a PaddedJsonBody of exactly `response_bytes` bytes echoing the same
   RequestId.
-- **Other routes:** a method other than `POST` on `/ping` returns `405`. Any path other than `/ping`
-  and `/cancel` returns `404`. A body that cannot be parsed, or a RequestId whose client id differs
+- **Other routes:** a method other than `POST` on `/ping` returns `405`. Any path other than `/ping`,
+  `/cancel` and `/heartbeat` returns `404`. A body that cannot be parsed, or a RequestId whose client id differs
   from the one this connection is bound to, returns `400`. These responses have an empty body.
 - **Client cancellation:** the client cancels with `RST_STREAM` using error code `CANCEL` (0x8). The
   server writes nothing for a reset stream.
@@ -106,6 +106,16 @@ details are in [protocol/api.md](protocol/api.md).
   - `400`: the body could not be parsed. Empty body.
   - `503`: the CancelRegistry is full. Empty body.
   - A method other than `DELETE` on `/cancel` returns `405`. Empty body.
+
+## Wire contract: `/heartbeat`
+
+- **Request:** `GET /heartbeat`, no body. Sent by the Ingress's Heartbeat Monitor, on its own connection to each
+  backend.
+- **Response:** `200`, `content-type: text/plain`, no `content-length`, then a HeartbeatStream: one HeartbeatLine
+  `hb <seq>\n` every `heartbeat_interval_ms`, starting at once, until the stream is reset, the connection closes or
+  the server stops ([protocol/design.md#heartbeatline](protocol/design.md#heartbeatline)). A server whose
+  WorkerFreeze ([server/worker_pool/design.md](server/worker_pool/design.md#workerfreeze)) has started writes no more lines.
+- A method other than `GET` on `/heartbeat` returns `405`, empty body.
 
 ## Outputs
 
