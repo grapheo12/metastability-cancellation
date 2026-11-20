@@ -12,6 +12,7 @@
 | `HEARTBEAT_METHOD` | `GET` | Only allowed method on `/heartbeat` | [../api.md#wire-contract-heartbeat](../api.md#wire-contract-heartbeat) |
 | `CONTENT_TYPE_TEXT` | `text/plain` | Content type of a HeartbeatStream body | [design.md#heartbeatline](design.md#heartbeatline) |
 | `STATUS_STREAM_OK` | `200` | `/heartbeat`: the HeartbeatStream follows | [design.md#heartbeatline](design.md#heartbeatline) |
+| `WORKER_THREADS_HEADER` | `x-worker-threads` | Response header of `/ping` `202` and `503` answers: the server's WorkerCount | [design.md#workercount](design.md#workercount) |
 | `CONTENT_TYPE_JSON` | `application/json` | Content type of every non-empty body | [design.md#paddedjsonbody](design.md#paddedjsonbody), [design.md#cancelbody](design.md#cancelbody), [design.md#cancelreplybody](design.md#cancelreplybody) |
 | `STATUS_OK` | `202` | `/ping`: work completed. `/cancel`: id accepted, body is a CancelReplyBody | [design.md#status-classification-load-generator-client](design.md#status-classification-load-generator-client), [design.md#status-classification-load-canceller](design.md#status-classification-load-canceller) |
 | `STATUS_REJECTED` | `503` | `/ping`: work cancelled by `/cancel` (padded body). `/cancel`: registry full (empty body) | [design.md#status-classification-load-generator-client](design.md#status-classification-load-generator-client), [design.md#status-classification-load-canceller](design.md#status-classification-load-canceller) |
@@ -65,6 +66,10 @@ Pulls the ExecReport (`exec_ns`, `start_slack_ns`) out of a PaddedJsonBody; each
 (never an error). The load-generator client and the Ingress Frontend call it on every `202` and `503`. See
 [design.md#parsing](design.md#parsing).
 
+### `parse_worker_count(value: string | none) -> u32 | none`
+Reads the WorkerCount from an `x-worker-threads` header value; `none` if absent or invalid (never an error). The
+Ingress Frontend calls it on every relayed `202` and `503`. See [design.md#workercount](design.md#workercount).
+
 ### `build_heartbeat_line(seq: u64) -> bytes`
 Returns the HeartbeatLine `hb <seq>\n`. The server writes one per heartbeat. See
 [design.md#heartbeatline](design.md#heartbeatline).
@@ -98,3 +103,4 @@ startup. See [design.md#minimum-body-size](design.md#minimum-body-size).
 | `:status` | see the status constants above |
 | `content-type` | `application/json` (only when the body is non-empty) |
 | `content-length` | decimal byte length of the body (`0` when empty). Not sent on a `200` HeartbeatStream, whose length is unknown |
+| `x-worker-threads` | the server's `n_worker_threads` (WorkerCount), decimal; only on `/ping` `202` and `503` |

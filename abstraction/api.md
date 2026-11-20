@@ -91,7 +91,8 @@ details are in [protocol/api.md](protocol/api.md).
 - **Response:** status `202` (completed) or `503` (cancelled by `/cancel`), `content-type:
   application/json`, body is a PaddedJsonBody of exactly `response_bytes` bytes echoing the same
   RequestId and carrying the server's ExecReport: the ExecutionTime `exec_ns` and the StartSlack `start_slack_ns`
-  ([protocol/design.md](protocol/design.md#execreport)).
+  ([protocol/design.md](protocol/design.md#execreport)). A server also sends the header `x-worker-threads`, its
+  `n_worker_threads` ([protocol/design.md](protocol/design.md#workercount)).
 - **Other routes:** a method other than `POST` on `/ping` returns `405`. Any path other than `/ping`,
   `/cancel` and `/heartbeat` returns `404`. A body that cannot be parsed, or a RequestId whose client id differs
   from the one this connection is bound to, returns `400`. These responses have an empty body.

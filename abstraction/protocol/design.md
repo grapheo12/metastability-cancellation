@@ -99,6 +99,34 @@ The server measures both ([../server/ping_handler/design.md#run_ping](../server/
 The Protocol only fixes how they are written and read. `start_slack_ns` compares the client's deadline with the
 server's wall clock, so any clock difference between the two machines adds to it directly.
 
+## WorkerCount
+
+Every `/ping` answer a server writes with a body (`202` or `503`) carries the response header
+`x-worker-threads: <DEC>`, the server's `n_worker_threads`: how many `/ping` requests it runs at once. This
+**WorkerCount** lets a load balancer turn a backend's queue into an expected wait
+([../ingress/load_balancer/design.md](../ingress/load_balancer/design.md#loadbalancer)). It is a header, not a body
+field, so `response_bytes` and the PaddedJsonBody are unchanged.
+
+- `<DEC>` is a decimal integer in `1 ..= 2^32 - 1`, with no sign and no leading zeros.
+- Other answers (`400`, `405`, `404`, `/cancel` answers, the HeartbeatStream) do not carry it.
+- An Ingress does not relay it to the client.
+
+```
+function parse_worker_count(value):                  # header value or none -> u32 | none; never an error
+    if value is none or empty or has a non-digit or more than 10 chars: return none
+    n = parse_unsigned_decimal(value)
+    if n < 1 or n > 2^32 - 1: return none
+    return n
+```
+
+| Header value | `parse_worker_count` |
+|---|---|
+| `10` | 10 |
+| `1` | 1 |
+| `0` | none (below 1) |
+| `4294967296` | none (above 2^32 - 1) |
+| absent, empty, `ten`, `-3` | none |
+
 ## PingRequestBody
 
 A `/ping` request body carries the request's **RequestDeadline**, `deadline_unix_ns`: Unix wall-clock nanoseconds
