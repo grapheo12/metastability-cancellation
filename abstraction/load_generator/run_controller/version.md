@@ -9,3 +9,4 @@
 | 0.4.0 | 2026-11-12T00:00:00Z | Validation of `retry_timeout_ms` (> 0) and `max_retries` (integer >= 0, `n_waiting_requests × (1 + max_retries) <= MAX_WAITING_REQUESTS`); derived `retry_timeout_ns` |
 | 0.5.0 | 2026-11-12T00:00:00Z | Validation of `initial_stall_ms` (integer >= 0, `< duration_s × 1000`); derived `initial_stall_ns` |
 | 0.6.0 | 2026-11-13T00:00:00Z | Passes `run_start_unix_ns` to `run_client` (origin of every RequestDeadline); validates `request_bytes` with `validate_request_body_size` (>= 76) |
+| 0.7.0 | 2026-11-20T00:00:00Z | Validation of `slo_cancel` (`true`/`false`, default `true`) and `drain_timeout_ms` (integer `> 0`, default 10000), derived `drain_timeout_ns`; DrainPhase bounded by the SLO (`slo_cancel = true`) or the DrainDeadline (`false`) |

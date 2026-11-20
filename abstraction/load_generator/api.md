@@ -11,6 +11,8 @@ Same as [../api.md#load-generator-parameters](../api.md#load-generator-parameter
 | `global_rate` | float, requests/s, `> 0` | required |
 | `request_bytes` | integer, bytes, `>= 76` | required |
 | `slo_ms` | float, ms, `> 0` | required |
+| `slo_cancel` | `true` \| `false` | `true` |
+| `drain_timeout_ms` | integer, ms, `> 0` | `10000` |
 | `duration_s` | float, s, `> 0` | required |
 | `seed` | u64 | `0` |
 | `n_waiting_requests` | integer, `1 ..= MAX_WAITING_REQUESTS` (1000) | `100` |
@@ -34,6 +36,7 @@ plus derived values:
 | `retry_timeout_ns` | `round(retry_timeout_ms * 1e6)` |
 | `initial_stall_ns` | `initial_stall_ms * 1_000_000` |
 | `duration_ns` | `round(duration_s * 1e9)` |
+| `drain_timeout_ns` | `drain_timeout_ms * 1_000_000` |
 
 ## Outputs
 
