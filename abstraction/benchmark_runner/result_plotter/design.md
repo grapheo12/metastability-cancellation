@@ -479,11 +479,21 @@ the load generator's Requests CSV
   slacks fall in negative bins. Every bin from the point's smallest to its largest non-empty bin is drawn, empty
   ones at 0, so the line shows gaps instead of bridging them.
 - **y** is the fraction of the point's samples in the bin, so points with different rates compare directly.
+- **Before and after the failure.** A point with a WorkerFreeze has a **FailureTime**: its `freeze_after_ms`, taken
+  from `params.json` `freeze` (the FreezeTarget,
+  [../config/design.md#freezetarget](../config/design.md#freezetarget)) or else from a `freeze_after_ms` in
+  `server_args`. The page then has three subplots side by side: all samples, the samples of requests first sent
+  before the FailureTime (`send_ns < freeze_after_ms × 1_000_000`), and those sent at or after it. Each subplot's
+  fractions are of its own samples. A point without a FailureTime appears only in the first subplot, and a run where
+  no drawn point has one keeps the single plot.
+- **Clock of the split.** `send_ns` is on the load generator's run clock, while the freeze is armed by the frozen
+  server's first queued `/ping`, a few milliseconds after the load generator's first send. The split is therefore
+  approximate by those few milliseconds, which is far below the 100 ms bins.
 
 ```
 START_SLACK_BIN_MS = 100
 
-function read_start_slacks(path):                 # -> list of i64 | none
+function read_start_slacks(path):                 # -> list of (send_ns, start_slack_ns) | none
     if path does not exist: return none
     header = first line
     if "start_slack_ns" not in header: return []   # a run made before the ExecReport
@@ -492,24 +502,42 @@ function read_start_slacks(path):                 # -> list of i64 | none
         split into the header's columns; stop at a line without all of them (e.g. a truncated last line)
         if the in_stall_window column exists and is "1": continue    # StallWindowRequest
         if start_slack_ns is empty: continue
-        slacks.append(signed decimal integer of start_slack_ns)    # stop at a line where it does not parse
+        slacks.append((integer send_ns, signed decimal integer of start_slack_ns))   # stop at a line where either does not parse
     return slacks
 
-function start_slack_histogram(slacks):            # slacks not empty; -> list of (x_s, fraction), bins in order
+function start_slack_histogram(slacks):            # slacks: list of i64, not empty; -> list of (x_s, fraction), bins in order
     W = START_SLACK_BIN_MS * 1_000_000
     counts = count of slacks per s div W           # floor division: -1 div W = -1
     lo = smallest key of counts; hi = largest key of counts
     return [ ((b + 0.5) * START_SLACK_BIN_MS / 1000, counts.get(b, 0) / len(slacks)) for b in lo ..= hi ]
 
+function failure_time_ms(params):                  # -> integer ms | none (FailureTime)
+    if params.freeze is set: return params.freeze.freeze_after_ms
+    if server_args has freeze_after_ms: return that value
+    return none
+
+function split_histograms(samples, failure_ms):    # -> (all, before, after); before/after none when not split
+    all = start_slack_histogram([s for (_, s) in samples])
+    if failure_ms is none: return (all, none, none)
+    F = failure_ms * 1_000_000
+    before = [s for (t, s) in samples if t < F];  after = [s for (t, s) in samples if t >= F]
+    return (all, start_slack_histogram(before) if before not empty else none,
+                 start_slack_histogram(after)  if after  not empty else none)
+
 function draw_start_slack(output_dir, done, swept_keys):
     lines = []
     for row in done, in point-id order:
-        slacks = read_start_slacks(output_dir/points/point_<row.point>/loadgen.requests.csv)
-        if slacks is none or slacks is empty: continue
-        lines.append((label as in the QueueLengthPlot, start_slack_histogram(slacks), the point's color index))
+        pdir = output_dir/points/point_<row.point>
+        samples = read_start_slacks(pdir/loadgen.requests.csv)
+        if samples is none or samples is empty: continue
+        hists = split_histograms(samples, failure_time_ms(pdir/params.json))
+        lines.append((label as in the QueueLengthPlot, hists, the point's color index))
     if lines is empty: delete output_dir/plots/start_slack.html if it exists; return
-    one plot; for each line: a line with small markers through its histogram, in the point's color
-    a dashed vertical line at x = 0 (the RequestDeadline: left of it the request was already late)
+    split = some line has a before or an after histogram
+    subplots: ["all requests"] + (["sent before the failure", "sent after the failure"] if split)
+    in each subplot, for each line with a histogram for it: a line with small markers, in the point's color,
+        in the point's legend group (one legend entry; hiding the point hides it in every subplot)
+    in each subplot, a dashed vertical line at x = 0 (the RequestDeadline: left of it the request was already late)
     x-axis linear, label "start slack: RequestDeadline - worker pick-up (s)"; y-axis linear from 0,
         label "fraction of requests"
     legend with the labels when there is more than one line
@@ -543,6 +571,19 @@ Worked example, `W = 100_000_000` ns, six samples:
 |---|---|
 | No `loadgen.requests.csv`, no `start_slack_ns` column, or no sample | Point left out |
 | No done point drawable | No `start_slack.html`; an earlier one is deleted |
+| No drawn point has a FailureTime | One subplot (all requests), as before |
+| A point with a FailureTime but no sample on one side | Its line is missing from that subplot only |
+
+Split worked example, `freeze_after_ms = 60000` (`F = 60_000_000_000`):
+
+| `send_ns` | `start_slack_ns` | Subplot | Why |
+|---|---|---|---|
+| 59_999_999_999 | 4_950_000_000 | before | `< F` |
+| 60_000_000_000 | -1_440_000_000 | after | exactly `F`: after |
+| 61_000_000_000 | -2_000_000_000 | after | |
+
+Before: one sample, bin 49, fraction 1. After: bins -20 (`-2_000_000_000 div W`) and -15 (`-1_440_000_000 div W`),
+fraction 1/2 each, with bins -19 ..= -16 at 0. All: the three samples together.
 
 ## GcOverlay
 
