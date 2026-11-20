@@ -124,13 +124,17 @@ function settle(C, req, result):                      # first event wins
     if not req.settled.compare_and_swap(false, true): return false
     t_end = now()
     with req.lock: copies = req.current + 1
+    exec_ns = none; start_slack_ns = none                       # ExecReport, from the deciding response only
     match result:
-        Response(status, resp_body): outcome = classify(status, resp_body, req.id)  # see Outcome classification
+        Response(status, resp_body):
+            outcome = classify(status, resp_body, req.id)       # see Outcome classification
+            if outcome in {ok, rejected}:
+                (exec_ns, start_slack_ns) = protocol.parse_exec_report(resp_body)
         TimerFired:                  outcome = cancelled; status = none
         StreamError or ConnectionError: outcome = error; status = none
     C.events.push(Resolved(RequestRecord(req.id, req.client_id, req.seq, outcome, status,
                                          req.t_sched, req.t_send, t_end, copies,
-                                         req.in_stall_window)))
+                                         req.in_stall_window, exec_ns, start_slack_ns)))
     return true
 ```
 
@@ -277,6 +281,11 @@ function classify(status, resp_body, id):
     if status == 503: return rejected
     return error
 ```
+
+The ExecReport ([../../protocol/design.md#execreport](../../protocol/design.md#execreport)) is read only from the
+response that settled the request, which is always the newest copy's, and only when it is classified `ok` or
+`rejected`. `parse_exec_report` never fails: a missing or malformed field just leaves that RequestRecord field empty.
+Answers of older copies are never read, so their ExecReports are lost.
 
 ## State machine
 

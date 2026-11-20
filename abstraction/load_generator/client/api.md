@@ -36,6 +36,6 @@ Runs one SemiOpenLoopClient, with at most `n_waiting_requests` requests outstand
 
 ## Uses
 
-- [../../protocol/api.md](../../protocol/api.md): `make_request_id`, `build_request_body`, `parse_body`, headers
+- [../../protocol/api.md](../../protocol/api.md): `make_request_id`, `build_request_body`, `parse_body`, `parse_exec_report`, headers
 - [../../sampling/api.md](../../sampling/api.md): `exponential_ns`
 - [../metrics/api.md](../metrics/api.md): `RequestRecord`

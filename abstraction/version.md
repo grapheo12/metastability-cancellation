@@ -157,3 +157,4 @@
 | 0.25.0 | 2026-11-20T00:00:00Z | `/ping` responses carry the ExecReport (ExecutionTime, StartSlack); `response_bytes >= 115`. Child bump: protocol 0.6.0 |
 | 0.26.0 | 2026-11-20T00:00:00Z | Child bump: server 0.12.0 (ping_handler 0.11.0, ExecReport) |
 | 0.27.0 | 2026-11-20T00:00:00Z | Child bump: load_generator 0.7.0 (metrics 0.5.0) |
+| 0.27.1 | 2026-11-20T00:00:00Z | Child bump: load_generator 0.7.1 (client 0.8.0) |
