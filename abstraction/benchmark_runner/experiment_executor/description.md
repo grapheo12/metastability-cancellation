@@ -2,11 +2,11 @@
 
 Leaf component. It runs one SweepPoint from start to finish and leaves a self-contained directory of results:
 
-- **ServerLifecycle**: stop any servers left over from an earlier point, start this point's `instances` servers
-  (one port each) in the background on the server machine, wait for each one's `listening on` line, and at the end
-  interrupt them so they print their CancelCounters lines and exit.
+- **ServerLifecycle**: stop any servers left over from an earlier point, start this point's server instances
+  (one port each) in the background on their ServerMachines, wait for each one's `listening on` line, and at the
+  end interrupt them so they print their CancelCounters lines and exit.
 - **IngressLifecycle**: start the Ingress on the machine its IngressPlacement names (client by default, or the
-  server machine), pointed at every server instance, and wait for its `listening on` line; at the end interrupt
+  server machine when there is one), pointed at every server instance, and wait for its `listening on` line; at the end interrupt
   it so it writes its outputs.
 - **ClientRun**: on the client machine, run the load generator against the Ingress, with a timeout.
 - **ProcessPlacement**: start each program with its thread count and, where the machine can pin, its CPU set.
