@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/client/design.md (client v0.8.0)
+// Source: abstraction/load_generator/client/design.md (client v0.9.0)
 package loadgen
 
 import (
@@ -33,7 +33,7 @@ func runAgainstStalledServer(t *testing.T, waiting uint32) []RequestRecord {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	cfg := Config{NumClients: 1, GlobalRate: 200, RequestBytes: 128, SloMs: 5000, DurationS: 0.3, NWaitingRequests: waiting,
+	cfg := Config{SloCancel: true, NumClients: 1, GlobalRate: 200, RequestBytes: 128, SloMs: 5000, DurationS: 0.3, NWaitingRequests: waiting,
 		PerClientRate: 200, SloNs: 5_000_000_000, DurationNs: 300_000_000, RetryTimeoutNs: 10_000_000_000} // no retries
 	return RunClient(0, conn, cfg, sampling.NewRng(7), time.Now(), 0)
 }
@@ -170,7 +170,7 @@ func scriptedServer(t *testing.T, delays []time.Duration) (*h2client.Conn, chan 
 // oneRequest sends one request through startRequest and returns its record.
 func oneRequest(t *testing.T, conn *h2client.Conn, sloMs, retryMs int64, maxRetries uint32) RequestRecord {
 	t.Helper()
-	cfg := Config{RequestBytes: 128, SloNs: sloMs * 1_000_000, RetryTimeoutNs: retryMs * 1_000_000, MaxRetries: maxRetries}
+	cfg := Config{SloCancel: true, RequestBytes: 128, SloNs: sloMs * 1_000_000, RetryTimeoutNs: retryMs * 1_000_000, MaxRetries: maxRetries}
 	events := make(chan clientEvent, 1)
 	startRequest(3, 9, 0, conn, cfg, time.Now(), 0, events)
 	select {
@@ -307,7 +307,7 @@ func TestValidateRetryParameters(t *testing.T) {
 //
 // Design: abstraction/load_generator/client/design.md#stallwindow
 func TestStallWindowNeverRetries(t *testing.T) {
-	cfg := Config{RequestBytes: 128, SloNs: 300_000_000, RetryTimeoutNs: 50_000_000, MaxRetries: 1, InitialStallNs: 10_000_000_000}
+	cfg := Config{SloCancel: true, RequestBytes: 128, SloNs: 300_000_000, RetryTimeoutNs: 50_000_000, MaxRetries: 1, InitialStallNs: 10_000_000_000}
 	conn, done := scriptedServer(t, []time.Duration{time.Hour, time.Hour})
 	events := make(chan clientEvent, 1)
 	startRequest(3, 9, 0, conn, cfg, time.Now(), 0, events) // sent at ~0, inside the 10 s window
@@ -361,7 +361,7 @@ func TestValidateInitialStall(t *testing.T) {
 // Design: abstraction/load_generator/client/design.md#requestdeadline
 func TestRetryCopiesShareDeadline(t *testing.T) {
 	conn, done := scriptedServer(t, []time.Duration{time.Hour, time.Hour})
-	cfg := Config{RequestBytes: 128, SloNs: 80_000_000, RetryTimeoutNs: 50_000_000, MaxRetries: 1} // SLO resets both copies
+	cfg := Config{SloCancel: true, RequestBytes: 128, SloNs: 80_000_000, RetryTimeoutNs: 50_000_000, MaxRetries: 1} // SLO resets both copies
 	const unix = 1_794_533_185_000_000_000
 	events := make(chan clientEvent, 1)
 	startRequest(3, 9, 0, conn, cfg, time.Now(), unix, events)
@@ -402,4 +402,61 @@ func TestValidateSloCancelAndDrain(t *testing.T) {
 			t.Fatalf("drain_timeout_ms %q must be rejected", bad)
 		}
 	}
+}
+
+// slo_cancel = false: a late answer is ok and nothing is reset at the SLO; a
+// request nobody answers is reset at the DrainDeadline D + DRAIN; retries
+// still happen. Times scaled down from the design's worked examples.
+//
+// Design: abstraction/load_generator/client/design.md#draindeadline
+func TestDrainDeadlineWorkedExamples(t *testing.T) {
+	run := func(conn *h2client.Conn, maxRetries uint32) RequestRecord {
+		t.Helper()
+		cfg := Config{SloCancel: false, RequestBytes: 128, SloNs: 100 * 1_000_000, RetryTimeoutNs: 60 * 1_000_000,
+			MaxRetries: maxRetries, DurationNs: 50 * 1_000_000, DrainTimeoutNs: 400 * 1_000_000} // DrainDeadline at 450 ms
+		events := make(chan clientEvent, 1)
+		startRequest(3, 9, 0, conn, cfg, time.Now(), 0, events)
+		select {
+		case ev := <-events:
+			return ev.rec
+		case <-time.After(5 * time.Second):
+			t.Fatal("request never resolved")
+		}
+		return RequestRecord{}
+	}
+	service := func(r RequestRecord) time.Duration { return time.Duration(r.EndNs - r.SendNs) }
+	t.Run("late answer, no retry", func(t *testing.T) {
+		conn, done := scriptedServer(t, []time.Duration{250 * ms})
+		r := run(conn, 0)
+		if r.Outcome != OutcomeOK || r.Copies != 1 || service(r) < 250*ms || service(r) > 450*ms || r.ExecNs != 1000 {
+			t.Fatalf("%+v: a late answer must be recorded ok", r)
+		}
+		if e := <-done; e.reset {
+			t.Fatal("nothing may be reset at the SLO")
+		}
+	})
+	t.Run("late answer after a retry", func(t *testing.T) {
+		conn, _ := scriptedServer(t, []time.Duration{time.Hour, 200 * ms})
+		r := run(conn, 1)
+		if r.Outcome != OutcomeOK || r.Copies != 2 || service(r) < 260*ms || r.ExecNs != 1001 {
+			t.Fatalf("%+v", r)
+		}
+	})
+	t.Run("stuck: reset at the DrainDeadline", func(t *testing.T) {
+		conn, done := scriptedServer(t, []time.Duration{time.Hour, time.Hour})
+		r := run(conn, 1)
+		if r.Outcome != OutcomeCancelled || r.Copies != 2 || service(r) < 440*ms || service(r) > 1500*ms || r.HasExec {
+			t.Fatalf("%+v", r)
+		}
+		for i := 0; i < 2; i++ {
+			select {
+			case e := <-done:
+				if !e.reset {
+					t.Fatalf("%+v", e)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("both copies must be reset at the DrainDeadline")
+			}
+		}
+	})
 }

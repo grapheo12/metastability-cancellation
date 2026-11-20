@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/client/design.md (client v0.8.0)
+// Source: abstraction/load_generator/client/design.md (client v0.9.0)
 package loadgen
 
 import (
@@ -109,8 +109,8 @@ type pendingRequest struct {
 	cfg      Config
 	runStart time.Time
 	events   chan<- clientEvent
-	sloTimer *time.Timer
-	stall    bool // StallWindowRequest: first sent before initial_stall_ns, never retries
+	sloTimer *time.Timer // the SLO timer, or the DrainDeadline when !cfg.SloCancel
+	stall    bool        // StallWindowRequest: first sent before initial_stall_ns, never retries
 
 	mu       sync.Mutex           // guards current, cancels, resetAll
 	current  uint32               // index of the newest RequestCopy
@@ -136,8 +136,15 @@ func startRequest(clientID, seq uint32, tSched int64, conn *h2client.Conn, cfg C
 	// Design: abstraction/load_generator/client/design.md#stallwindow
 	r.stall = r.rec.SendNs < cfg.InitialStallNs
 	r.rec.InStallWindow = r.stall
+	// One expiry timer per request: t_send + SLO (SLOCancellation), or the
+	// DrainDeadline D + DRAIN, the same absolute run time for every request.
 	// Design: abstraction/load_generator/client/design.md#slocancellation
-	r.sloTimer = time.AfterFunc(time.Duration(r.rec.SendNs+cfg.SloNs-nowNs(runStart)), func() {
+	// Design: abstraction/load_generator/client/design.md#draindeadline
+	tExpire := r.rec.SendNs + cfg.SloNs
+	if !cfg.SloCancel {
+		tExpire = cfg.DurationNs + cfg.DrainTimeoutNs
+	}
+	r.sloTimer = time.AfterFunc(time.Duration(tExpire-nowNs(runStart)), func() {
 		if !r.settle(OutcomeCancelled, 0, nil) {
 			return
 		}
