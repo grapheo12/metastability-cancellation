@@ -280,9 +280,10 @@ FORWARD_BIN_MS = 20
 function read_forward_log(path):                   # -> list of (t_ns, server_id, outcome, latency_ns, ewma_ns) | none
     if path does not exist: return none
     rows = []
-    for each line after the header "t_ns,server_id,outcome,latency_ns,ewma_latency_ns":
-        parse t_ns, server_id, latency_ns as decimal integers, outcome as a word, ewma_ns as a float
-        if any field fails to parse or the line does not have 5 fields: stop    # e.g. a truncated last line
+    for each line after the header (its first five columns are "t_ns,server_id,outcome,latency_ns,ewma_latency_ns"):
+        parse t_ns, server_id, latency_ns as decimal integers, outcome as a word, ewma_ns as a float,
+        from the first five fields; later fields (exec_ns, ewma_exec_ns, ...) are ignored
+        if any of those fails to parse or the line has fewer than 5 fields: stop    # e.g. a truncated last line
         rows.append(...)
     return rows
 
