@@ -19,3 +19,4 @@
 | 0.5.0 | 2026-11-13T00:00:00Z | `request_bytes >= 76` (PingRequestBody). Child bump: client 0.6.0 (RequestDeadline) |
 | 0.5.1 | 2026-11-13T00:00:00Z | Time base: `run_start_unix_ns` is also the RequestDeadline origin. Child bump: run_controller 0.6.0 |
 | 0.6.0 | 2026-11-17T00:00:00Z | The last RequestCopy waits for the SLO instead of being dropped. Child bump: client 0.7.0 |
+| 0.7.0 | 2026-11-20T00:00:00Z | Child bump: metrics 0.5.0 (`exec_ns`, `start_slack_ns` columns) |
