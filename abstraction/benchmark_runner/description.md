@@ -3,7 +3,7 @@
 Subcomponents: Config, Remote Transport, Remote Setup, Experiment Executor, Result Plotter, Retry Timeout.
 
 The **BenchmarkRunner** runs on an operator machine (e.g. a laptop) and turns one TOML file into a complete,
-reproducible experiment on two remote machines:
+reproducible experiment on remote machines: one client machine and one or more server machines:
 
 - **Config** reads and validates the **BenchConfig**. It expands every program parameter given as an array into
   the **SweepExpansion**, the cross product of all swept values, made of **SweepPoints**.
@@ -13,7 +13,7 @@ reproducible experiment on two remote machines:
   already be at `repo_url`. Then, once per machine, it clones or updates the repository, checks out that exact
   commit, checks the tools the implementation's **BuildManifest** requires (it never installs them), and builds
   the binaries.
-- **Experiment Executor** runs each SweepPoint. It starts the server instances on the server machine
+- **Experiment Executor** runs each SweepPoint. It starts the server instances on the server machines
   (**ServerLifecycle**) and the Ingress on the client machine (**IngressLifecycle**), runs the load generator
   against the Ingress, stops the Ingress and then the servers with an interrupt so they write their outputs and
   CancelCounters, and downloads every output.

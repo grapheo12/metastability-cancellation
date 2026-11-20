@@ -13,7 +13,9 @@ A TOML document. Every table and key is listed here. Unknown tables or keys are 
 
 ### `[machines.server]` and `[machines.client]`
 
-Both tables are required.
+Both are required. `[machines.client]` is one table. `[machines.server]` is one table, or an array of 1 to 16 tables
+(`[[machines.server]]`), one per server machine: the ServerMachines
+([design.md#servermachines](design.md#servermachines)). Two server tables may not name the same machine.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -22,7 +24,7 @@ Both tables are required.
 | `ssh_key` | path | unset: from the operator's SSH configuration | Private key file. A leading `~` is the operator's home. Ignored for `local` |
 | `ssh_port` | integer `1..=65535` | unset: from the operator's SSH configuration, else 22 | SSH port. Ignored for `local` |
 | `workdir` | path on that machine | `"~/cancellation-bench"` | Where the clone and per-point files live. A leading `~` is that machine's home |
-| `data_addr` | string | the `HostName` of `host` in the operator's SSH configuration, else `host` (`"127.0.0.1"` when `host = "local"`) | Server table only: the address the client machine uses to reach the server. Set it to a private address when the machines share a network |
+| `data_addr` | string | the `HostName` of `host` in the operator's SSH configuration, else `host` (`"127.0.0.1"` when `host = "local"`) | Server tables only: the address the client machine uses to reach that server machine. Set it to a private address when the machines share a network |
 
 A key set here overrides the SSH configuration ([../remote_transport/design.md#sshconfighost](../remote_transport/design.md#sshconfighost)).
 
@@ -30,8 +32,8 @@ A key set here overrides the SSH configuration ([../remote_transport/design.md#s
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `listen_port` | integer `1..=65535` | `8080` | Runner-owned. Server instance `k` gets `--listen_addr 0.0.0.0:<listen_port + k>`. Cannot be swept |
-| `instances` | integer `1..=64`, and `listen_port + instances - 1 <= 65535` | `1` | Runner-owned. Number of server processes on the server machine, all with the same program parameters. They are the Ingress's backends. Cannot be swept |
+| `listen_port` | integer `1..=65535` | `8080` | Runner-owned. The `k`-th instance on a server machine gets `--listen_addr 0.0.0.0:<listen_port + k>`. Cannot be swept |
+| `instances` | integer `1..=64`, and `listen_port + instances - 1 <= 65535` | `1` | Runner-owned. Number of server processes on **each** server machine, all with the same program parameters. All of them, on every server machine, are the Ingress's backends ([design.md#servermachines](design.md#servermachines)). Cannot be swept |
 | `gc_trace` | boolean | `false` | Runner-owned. Turns on the servers' GcTrace through the BuildManifest's GcTraceHook ([../remote_setup/api.md#buildmanifest](../remote_setup/api.md#buildmanifest)); the run fails with exit `2` before setup if the hook is missing. Cannot be swept |
 | `threads`, `cpu_set` | see [ProcessPlacement keys](#processplacement-keys) | unset | Runner-owned. The server's ProcessPlacement. Cannot be swept |
 | any server parameter except `listen_addr`, `queue_log_path` | scalar or non-empty array | the program's default (`queue_sample_interval_ms`: 10) | See [../../api.md#server-parameters](../../api.md#server-parameters) |
@@ -88,7 +90,7 @@ A **scalar** is a TOML string, integer, float or boolean. Arrays may not be nest
 
 ### `BenchConfig`
 
-The validated file with every default filled in: `repo_url`, `machines.server`, `machines.client`, `server`,
+The validated file with every default filled in: `repo_url`, `machines.server` (the list of ServerMachines), `machines.client`, `server`,
 `load_gen`, `ingress`, `run`, plus the server's `instances` and `gc_trace`. Program sections keep their keys in file order. See
 [design.md#benchconfig](design.md#benchconfig).
 
@@ -102,8 +104,9 @@ The validated file with every default filled in: `repo_url`, `machines.server`, 
 | `server_args` | ordered list of (name, scalar) | Every `[server]` program parameter for this point, excluding runner-owned keys |
 | `loadgen_args` | ordered list of (name, scalar) | Every `[load_gen]` program parameter for this point |
 | `ingress_args` | ordered list of (name, scalar) | Every `[ingress]` program parameter, plus the runner's `backends` and `num_clients`, the defaulted `duration_s`, and the derived `cancel_rate` when CancelRateFraction is set |
-| `server_instances` | integer `>= 1` | `[server] instances`; instance `k` listens on `listen_port + k` |
-| `ingress_machine` | `"client"` \| `"server"` | The IngressPlacement: the machine the Ingress runs on |
+| `server_instances` | integer `>= 1` | Number of server instances in the system: server machines × `[server] instances`. Instance ids are `0 ..= server_instances - 1` ([design.md#servermachines](design.md#servermachines)) |
+| `server_hosts` | list of integer, length `server_instances` | For each instance id, the index of the server machine it runs on, in `[machines.server]` order |
+| `ingress_machine` | `"client"` \| `"server"` | The IngressPlacement: the machine the Ingress runs on (`server` only with one server machine) |
 | `loadgen_target` | `host:port` | Where the load generator sends its requests: the Ingress, as seen from the client machine |
 | `placement` | map program (`server`, `loadgen`, `ingress`) → {`threads`: integer or none, `cpu_set`: string or none} | Each program's ProcessPlacement (the server's applies to every instance). All three programs are always present; unset keys are none |
 

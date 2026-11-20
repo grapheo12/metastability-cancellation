@@ -6,8 +6,8 @@ The program is `bench`, with one command per invocation ([../api.md#benchmark-ru
 
 | Command | Steps run ([design.md#run-flow](design.md#run-flow)) |
 |---|---|
-| `bench run <config.toml>` | load config → SourcePin → setup both machines → every SweepPoint → plot |
-| `bench setup <config.toml>` | load config → SourcePin → setup both machines |
+| `bench run <config.toml>` | load config → SourcePin → setup every machine → every SweepPoint → plot |
+| `bench setup <config.toml>` | load config → SourcePin → setup every machine |
 | `bench plot <output_dir>` | PointTable and SweepPlots from the points already in `<output_dir>` |
 | `bench retry-timeout --workers K --mean_service_ms S [--eta E] RATE [RATE ...]` | RetryTimeoutCalculator only: RetryTimeout and RetryFeedback per rate; no config, no machines ([retry_timeout/api.md](retry_timeout/api.md#outputs)) |
 | `bench stable-eta --workers K --mean_service_ms S RATE [RATE ...]` | RetryTimeoutCalculator only: MaxStableEta per rate; no config, no machines ([retry_timeout/api.md](retry_timeout/api.md#outputs)) |

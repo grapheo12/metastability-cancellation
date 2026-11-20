@@ -5,7 +5,7 @@
 ```mermaid
 flowchart TD
   CFG[Config: BenchConfig + SweepExpansion] --> PIN[Remote Setup: SourcePin]
-  PIN --> SS[Remote Setup: server machine]
+  PIN --> SS[Remote Setup: each server machine]
   PIN --> SC[Remote Setup: client machine]
   SS --> EX[Experiment Executor: for each SweepPoint]
   SC --> EX
@@ -37,16 +37,17 @@ function bench_run(config_path):
     pin    = remote_setup.source_pin(config.repo_url)           # exit 2 on PinError
     check_placement_support(config, pin)                        # exit 2 on PinError
     prepare_output_dir(config.run.output_dir, config_path, pin, len(points))
-    server_t = remote_transport.open(config.machines.server)
-    client_t = remote_transport.open(config.machines.client)
-    in parallel:                                                # exit 2 if either fails
-        ready_server = remote_setup.setup_machine(server_t, "server", config.machines.server, pin, config.run.setup_timeout_s)
-        ready_client = remote_setup.setup_machine(client_t, "client", config.machines.client, pin, config.run.setup_timeout_s)
-    warn_unpinned(config, ready_server, ready_client)
+    server_ts = [remote_transport.open(m) for m in config.machines.server]   # ServerMachines, in file order
+    client_t  = remote_transport.open(config.machines.client)
+    in parallel:                                                # exit 2 if any fails
+        ready_servers = [remote_setup.setup_machine(server_ts[m], "server", config.machines.server[m], pin,
+                                                    config.run.setup_timeout_s) for each server machine m]
+        ready_client  = remote_setup.setup_machine(client_t, "client", config.machines.client, pin, config.run.setup_timeout_s)
+    warn_unpinned(config, ready_servers, ready_client)
     run_id = last path component of config.run.output_dir
     any_failed = false
     for point in points (in id order):
-        result = experiment_executor.run_point(point, config, ready_server, ready_client, run_id)
+        result = experiment_executor.run_point(point, config, ready_servers, ready_client, run_id)
         if result == FAILED:
             any_failed = true
             if config.run.on_failure == "stop": break
@@ -62,17 +63,22 @@ function check_placement_support(config, pin):
     if config.server.gc_trace and pin.manifest.gc_trace_env is none:                     # GcTraceHook
         PinError("server.gc_trace is set, but implementation/<lang>/benchmark_manifest.toml has no gc_trace_env")
 
-function warn_unpinned(config, ready_server, ready_client):
+function warn_unpinned(config, ready_servers, ready_client):
     ingress_role = config.ingress.machine                                 # IngressPlacement
-    for (role, ready, sections) in [("server", ready_server, [server] + ([ingress] if ingress_role == "server" else [])),
-                                    ("client", ready_client, [load_gen] + ([ingress] if ingress_role == "client" else []))]:
-        if any of sections sets cpu_set and not ready.cpu_pinning:
+    for (role, readies, sections) in [("server", ready_servers, [server] + ([ingress] if ingress_role == "server" else [])),
+                                      ("client", [ready_client], [load_gen] + ([ingress] if ingress_role == "client" else []))]:
+        if any of sections sets cpu_set and any ready in readies has not ready.cpu_pinning:
             print to stderr, once per role: "warning: cpu_set ignored on <role>: taskset not found"
 ```
 
 ProcessPlacement ([config/design.md#processplacement](config/design.md#processplacement)) is checked before setup,
 because the manifest is known from the SourcePin. A missing pinning tool is only a warning: the programs still run,
 with their thread counts applied, and each point's `placement.json` records what was actually used.
+
+Every machine is set up in parallel: each ServerMachine ([config/design.md#servermachines](config/design.md#servermachines))
+and the client. The ServerMachines are distinct by Config's check, so the same-machine rule of setup
+([remote_setup/design.md#machine-setup](remote_setup/design.md#machine-setup)) can only pair a server machine with
+the client machine, and then applies to that pair as before.
 
 `bench setup` runs everything up to and including the parallel setup. `bench plot` runs only
 `result_plotter.plot`. `bench retry-timeout` calls `retry_timeout.retry_timeout` (with `--eta`, default `1`) once
@@ -93,6 +99,6 @@ are command-line arguments. Running setup once also means every point measures t
 
 ## Interrupts
 
-If the operator interrupts `bench run` (e.g. Ctrl-C), the executor stops the current point's server
+If the operator interrupts `bench run` (e.g. Ctrl-C), the executor stops the current point's servers
 ([experiment_executor/design.md#serverlifecycle](experiment_executor/design.md#serverlifecycle)), marks that point
 `failed` with reason `interrupted`, writes the plots for the points finished so far, and exits `1`.
