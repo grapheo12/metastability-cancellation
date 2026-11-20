@@ -31,10 +31,12 @@ WorkQueue: { lock, not_empty: condition variable, discipline: fifo | edf,
                     or min-priority queue of (deadline_unix_ns, push_seq, PingJob),   # edf, smallest key first
              next_seq: u64 = 0,                                              # edf: push_seq of the next push
              closed: boolean = false,
-             stall_ns: u64, open_at_ns: u64 or none = none }      # StallGate, see below
+             stall_ns: u64, open_at_ns: u64 or none = none,       # StallGate, see below
+             freeze_ns: u64 or none, freeze_at_ns: u64 or none = none }   # WorkerFreeze, see below
 
-function queue_new(initial_stall_ms, discipline):
-    return WorkQueue(discipline = discipline, stall_ns = initial_stall_ms * 1_000_000)
+function queue_new(initial_stall_ms, discipline, freeze_after_ms):     # freeze_after_ms: u64 >= 1, or none
+    return WorkQueue(discipline = discipline, stall_ns = initial_stall_ms * 1_000_000,
+                     freeze_ns = freeze_after_ms * 1_000_000 if freeze_after_ms is not none else none)
 
 function add_item(q, job):                       # caller holds q.lock
     if q.discipline == fifo: q.items.push_back(job)
@@ -49,8 +51,10 @@ function take_item(q):                           # caller holds q.lock; q.items 
 function queue_push(q, job):
     with q.lock:
         if q.closed: return Closed
-        if q.open_at_ns is none:                 # StallGate: the first push arms it
-            q.open_at_ns = monotonic_now_ns() + q.stall_ns
+        if q.open_at_ns is none:                 # StallGate and WorkerFreeze: the first push arms both
+            armed_at = monotonic_now_ns()
+            q.open_at_ns = armed_at + q.stall_ns
+            if q.freeze_ns is not none: q.freeze_at_ns = armed_at + q.freeze_ns
             if q.stall_ns > 0: schedule q.not_empty.notify_all() at q.open_at_ns
         add_item(q, job)
         q.not_empty.notify_one()
@@ -60,9 +64,12 @@ function queue_pop(q):
     with q.lock:
         loop:
             if q.closed: return None             # closed wins over queued items
-            if q.items is not empty and monotonic_now_ns() >= q.open_at_ns:
+            if q.items is not empty and monotonic_now_ns() >= q.open_at_ns and not frozen(q):
                 return take_item(q)
             q.not_empty.wait()                   # woken by a push, the gate opening, or close
+
+function frozen(q):                              # caller holds q.lock
+    return q.freeze_at_ns is not none and monotonic_now_ns() >= q.freeze_at_ns
 
 procedure queue_close(q):
     with q.lock:
@@ -80,6 +87,8 @@ procedure queue_close(q):
   and not yet popped. `queue_close` has already answered that job with `Aborted`.
 - **StallGate.** Workers pop nothing until the gate opens ([StallGate](#stallgate)). Pushes, `queue_len` and
   `queue_close` are not affected by it.
+- **WorkerFreeze.** Workers pop nothing once the freeze has started ([WorkerFreeze](#workerfreeze)). Pushes,
+  `queue_len` and `queue_close` are not affected by it either.
 - **No reordering after the push.** A job's place is fixed when it is pushed (its key, for `edf`). It is never
   pushed back or skipped. If its stream was reset while it was queued, it is still popped in turn, and the Ping Handler's CancelCheckPoint 1 sees the RST flag
   ([../ping_handler/design.md#cancelcheckpoints](../ping_handler/design.md#cancelcheckpoints)).
@@ -116,6 +125,58 @@ Worked example, `initial_stall_ms = 1000`, times in ms since the server started:
 | `initial_stall_ms = 0`, first push at 250 | 250 | popped at once | 250 + 0 |
 | `queue_close` at 600, stall 1000 | 1250 | queued jobs `Aborted`, workers return | close wins |
 
+## WorkerFreeze
+
+The **WorkerFreeze** is an injected failure: a server whose process stays up but whose workers stop for good. With
+`freeze_after_ms` set, every worker stops `freeze_after_ms` after the server admits its **first** `/ping`, both
+those waiting for a job and those in the middle of one. The rest of the server carries on: connections are
+accepted, `/ping`s are admitted and pushed (the WorkQueue keeps growing), `/cancel` is answered and RST flags are
+set. Nothing is answered for the requests that were running or queued, so clients see a server that hangs, not one
+that fails fast.
+
+```
+function freeze_wait(q):                          # called by the Ping Handler at each check of a running request
+    if q.freeze_ns is none: return                # no WorkerFreeze: never waits, takes no lock
+    with q.lock:
+        while not q.closed and frozen(q):
+            q.not_empty.wait()                    # only queue_close ends the wait
+```
+
+- **Armed with the StallGate.** The first successful `queue_push` sets `freeze_at_ns = arm time + freeze_after_ms`,
+  the same arm time as the StallGate's ([StallGate](#stallgate)). `freeze_after_ms` counts from that push, not from
+  the end of the stall. Empty (`none`) means the queue never freezes.
+- **Permanent.** Once `monotonic_now_ns() >= freeze_at_ns`, the queue is frozen until it is closed. There is no
+  timer: a worker re-checks `frozen` on every wake-up, and a frozen worker waiting in `queue_pop` or `freeze_wait`
+  just waits again. The pushes that keep arriving wake waiters with `notify_one`; after the freeze such a wake-up
+  only waits again, so nothing is lost by it.
+- **Idle workers** stay in `queue_pop`: it hands out nothing once frozen.
+- **Running requests** stop at their next check: the Ping Handler calls `freeze_wait` at every CancelCheckPoint
+  and at every check of the burn, the sleep or the MessageWork
+  ([../ping_handler/design.md#cancelcheckpoints](../ping_handler/design.md#cancelcheckpoints)). A request is
+  therefore held at most one check interval past `freeze_at_ns` (one 20 ms quantum for `sleep`). A request that
+  reaches its end with no check in between (the last quantum of a sleep) completes and is answered.
+- **Shutdown.** `queue_close` answers every queued job `Aborted` and wakes everyone. Workers in `queue_pop` return
+  `None`. A worker in `freeze_wait` returns from it and its request carries on as if never frozen; its reply goes to
+  a stream that is closing, so it is normally dropped. The server therefore still exits within one ServiceTime of
+  the stop signal.
+- **With a stall.** If `freeze_after_ms <= initial_stall_ms`, the queue freezes before the StallGate opens, and no
+  `/ping` ever runs.
+
+Worked example, `freeze_after_ms = 60000`, `initial_stall_ms = 0`, `workload = sleep`, times in ms since the server
+started:
+
+| Event | `freeze_at` | Effect | Check |
+|---|---|---|---|
+| first `/ping` pushed at 250 | 60250 | runs at once | 250 + 60000 |
+| a request starts a 100 ms sleep at 60200 | 60250 | its wake-up at 60220 checks: not frozen; it sleeps on | 60220 < 60250 |
+| the same request wakes at 60240 | 60250 | not frozen; it sleeps on | 60240 < 60250 |
+| the same request wakes at 60260 | 60250 | frozen: `freeze_wait` blocks, no response | 60260 >= 60250 |
+| a worker finishes a job at 60255 | 60250 | its `queue_pop` returns nothing; it waits | frozen |
+| `/ping`s pushed after 60250 | 60250 | queued, never run; QueueLengthLog grows | frozen |
+| `queue_close` at 120500 | 60250 | queued jobs `Aborted`; the frozen request finishes its last 40 ms and is answered into a closing stream; workers return | close ends the freeze |
+| `freeze_after_ms` empty | none | no freeze | `freeze_ns` is none |
+| `freeze_after_ms = 500`, `initial_stall_ms = 1000`, first push at 250 | 750 | nothing ever runs | 750 < 1250 |
+
 ## WorkerPool
 
 ```
@@ -129,7 +190,7 @@ procedure worker_loop(queue, config, registry, counters, buf):    # buf: Message
     loop:
         job = queue_pop(queue)
         if job is None: return
-        result = ping_handler.run_ping(job, config, registry, counters, buf)   # Response or Aborted
+        result = ping_handler.run_ping(job, config, registry, counters, buf, queue)   # Response or Aborted; queue for freeze_wait
         job.reply.put(result)
 
 procedure pool_join(pool):
@@ -286,6 +347,7 @@ The WorkQueue lock is held only to move one job in or out. A worker never holds 
 | Connection closed while its jobs are queued or running | The jobs stay in place. The Connection Handler sets their RST flags when it closes ([../connection_handler/design.md#connection-close](../connection_handler/design.md#connection-close)), so they behave like reset streams; their writes are dropped |
 | `queue_close` called twice | The second call does nothing |
 | `queue_close` during the stall | As above: queued jobs `Aborted`, workers return, the timer's wake-up later finds the queue closed |
+| `queue_close` while frozen | Queued jobs `Aborted`; workers in `queue_pop` return `None`; workers in `freeze_wait` resume their request, fill `reply`, then pop `None` and return ([WorkerFreeze](#workerfreeze)) |
 
 ## Design specific to Go
 

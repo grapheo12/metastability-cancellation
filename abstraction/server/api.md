@@ -15,6 +15,7 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 | `seed` | u64 | `0` |
 | `n_worker_threads` | integer, `1 ..= 2^32-1` | `1` |
 | `initial_stall_ms` | integer, ms, `>= 0` | `1000` |
+| `freeze_after_ms` | integer, ms, `>= 1`, or empty | empty |
 | `queue_discipline` | `fifo` \| `edf` | `fifo` |
 | `queue_log_path` | path, or empty | empty |
 | `queue_sample_interval_ms` | integer, ms, `>= 1` | `10` |
@@ -33,7 +34,7 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 
 ### `ServerConfig`
 
-An immutable record holding the fourteen parameters above after validation
+An immutable record holding the fifteen parameters above after validation
 ([design.md#configuration-validation](design.md#configuration-validation)). One read-only copy is
 shared by all Connection Handlers and workers.
 
@@ -47,6 +48,9 @@ shared by all Connection Handlers and workers.
 - Answers `/cancel` without queuing it behind any `/ping`.
 - Runs no `/ping` until `initial_stall_ms` after the first admitted `/ping`; until then requests are only queued
   ([worker_pool/design.md#stallgate](worker_pool/design.md#stallgate)).
+- With `freeze_after_ms` set, stops running `/ping`s for good `freeze_after_ms` after the first admitted `/ping`,
+  including those already running; they never get a response. It still accepts connections, admits and queues
+  `/ping`, and answers `/cancel` ([worker_pool/design.md#workerfreeze](worker_pool/design.md#workerfreeze)).
 - Binds each connection to the client id of its first valid `/ping`.
 - Cancels work as `cancel_mode` says ([design.md#cancellation-semantics](design.md#cancellation-semantics)).
 
