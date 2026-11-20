@@ -1,4 +1,4 @@
-// Source: abstraction/protocol/design.md (protocol v0.4.0)
+// Source: abstraction/protocol/design.md (protocol v0.5.0)
 package protocol
 
 import (
@@ -170,6 +170,25 @@ func TestParseDeadlineTable(t *testing.T) {
 		}
 		if id, err := ParseBody([]byte(tc.body)); tc.body != "not json" && (err != nil || id != 7) {
 			t.Fatalf("%s: ParseBody must ignore the deadline", tc.body)
+		}
+	}
+}
+
+// HeartbeatLine worked examples.
+//
+// Design: abstraction/protocol/design.md#heartbeatline
+func TestHeartbeatLine(t *testing.T) {
+	if got := string(BuildHeartbeatLine(41)); got != "hb 41\n" {
+		t.Fatalf("build: %q", got)
+	}
+	for in, want := range map[string]uint64{"hb 0": 0, "hb 41": 41, "hb 18446744073709551615": 1<<64 - 1} {
+		if got, err := ParseHeartbeatLine([]byte(in)); err != nil || got != want {
+			t.Fatalf("%q: %d %v", in, got, err)
+		}
+	}
+	for _, bad := range []string{"hb 18446744073709551616", "hb ", "hb -1", "ping 3", "", "hb 1x"} {
+		if _, err := ParseHeartbeatLine([]byte(bad)); err != ErrParse {
+			t.Fatalf("%q: want ErrParse, got %v", bad, err)
 		}
 	}
 }

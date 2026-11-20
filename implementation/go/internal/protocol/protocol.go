@@ -1,7 +1,7 @@
-// Package protocol implements the /ping and /cancel wire formats shared by
+// Package protocol implements the /ping, /cancel and /heartbeat wire formats shared by
 // the server, the load generator and the load canceller.
 //
-// Source: abstraction/protocol/design.md (protocol v0.4.0)
+// Source: abstraction/protocol/design.md (protocol v0.5.0)
 package protocol
 
 import (
@@ -16,7 +16,11 @@ const (
 	PingMethod             = "POST"
 	CancelPath             = "/cancel"
 	CancelMethod           = "DELETE"
+	HeartbeatPath          = "/heartbeat"
+	HeartbeatMethod        = "GET"
 	ContentTypeJSON        = "application/json"
+	ContentTypeText        = "text/plain"
+	StatusStreamOK         = 200 // /heartbeat: the HeartbeatStream follows
 	StatusOK               = 202
 	StatusRejected         = 503
 	StatusBadRequest       = 400
@@ -216,4 +220,36 @@ func ParseDeadline(body []byte) (deadline uint64, ok bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// BuildHeartbeatLine returns the HeartbeatLine "hb <seq>\n".
+//
+// Design: abstraction/protocol/design.md#heartbeatline
+func BuildHeartbeatLine(seq uint64) []byte {
+	return []byte("hb " + strconv.FormatUint(seq, 10) + "\n")
+}
+
+// ParseHeartbeatLine returns the seq of one HeartbeatStream line (without its
+// "\n"), or ErrParse.
+//
+// Design: abstraction/protocol/design.md#heartbeatline
+func ParseHeartbeatLine(line []byte) (uint64, error) {
+	const prefix = "hb "
+	if len(line) < len(prefix) || string(line[:len(prefix)]) != prefix {
+		return 0, ErrParse
+	}
+	s := line[len(prefix):]
+	if len(s) == 0 || len(s) > 20 {
+		return 0, ErrParse
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, ErrParse
+		}
+	}
+	n, err := strconv.ParseUint(string(s), 10, 64) // fails above 2^64 - 1
+	if err != nil {
+		return 0, ErrParse
+	}
+	return n, nil
 }
