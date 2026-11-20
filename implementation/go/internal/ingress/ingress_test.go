@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.4.0)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.5.0)
 package ingress
 
 import (
@@ -280,7 +280,7 @@ func TestDeadlineFilterDrops(t *testing.T) {
 	if err := json.Unmarshal(raw, &s); err != nil {
 		t.Fatal(err)
 	}
-	if s.FilterDropped != 1 || s.Backends[0].Forwarded != 2 || s.Config.LbFilter != FilterDeadline {
+	if s.FilterDropped != 1 || s.Backends[0].Forwarded != 2 || s.Config.LbFilter != FilterDeadline || s.Backends[0].WorkerCount != 1 {
 		t.Fatalf("summary %+v", s)
 	}
 	b0.Shutdown()

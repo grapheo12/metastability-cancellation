@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.6.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.7.0)
 package ingress
 
 import (
@@ -43,6 +43,10 @@ type BackendStats struct {
 	//
 	// Design: abstraction/ingress/load_balancer/design.md#ewmaexectime
 	ExecBits atomic.Uint64
+	// WorkerCount is the backend's latest x-worker-threads; 0: not known yet.
+	//
+	// Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
+	WorkerCount atomic.Uint64
 }
 
 // execNoSampleBits is EXEC_NO_SAMPLE: the quiet NaN 0x7FF8000000000000, stored
@@ -78,6 +82,8 @@ type BackendStatsValue struct {
 	EwmaLatencyNs float64 `json:"ewma_latency_ns"`
 	// EwmaExecNs is the final EwmaExecTime; nil (JSON null) before a sample.
 	EwmaExecNs *float64 `json:"ewma_exec_ns"`
+	// WorkerCount is the backend's latest WorkerCount, 0 before its first answer.
+	WorkerCount uint64 `json:"worker_count"`
 }
 
 // outcomeNames are the ForwardOutcome words of forwards.csv, by enum value.
@@ -169,8 +175,11 @@ func (lb *LoadBalancer) PickWithin(remainingNs int64, hasDeadline bool) (Forward
 // a ForwardRecord.
 //
 // Design: abstraction/ingress/load_balancer/design.md#loadbalancer
-func (lb *LoadBalancer) Finish(t ForwardTicket, outcome ForwardOutcome, execNs uint64, hasExec bool) {
+func (lb *LoadBalancer) Finish(t ForwardTicket, outcome ForwardOutcome, execNs uint64, hasExec bool, workers uint32) {
 	st := &lb.stats[t.ServerID]
+	if workers > 0 && (outcome == OutcomeOK || outcome == OutcomeRejected) {
+		st.WorkerCount.Store(uint64(workers)) // the backend's latest WorkerCount (0: none given)
+	}
 	st.Outstanding.Add(-1)
 	switch outcome {
 	case OutcomeOK:
@@ -303,7 +312,7 @@ func (lb *LoadBalancer) Snapshot() []BackendStatsValue {
 			exec = &x
 		}
 		out[i] = BackendStatsValue{uint32(i), lb.backends[i], st.Forwarded.Load(), st.OK.Load(), st.Rejected.Load(),
-			st.BadRequest.Load(), st.BadGateway.Load(), st.Reset.Load(), math.Float64frombits(st.EwmaBits.Load()), exec}
+			st.BadRequest.Load(), st.BadGateway.Load(), st.Reset.Load(), math.Float64frombits(st.EwmaBits.Load()), exec, st.WorkerCount.Load()}
 	}
 	return out
 }
@@ -327,8 +336,8 @@ func (lb *LoadBalancer) choose(remainingNs int64, hasDeadline bool) (uint32, boo
 func (lb *LoadBalancer) FilterDropped() uint64 { return lb.dropped.Load() }
 
 // deadlineFilter keeps the backends of live (id order) that have no
-// ExecutionTime sample yet or whose (outstanding + 1) * EwmaExecTime is
-// <= remainingNs, in binary64.
+// ExecutionTime sample yet or whose (outstanding + 1) * EwmaExecTime /
+// WorkerCount is <= remainingNs, in binary64 (unknown WorkerCount: 1).
 //
 // Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
 func (lb *LoadBalancer) deadlineFilter(live []uint64, remainingNs int64) []uint64 {
@@ -340,7 +349,11 @@ func (lb *LoadBalancer) deadlineFilter(live []uint64, remainingNs int64) []uint6
 			continue
 		}
 		o := lb.stats[s].Outstanding.Load()
-		if float64(o+1)*e <= float64(remainingNs) {
+		w := lb.stats[s].WorkerCount.Load()
+		if w == 0 {
+			w = 1 // WorkerCount not known yet
+		}
+		if float64(o+1)*e/float64(w) <= float64(remainingNs) {
 			kept = append(kept, s)
 		}
 	}

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.6.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.7.0)
 package ingress
 
 import (
@@ -92,7 +92,7 @@ func TestSingleBackendAndStats(t *testing.T) {
 	if lb.stats[s].Outstanding.Load() != 1 || lb.totalOutstanding() != 1 {
 		t.Fatal("pick counts outstanding")
 	}
-	lb.Finish(tk, OutcomeRejected, 0, false)
+	lb.Finish(tk, OutcomeRejected, 0, false, 0)
 	v := lb.Snapshot()[s]
 	if lb.totalOutstanding() != 0 || v.Forwarded != 1 || v.Rejected != 1 || v.ServerID != s ||
 		v.EwmaLatencyNs != EwmaInitialLatencyNs {
@@ -109,7 +109,7 @@ func TestEwmaOnlyOkSamples(t *testing.T) {
 		lb := newLB(PolicyRoundRobin, 1)
 		tk := lb.Pick()
 		tk.Start = tk.Start.Add(-5 * time.Millisecond) // pretend 5 ms passed
-		lb.Finish(tk, o, 0, false)
+		lb.Finish(tk, o, 0, false, 0)
 		if v := lb.Snapshot()[0].EwmaLatencyNs; v != EwmaInitialLatencyNs {
 			t.Fatalf("outcome %d moved the EwmaLatency to %v", o, v)
 		}
@@ -117,7 +117,7 @@ func TestEwmaOnlyOkSamples(t *testing.T) {
 	lb := newLB(PolicyRoundRobin, 1)
 	tk := lb.Pick()
 	tk.Start = tk.Start.Add(-5 * time.Millisecond)
-	lb.Finish(tk, OutcomeOK, 0, false)
+	lb.Finish(tk, OutcomeOK, 0, false, 0)
 	// 1e6*0.7 + (>=5e6)*0.3 >= 2.2e6
 	if v := lb.Snapshot()[0].EwmaLatencyNs; v < 2.2e6 {
 		t.Fatalf("ok sample not applied: %v", v)
@@ -212,9 +212,9 @@ func TestForwardLog(t *testing.T) {
 	lb = newLB(PolicyEwma, 1)
 	tk := lb.Pick()
 	tk.Start = tk.Start.Add(-2 * time.Millisecond)
-	lb.Finish(tk, OutcomeOK, 0, false)
+	lb.Finish(tk, OutcomeOK, 0, false, 0)
 	tk = lb.Pick()
-	lb.Finish(tk, OutcomeRejected, 0, false)
+	lb.Finish(tk, OutcomeRejected, 0, false, 0)
 	log := lb.ForwardLog()
 	if len(log) != 2 || log[0].Outcome != OutcomeOK || log[1].Outcome != OutcomeRejected || log[0].ServerID != 0 {
 		t.Fatalf("log %+v", log)
@@ -254,7 +254,7 @@ func TestEwmaExecTimeWorkedExample(t *testing.T) {
 		{OutcomeOK, 0, false, 1_340_000, true}, // old server: no ExecReport
 	}
 	for i, st := range steps {
-		lb.Finish(lb.Pick(), st.outcome, st.exec, st.hasExec)
+		lb.Finish(lb.Pick(), st.outcome, st.exec, st.hasExec, 0)
 		r := lb.ForwardLog()[i]
 		if r.HasEwmaExec != st.hasValue || r.EwmaExecNs != st.want || r.HasExec != st.hasExec || r.ExecNs != st.exec {
 			t.Fatalf("step %d: %+v", i, r)
@@ -264,7 +264,7 @@ func TestEwmaExecTimeWorkedExample(t *testing.T) {
 		t.Fatalf("summary ewma_exec_ns: %v", v)
 	}
 	// A bad_request never samples even if given an exec_ns.
-	lb.Finish(lb.Pick(), OutcomeBadRequest, 9, true)
+	lb.Finish(lb.Pick(), OutcomeBadRequest, 9, true, 0)
 	if r := lb.ForwardLog()[len(steps)]; r.HasExec || r.EwmaExecNs != 1_340_000 {
 		t.Fatalf("bad_request sampled: %+v", r)
 	}
@@ -277,15 +277,17 @@ func (lb *LoadBalancer) chooseAny() uint32 {
 }
 
 // The DeadlineFilter worked example: B = 2, EwmaExecTime 140 ms each,
-// outstanding (10, 40).
+// outstanding (10, 40), WorkerCount (10, 10).
 //
 // Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
 func TestDeadlineFilterWorkedExample(t *testing.T) {
-	mk := func(sampleBoth bool) *LoadBalancer {
+	mk := func(sampleBoth bool, workers0 uint64) *LoadBalancer {
 		lb := NewLoadBalancer(Config{LbPolicy: PolicyEwma, LbFilter: FilterDeadline, EwmaBeta: 0.7,
 			Backends: []string{"a:1", "b:1"}, Seed: 7}, nil)
 		lb.stats[0].Outstanding.Store(10)
 		lb.stats[1].Outstanding.Store(40)
+		lb.stats[0].WorkerCount.Store(workers0)
+		lb.stats[1].WorkerCount.Store(10)
 		lb.ewmaExecUpdate(0, 140_000_000)
 		if sampleBoth {
 			lb.ewmaExecUpdate(1, 140_000_000)
@@ -295,40 +297,53 @@ func TestDeadlineFilterWorkedExample(t *testing.T) {
 	cases := []struct {
 		remaining int64
 		sampled   bool
+		workers0  uint64
 		want      []uint64
 	}{
-		{6_000_000_000, true, []uint64{0, 1}},
-		{3_000_000_000, true, []uint64{0}},
-		{1_540_000_000, true, []uint64{0}}, // <=: exactly fits
-		{1_000_000_000, true, []uint64{}},
-		{-5_000_000, true, []uint64{}},      // already late
-		{1_000_000_000, false, []uint64{1}}, // backend 1 has no sample: eligible
+		{6_000_000_000, true, 10, []uint64{0, 1}},
+		{500_000_000, true, 10, []uint64{0}},
+		{154_000_000, true, 10, []uint64{0}}, // <=: exactly fits
+		{100_000_000, true, 10, []uint64{}},
+		{-5_000_000, true, 10, []uint64{}},    // already late
+		{100_000_000, false, 10, []uint64{1}}, // backend 1 has no sample: eligible
+		{1_000_000_000, true, 0, []uint64{1}}, // backend 0's WorkerCount unknown: 1 -> 1_540_000_000
 	}
 	for _, c := range cases {
-		lb := mk(c.sampled)
+		lb := mk(c.sampled, c.workers0)
 		got := lb.deadlineFilter([]uint64{0, 1}, c.remaining)
 		if len(got) != len(c.want) || (len(got) > 0 && got[0] != c.want[0]) || (len(got) == 2 && got[1] != c.want[1]) {
 			t.Fatalf("remaining %d: kept %v, want %v", c.remaining, got, c.want)
 		}
 	}
 	// Pick: a drop counts filter_dropped and changes no backend counter; n = 1 picks it without a draw.
-	lb := mk(true)
-	if _, ok := lb.PickWithin(1_000_000_000, true); ok || lb.FilterDropped() != 1 ||
+	lb := mk(true, 10)
+	if _, ok := lb.PickWithin(100_000_000, true); ok || lb.FilterDropped() != 1 ||
 		lb.stats[0].Forwarded.Load() != 0 || lb.stats[0].Outstanding.Load() != 10 {
 		t.Fatal("drop must only count filter_dropped")
 	}
 	before := *lb.rng
-	if tk, ok := lb.PickWithin(3_000_000_000, true); !ok || tk.ServerID != 0 || *lb.rng != before {
+	if tk, ok := lb.PickWithin(500_000_000, true); !ok || tk.ServerID != 0 || *lb.rng != before {
 		t.Fatalf("one eligible backend: %+v %v", tk, ok)
 	}
 	// No deadline, or lb_filter = none: no filtering at all.
 	if _, ok := lb.PickWithin(0, false); !ok {
 		t.Fatal("no RequestDeadline must not be dropped")
 	}
-	off := mk(true)
+	off := mk(true, 10)
 	off.filter = FilterNone
 	if _, ok := off.PickWithin(-5_000_000, true); !ok || off.FilterDropped() != 0 {
 		t.Fatal("lb_filter = none must not filter")
+	}
+	// Finish stores the WorkerCount of ok/rejected answers only.
+	w := mk(true, 0)
+	w.Finish(w.Pick(), OutcomeBadGateway, 0, false, 7)
+	if w.stats[0].WorkerCount.Load() != 0 || w.stats[1].WorkerCount.Load() != 10 {
+		t.Fatal("bad_gateway must not set the WorkerCount")
+	}
+	tk := w.Pick()
+	w.Finish(tk, OutcomeOK, 1, true, 4)
+	if w.stats[tk.ServerID].WorkerCount.Load() != 4 || w.Snapshot()[tk.ServerID].WorkerCount != 4 {
+		t.Fatal("ok must set the WorkerCount")
 	}
 }
 

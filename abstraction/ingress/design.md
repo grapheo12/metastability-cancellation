@@ -155,7 +155,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [Shared state](#shared-state) | [ingress.go:25](../../implementation/go/internal/ingress/ingress.go#L25) |
 | [Configuration validation](#configuration-validation) | [config.go:83](../../implementation/go/internal/ingress/config.go#L83), [config_test.go:9](../../implementation/go/internal/ingress/config_test.go#L9), [config_test.go:40](../../implementation/go/internal/ingress/config_test.go#L40) |
 | [Concurrency model](#concurrency-model) | [ingress.go:82](../../implementation/go/internal/ingress/ingress.go#L82) |
-| [Time base](#time-base) | [frontend.go:144](../../implementation/go/internal/ingress/frontend.go#L144), [ingress.go:165](../../implementation/go/internal/ingress/ingress.go#L165) |
+| [Time base](#time-base) | [frontend.go:150](../../implementation/go/internal/ingress/frontend.go#L150), [ingress.go:165](../../implementation/go/internal/ingress/ingress.go#L165) |
 | [Shutdown](#shutdown) | [heartbeat_test.go:114](../../implementation/go/internal/ingress/heartbeat_test.go#L114), [ingress.go:116](../../implementation/go/internal/ingress/ingress.go#L116), [ingress.go:218](../../implementation/go/internal/ingress/ingress.go#L218), [ingress.go:259](../../implementation/go/internal/ingress/ingress.go#L259), [ingress_test.go:81](../../implementation/go/internal/ingress/ingress_test.go#L81), [outputs_test.go:15](../../implementation/go/internal/ingress/outputs_test.go#L15) |
 | [Why one upstream connection per client and backend](#why-one-upstream-connection-per-client-and-backend) | [upstream.go:29](../../implementation/go/internal/ingress/upstream.go#L29) |
 <!-- trace:end -->

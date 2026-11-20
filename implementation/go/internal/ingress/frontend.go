@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.4.0)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.5.0)
 package ingress
 
 import (
@@ -18,6 +18,7 @@ type fwdResponse struct {
 	status  int
 	body    []byte
 	aborted bool
+	workers uint32 // the backend's x-worker-threads (WorkerCount), 0 if none; not relayed
 }
 
 // handle is the per-stream entry point. ServeConn runs it on its own
@@ -88,8 +89,12 @@ func (ing *Ingress) handlePing(ctx context.Context, body []byte) fwdResponse {
 		// ExecReport of the relayed body (relayed unchanged); StartSlack unused here.
 		execNs, hasExec, _, _ = protocol.ParseExecReport(resp.body)
 	}
+	workers := uint32(0) // WorkerCount: set by forward only for relayed 202/503
 	// Design: abstraction/ingress/load_balancer/design.md#forwardticket
-	ing.lb.Finish(ticket, outcome, execNs, hasExec) // after Clear: an ok latency ends when the answer is in
+	if outcome == OutcomeOK || outcome == OutcomeRejected {
+		workers = resp.workers
+	}
+	ing.lb.Finish(ticket, outcome, execNs, hasExec, workers) // after Clear: an ok latency ends when the answer is in
 	return resp
 }
 
@@ -126,11 +131,12 @@ func (ing *Ingress) forward(ctx context.Context, c, s uint32, body []byte) (fwdR
 	if err != nil {
 		return fail()
 	}
+	workers, _ := protocol.ParseWorkerCount(resp.Header.Get(protocol.WorkerThreadsHeader)) // WorkerCount; 0 if none
 	switch resp.StatusCode {
 	case protocol.StatusOK:
-		return fwdResponse{status: resp.StatusCode, body: respBody}, OutcomeOK
+		return fwdResponse{status: resp.StatusCode, body: respBody, workers: workers}, OutcomeOK
 	case protocol.StatusRejected:
-		return fwdResponse{status: resp.StatusCode, body: respBody}, OutcomeRejected
+		return fwdResponse{status: resp.StatusCode, body: respBody, workers: workers}, OutcomeRejected
 	case protocol.StatusBadRequest:
 		return fwdResponse{status: resp.StatusCode, body: respBody}, OutcomeBadRequest
 	}
