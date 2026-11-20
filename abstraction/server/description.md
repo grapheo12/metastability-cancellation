@@ -1,6 +1,7 @@
 # Server — Description
 
-Subcomponents: Connection Handler, Worker Pool, Ping Handler, CPU Burner, Message Buffer, Sleeper, Cancel Tracker.
+Subcomponents: Connection Handler, Worker Pool, Ping Handler, CPU Burner, Message Buffer, Sleeper, Cancel Tracker,
+Heartbeat.
 
 An HTTP/2 (h2c, prior knowledge) server with two endpoints, `POST /ping` and `DELETE /cancel`. It
 accepts connections and gives each one its own **Connection Handler**, which runs as its own
@@ -16,6 +17,9 @@ coroutine or thread. A connection is bound to a client id by its first `/ping` (
   same kind of body if a `/cancel` stopped it.
 - **`/cancel`** is never queued. The Connection Handler records the RequestId in the global
   **CancelRegistry** under its client id and answers `202` straight away.
+- **`/heartbeat`** is never queued either. The **Heartbeat** subcomponent streams a HeartbeatLine every
+  `heartbeat_interval_ms` on it, and stops once the WorkerFreeze has started, so a load balancer can stop sending
+  work to a server that can no longer run it.
 
 How the server reacts to cancellation is set by `cancel_mode`:
 

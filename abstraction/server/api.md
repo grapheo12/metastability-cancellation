@@ -15,6 +15,7 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 | `seed` | u64 | `0` |
 | `n_worker_threads` | integer, `1 ..= 2^32-1` | `1` |
 | `initial_stall_ms` | integer, ms, `>= 0` | `1000` |
+| `heartbeat_interval_ms` | integer, ms, `>= 1` | `500` |
 | `freeze_after_ms` | integer, ms, `>= 1`, or empty | empty |
 | `queue_discipline` | `fifo` \| `edf` | `fifo` |
 | `queue_log_path` | path, or empty | empty |
@@ -34,7 +35,7 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 
 ### `ServerConfig`
 
-An immutable record holding the fifteen parameters above after validation
+An immutable record holding the sixteen parameters above after validation
 ([design.md#configuration-validation](design.md#configuration-validation)). One read-only copy is
 shared by all Connection Handlers and workers.
 
@@ -51,6 +52,8 @@ shared by all Connection Handlers and workers.
 - With `freeze_after_ms` set, stops running `/ping`s for good `freeze_after_ms` after the first admitted `/ping`,
   including those already running; they never get a response. It still accepts connections, admits and queues
   `/ping`, and answers `/cancel` ([worker_pool/design.md#workerfreeze](worker_pool/design.md#workerfreeze)).
+- Answers `GET /heartbeat` with a HeartbeatStream, one line every `heartbeat_interval_ms`, never queued; no more
+  lines once the WorkerFreeze has started ([heartbeat/design.md#heartbeatsender](heartbeat/design.md#heartbeatsender)).
 - Binds each connection to the client id of its first valid `/ping`.
 - Cancels work as `cancel_mode` says ([design.md#cancellation-semantics](design.md#cancellation-semantics)).
 
@@ -122,3 +125,4 @@ printed.
 | CPU Burner | [cpu_burner/api.md](cpu_burner/api.md) |
 | Message Buffer | [message_buffer/api.md](message_buffer/api.md) |
 | Cancel Tracker | [cancel_tracker/api.md](cancel_tracker/api.md) |
+| Heartbeat | [heartbeat/api.md](heartbeat/api.md) |

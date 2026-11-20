@@ -29,3 +29,4 @@
 | 0.9.1 | 2026-11-18T00:00:00Z | Child bump: ping_handler 0.9.0 (`sleep` workload) |
 | 0.10.0 | 2026-11-19T00:00:00Z | Server parameter `freeze_after_ms` (WorkerFreeze; validation: empty or >= 1); the Listener passes it to `queue_new`. Child bump: worker_pool 0.6.0 |
 | 0.10.1 | 2026-11-19T00:00:00Z | Child bump: ping_handler 0.10.0 (WorkerFreeze at every check) |
+| 0.11.0 | 2026-11-20T00:00:00Z | New subcomponent Heartbeat 0.1.0 (HeartbeatSender on `GET /heartbeat`); server parameter `heartbeat_interval_ms` (validation `>= 1`, default 500); Structure, Shutdown |

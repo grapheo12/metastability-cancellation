@@ -147,3 +147,4 @@
 | 0.20.0 | 2026-11-19T00:00:00Z | Glossary FreezeTarget. Child bump: benchmark_runner 0.6.0 (config 0.18.0) |
 | 0.20.1 | 2026-11-19T00:00:00Z | Child bump: benchmark_runner 0.6.1 (experiment_executor 0.9.0) |
 | 0.21.0 | 2026-11-20T00:00:00Z | Wire contract `/heartbeat`; glossary HeartbeatStream. Child bump: protocol 0.5.0 |
+| 0.22.0 | 2026-11-20T00:00:00Z | Server parameter `heartbeat_interval_ms`; glossary Heartbeat. Child bump: server 0.11.0 (heartbeat 0.1.0) |
