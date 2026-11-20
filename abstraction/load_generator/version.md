@@ -22,3 +22,4 @@
 | 0.7.0 | 2026-11-20T00:00:00Z | Child bump: metrics 0.5.0 (`exec_ns`, `start_slack_ns` columns) |
 | 0.7.1 | 2026-11-20T00:00:00Z | Child bump: client 0.8.0 (reads the ExecReport) |
 | 0.8.0 | 2026-11-20T00:00:00Z | Parameters `slo_cancel`, `drain_timeout_ms`; derived `drain_timeout_ns`. Child bump: run_controller 0.7.0 |
+| 0.8.1 | 2026-11-20T00:00:00Z | Child bump: client 0.9.0 (DrainDeadline) |
