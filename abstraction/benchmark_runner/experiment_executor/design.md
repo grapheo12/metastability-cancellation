@@ -99,6 +99,8 @@ function start_servers(point, config, servers):
         args  = ["--listen_addr", "0.0.0.0:" + (config.server.listen_port + local_index(k)),
                  "--queue_log_path", RD_m + "/server_" + k + ".queue.csv"]             # QueueLengthLog
                 + args(point.server_args)
+        if point.freeze is not none and point.freeze.instance == k:              # FreezeTarget
+            args = args + ["--freeze_after_ms", format_arg(point.freeze.freeze_after_ms)]
         words = placement_prefix("server", point, m) + gc_trace_prefix(config, m)       # GcEvents
                 + [m.binaries.server] + args
         start_program(m, words, RD_m + "/server_" + k + ".out",
@@ -124,7 +126,11 @@ Every instance always writes its QueueLengthLog
 ([../../server/api.md#queuelengthlog-output](../../server/api.md#queuelengthlog-output)) to its own file in the
 point's remote directory; `queue_log_path` is runner-owned, so the config cannot change it.
 
-All instances get the same program parameters, including `seed`. Each one's per-connection ServiceTime streams
+All instances get the same program parameters, including `seed`, except for the FreezeTarget
+([../config/design.md#freezetarget](../config/design.md#freezetarget)): with `point.freeze` set, only instance
+`point.freeze.instance` gets `--freeze_after_ms`, after the shared arguments, so only that server's workers stop.
+With two instances and `freeze = {instance: 0, freeze_after_ms: 60000}`, instance 0's arguments end in
+`... --freeze_after_ms 60000` and instance 1's do not have it. Each one's per-connection ServiceTime streams
 therefore start from the same seeds; the requests each receives differ, so their samples are not correlated in any
 way that matters for the measurements.
 
