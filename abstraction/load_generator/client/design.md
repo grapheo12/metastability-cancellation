@@ -2,7 +2,7 @@
 
 `now()` means `monotonic_now_ns() - run_start`. `D = config.duration_ns`, `SLO = config.slo_ns`,
 `λ = config.per_client_rate`, `W = config.n_waiting_requests`, `RETRY = config.retry_timeout_ns`,
-`R = config.max_retries`, `STALL = config.initial_stall_ns`.
+`R = config.max_retries`, `STALL = config.initial_stall_ns`, `DRAIN = config.drain_timeout_ns`.
 
 ## SemiOpenLoopClient
 
@@ -69,8 +69,9 @@ procedure receiver(C, client_id):
   the behavior before this parameter existed.
 - **Up to `W` outstanding** counts logical requests, not RequestCopies: a request holds one slot from its first
   send until it resolves, however many copies it sent.
-- **Ends** when the sender is done and every sent request has resolved. Each one resolves within `SLO` of its
-  first send, so the client returns by about `D + SLO`.
+- **Ends** when the sender is done and every sent request has resolved. With `slo_cancel = true` each one resolves
+  within `SLO` of its first send, so the client returns by about `D + SLO`; with `slo_cancel = false` the
+  [DrainDeadline](#draindeadline) resolves the last ones by `D + DRAIN` (`DRAIN = drain_timeout_ns`).
 
 ## GatedArrival
 
@@ -112,7 +113,8 @@ procedure start_request(C, client_id, seq, t_sched, conn, config, run_start_unix
             streams: list of stream = [],             # every copy opened so far
             reset_all: boolean = false,               # set once SLOCancellation has reset the streams
             settled: atomic boolean = false }
-    at timer t_send + SLO:                            # SLOCancellation
+    t_expire = t_send + SLO if config.slo_cancel else D + DRAIN   # SLOCancellation or DrainDeadline
+    at timer t_expire:
         if settle(C, req, TimerFired):
             with req.lock:
                 req.reset_all = true
@@ -256,6 +258,9 @@ Worked examples, `STALL = 1000 ms`, `RETRY = 150 ms`, `SLO = 300 ms`, `R = 1`:
 
 ## SLOCancellation
 
+With `slo_cancel = true` (the default). With `slo_cancel = false` there is no SLO timer and the
+[DrainDeadline](#draindeadline) takes its place.
+
 - The SLO timer starts at `t_send`, the first copy's send, taken just before copy 0's stream is opened. RetryTimers
   never restart it.
 - "Answered" means the **full** response (END_STREAM) of the newest copy has arrived. Headers alone do not count.
@@ -270,6 +275,37 @@ Worked examples, `STALL = 1000 ms`, `RETRY = 150 ms`, `SLO = 300 ms`, `R = 1`:
   reconnect).
 - Each request has its own timers. Several requests of one client can retry, time out, and be reset,
   independently.
+
+## DrainDeadline
+
+With `slo_cancel = false` there is no SLO timer: a request waits for its newest copy's full response or an error,
+however late. A late `ok` is still an `ok`; the SLO only decides its Availability and the summary's `ok_late`
+([../metrics/design.md](../metrics/design.md#collection)). To keep the run bounded, every request instead gets a
+**DrainDeadline** timer at the same absolute time for all requests, `D + DRAIN` (`D = duration_ns`,
+`DRAIN = drain_timeout_ns`, on the run clock). It acts exactly like the SLO timer: it calls `settle` with
+`TimerFired` (outcome `cancelled`, `end_ns` = when it fired) and, if it wins, resets every copy and sets
+`reset_all`.
+
+- **Only stuck requests reach it.** The sender stops at `D`, so a request answered within `DRAIN` of the end of the
+  active phase never sees it. A request on a server that never answers (a frozen server) is cancelled at `D + DRAIN`.
+- **Retries are unchanged.** RetryTimers of copies `k < R` still fire `RETRY` after each copy's send. The last copy
+  waits for its answer or the DrainDeadline. Ignored earlier copies are not reset until the request settles, so
+  their streams stay open while the server works on them.
+- **Races** are resolved by `settle` as for the SLO timer: whichever of the response, an error and the DrainDeadline
+  calls it first wins.
+- **Slots.** A request holds its slot until it settles, so with `slo_cancel = false` a client whose server is slow
+  or stuck reaches `W` outstanding sooner and gates later arrivals ([GatedArrival](#gatedarrival)).
+
+Worked examples, `slo_cancel = false`, `SLO = 5000 ms`, `RETRY = 2000 ms`, `R = 1`, `D = 120 s`,
+`DRAIN = 60 s` (times in s from the run start):
+
+| Case | Events | Record (`outcome`, `copies`, `end_ns - send_ns`) |
+|---|---|---|
+| Late answer | sent at 10; copy 1 at 12; copy 1 answers at 17 | `ok`, 2, 7 s (late: counts in `ok_late`, not available) |
+| Late answer, no retry | `R = 0`; sent at 10, answered at 18.5 | `ok`, 1, 8.5 s |
+| Stuck | sent at 100 to a frozen server; copy 1 at 102 also stuck | `cancelled` at 180, 2, 80 s |
+| Answered during the drain | sent at 119, answered at 150 | `ok`, 1 or 2, 31 s |
+| Same with `slo_cancel = true` | the SLO timer at 15 resets both copies | `cancelled`, 2, 5 s |
 
 ## Outcome classification
 
@@ -301,7 +337,7 @@ stateDiagram-v2
   Ready --> InFlight: now < D (outstanding += 1, open copy 0)
   InFlight --> InFlight: RetryTimer of newest copy k < R (open copy k+1)
   InFlight --> Resolved: full response of newest copy (ok / rejected / error)
-  InFlight --> Resolved: SLO timer (RST_STREAM on every copy, cancelled)
+  InFlight --> Resolved: SLO timer if slo_cancel, else DrainDeadline (RST_STREAM on every copy, cancelled)
   InFlight --> Resolved: stream/conn error on newest copy (error)
   Resolved --> [*]: receiver records it, outstanding -= 1
   NotSent --> [*]: receiver records it
