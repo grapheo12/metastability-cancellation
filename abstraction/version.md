@@ -151,3 +151,4 @@
 | 0.22.1 | 2026-11-20T00:00:00Z | Child bump: server 0.11.1 (connection_handler 0.4.0) |
 | 0.23.0 | 2026-11-20T00:00:00Z | Ingress parameter `heartbeat_timeout_ms`; glossary BackendLiveness. Child bump: ingress 0.2.0 (heartbeat_monitor 0.1.0) |
 | 0.23.1 | 2026-11-20T00:00:00Z | Child bump: ingress 0.2.1 (load_balancer 0.4.0) |
+| 0.24.0 | 2026-11-20T00:00:00Z | Child bump: benchmark_runner 0.7.0 (config 0.19.0) |
