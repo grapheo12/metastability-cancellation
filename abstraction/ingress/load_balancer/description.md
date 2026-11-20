@@ -10,7 +10,7 @@ the **LbPolicy** named in `lb_policy`, and keeps the **BackendStats** of every b
   progress by its **EwmaLatency** (a moving average of its recent response times).
 
 With `lb_filter = deadline`, the **DeadlineFilter** first narrows the candidates to the backends expected to reach
-the request before its RequestDeadline (`(outstanding + 1) × EwmaExecTime` within its time left); if none is, the
+the request before its RequestDeadline (`(outstanding + 1) × EwmaExecTime / WorkerCount` within its time left); if none is, the
 request is dropped instead of forwarded.
 
 It counts each backend's forwards in progress (`outstanding`) and how each forward ended, for the policies and for

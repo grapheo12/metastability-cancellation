@@ -26,3 +26,4 @@
 | 0.3.1 | 2026-11-20T00:00:00Z | Uses `parse_exec_report`. Child bump: frontend 0.3.0 |
 | 0.4.0 | 2026-11-20T00:00:00Z | Parameter `lb_filter` (`none` default, `deadline`), validation; summary `filter_dropped`. Child bump: load_balancer 0.6.0 |
 | 0.4.1 | 2026-11-20T00:00:00Z | Child bump: frontend 0.4.0 (deadline-aware pick, filter drops) |
+| 0.5.0 | 2026-11-20T00:00:00Z | BackendStats and summary `worker_count`. Child bump: load_balancer 0.7.0 |

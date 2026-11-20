@@ -11,7 +11,8 @@ are final. `monotonic_now_ns()` is the Ingress's monotonic clock ([../design.md#
 lb = { policy, filter: lb_filter, beta: ewma_beta, monitor: HeartbeatMonitor or none,   # BackendLiveness
        filter_dropped: atomic u64 = 0,                                     # DeadlineFilter drops
        stats: array[B] of BackendStats (counters 0, ewma_latency_ns = EWMA_INITIAL_LATENCY_NS,
-                                        ewma_exec_ns = bits of EXEC_NO_SAMPLE),
+                                        ewma_exec_ns = bits of EXEC_NO_SAMPLE,
+                                        worker_count = 0),                 # WorkerCount; 0: not known yet
        rr: atomic u64 = 0,
        rng: rng_new(derive_seed(seed, STREAM_INGRESS_LB, 0)), rng_lock: mutex,
        log: list of ForwardRecord (empty), log_lock: mutex }                    # ForwardLog
@@ -25,8 +26,10 @@ function pick(lb, remaining_ns):                     # remaining_ns: i64 or none
     lb.stats[s].forwarded.fetch_add(1)
     return ForwardTicket(server_id = s, start_ns = monotonic_now_ns())
 
-function finish(lb, ticket, outcome, exec_ns):     # exec_ns: u64 or none, the backend's ExecutionTime
+function finish(lb, ticket, outcome, exec_ns, worker_count):   # exec_ns, worker_count: from the answer, or none
     s = ticket.server_id
+    if outcome in {ok, rejected} and worker_count is not none:
+        lb.stats[s].worker_count.store(worker_count)  # the backend's latest WorkerCount
     lb.stats[s].outstanding.fetch_sub(1)
     lb.stats[s][outcome].fetch_add(1)                # ok | rejected | bad_request | bad_gateway | reset
     end_ns = monotonic_now_ns()
@@ -191,15 +194,19 @@ function deadline_filter(lb, L, remaining_ns):      # L in id order -> sublist o
         e = exec_value(lb, s)                        # EwmaExecTime, binary64 or none (EwmaExecTime section)
         if e is none: F.append(s); continue          # no ExecutionTime sample yet: eligible
         o = lb.stats[s].outstanding.load()
-        expected_wait = float(o + 1) * e             # binary64, round to nearest
+        w = max(lb.stats[s].worker_count.load(), 1)  # WorkerCount; not known yet: 1
+        expected_wait = float(o + 1) * e / float(w)  # binary64, evaluated left to right, round to nearest
         if expected_wait <= float(remaining_ns): F.append(s)     # i64 -> binary64, round to nearest
     return F
 ```
 
 - **Expected wait.** `outstanding` is the LoadBalancer's own count of this Ingress's forwards in progress on the
   backend (queued or running there); `+ 1` is the request being placed. EwmaExecTime is the backend's average
-  ExecutionTime, so queueing delay is not counted twice. The formula does not divide by the backend's worker count:
-  it is deliberately pessimistic.
+  ExecutionTime, so queueing delay is not counted twice. The backend runs `w` requests at once, so the work ahead of
+  the request drains `w` times faster: the wait is divided by its WorkerCount
+  ([../../protocol/design.md#workercount](../../protocol/design.md#workercount)), which `finish` takes from every
+  relayed `202`/`503`. Until a backend's first answer its WorkerCount is unknown and 1 is used; it also has no
+  EwmaExecTime then, so it is eligible anyway.
 - **Drop.** When no backend of `L` passes, `pick` returns `Dropped` and counts it in `filter_dropped`. No backend is
   contacted and no BackendStats counter, ForwardRecord or `finish` follows. A request whose deadline has already
   passed (`remaining_ns < 0`) passes nowhere and is always dropped.
@@ -208,19 +215,22 @@ function deadline_filter(lb, L, remaining_ns):      # L in id order -> sublist o
 - **Races.** `outstanding` and EwmaExecTime are read without a lock and may change during the scan, as for EwmaScore;
   the filter is a heuristic.
 
-Worked example, `B = 2`, both live, EwmaExecTime `(140_000_000, 140_000_000)` ns, `outstanding = (10, 40)`:
+Worked example, `B = 2`, both live, EwmaExecTime `(140_000_000, 140_000_000)` ns, `outstanding = (10, 40)`,
+WorkerCount `(10, 10)`:
 
 | `remaining_ns` | expected waits (ns) | `F` | Result |
 |---|---|---|---|
-| 6_000_000_000 | 1_540_000_000, 5_740_000_000 | [0, 1] | the LbPolicy over both |
-| 3_000_000_000 | 1_540_000_000, 5_740_000_000 | [0] | 0, no draw (`n = 1`) |
-| 1_540_000_000 | 1_540_000_000, 5_740_000_000 | [0] | `<=`: exactly fits |
-| 1_000_000_000 | 1_540_000_000, 5_740_000_000 | [] | `Dropped`, `filter_dropped += 1` |
+| 6_000_000_000 | 154_000_000, 574_000_000 | [0, 1] | the LbPolicy over both |
+| 500_000_000 | 154_000_000, 574_000_000 | [0] | 0, no draw (`n = 1`) |
+| 154_000_000 | 154_000_000, 574_000_000 | [0] | `<=`: exactly fits |
+| 100_000_000 | 154_000_000, 574_000_000 | [] | `Dropped`, `filter_dropped += 1` |
 | -5_000_000 | any | [] | already late: `Dropped` |
-| 1_000_000_000, backend 1 has no sample | 1_540_000_000, none | [1] | no sample: eligible |
+| 100_000_000, backend 1 has no sample | 154_000_000, none | [1] | no sample: eligible |
+| 1_000_000_000, WorkerCount `(0, 10)` (backend 0 not known yet) | 1_540_000_000, 574_000_000 | [1] | unknown counts as 1 |
 | none (no RequestDeadline) | — | `L` | as with `lb_filter = none` |
 
-Checks: `(10 + 1) × 140_000_000 = 1_540_000_000`, `(40 + 1) × 140_000_000 = 5_740_000_000`, both exact in binary64.
+Checks: `(10 + 1) × 140_000_000 / 10 = 1_540_000_000 / 10 = 154_000_000` and
+`(40 + 1) × 140_000_000 / 10 = 5_740_000_000 / 10 = 574_000_000`, exact in binary64 (integer results below 2^53).
 
 ## ForwardLog
 

@@ -76,11 +76,12 @@ policy among the live (all if none is live) and eligible ones. If none is eligib
 followed by exactly one `finish` with the same ticket. See [design.md#lbpolicy](design.md#lbpolicy),
 [design.md#deadlinefilter](design.md#deadlinefilter) and [design.md#forwardticket](design.md#forwardticket).
 
-### `finish(lb, ticket: ForwardTicket, outcome: ForwardOutcome, exec_ns: u64 | none) -> nothing`
+### `finish(lb, ticket: ForwardTicket, outcome: ForwardOutcome, exec_ns: u64 | none, worker_count: u32 | none) -> nothing`
 Decrements `outstanding` and increments the outcome's counter. If `outcome == ok`, also folds the forward's latency
 into the backend's EwmaLatency, under every policy. If `outcome` is `ok` or `rejected` and `exec_ns` is given, folds
 it into the backend's EwmaExecTime ([design.md#ewmaexectime](design.md#ewmaexectime)). Then appends one ForwardRecord to the ForwardLog. See [design.md#loadbalancer](design.md#loadbalancer) and
-[design.md#ewmalatency](design.md#ewmalatency).
+[design.md#ewmalatency](design.md#ewmalatency). For `ok` and `rejected`, a given `worker_count` becomes the backend's WorkerCount, used by the
+[DeadlineFilter](design.md#deadlinefilter).
 
 ### `stats_snapshot(lb) -> list of BackendStats values`
 Reads every counter, `ewma_latency_ns` and `ewma_exec_ns` (acquire), in `server_id` order, for the summary.
