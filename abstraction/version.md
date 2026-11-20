@@ -169,3 +169,4 @@
 | 0.30.4 | 2026-11-20T00:00:00Z | Child bump: benchmark_runner 0.8.2 (experiment_executor 0.11.0) |
 | 0.30.5 | 2026-11-20T00:00:00Z | Glossary FailureTime. Child bump: benchmark_runner 0.8.3 (result_plotter 0.17.0) |
 | 0.31.0 | 2026-11-20T00:00:00Z | Ingress parameter `lb_filter`; glossary DeadlineFilter. Child bump: ingress 0.4.0 (load_balancer 0.6.0) |
+| 0.31.1 | 2026-11-20T00:00:00Z | Child bump: ingress 0.4.1 (frontend 0.4.0) |

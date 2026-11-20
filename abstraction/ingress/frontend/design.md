@@ -42,7 +42,13 @@ function handle_ping(stream, ctx):
     if client_id >= config.num_clients: return Response(400, empty)
     start_once(ctx)                                               # StartOnce
 
-    ticket = load_balancer.pick(ctx.lb)                           # ForwardTicket
+    remaining_ns = none                                           # the request's time left, for the DeadlineFilter
+    deadline = protocol.parse_deadline(stream.body)               # RequestDeadline, none if missing or malformed
+    if deadline is not none:
+        remaining_ns = deadline - wall_clock_unix_ns()            # exact signed, saturated to i64
+    ticket = load_balancer.pick(ctx.lb, remaining_ns)             # ForwardTicket, or Dropped
+    if ticket is Dropped:                                         # no backend can make the deadline
+        return Response(503, protocol.build_cancel_body(id))      # {"id":"<dec>"}: never forwarded
     s = ticket.server_id
     entry = InFlightEntry(request_id = id, server_id = s)
     inflight_map.publish(ctx.inflight, entry)                     # keyed by the RequestId
@@ -81,6 +87,14 @@ function forward(ctx, c, s, stream):
   which keeps the EwmaExecTime ([../load_balancer/design.md#ewmaexectime](../load_balancer/design.md#ewmaexectime)).
   The body is relayed byte for byte all the same. `parse_exec_report` never fails; a body without an ExecReport
   just gives none.
+- **DeadlineFilter.** The Frontend reads the RequestDeadline from the body it is about to forward and gives `pick`
+  the time left, `deadline - now`, on the Ingress's wall clock
+  ([../load_balancer/design.md#deadlinefilter](../load_balancer/design.md#deadlinefilter)). It is read just before
+  `pick`, so it is the time left when the backend is chosen. The RequestDeadline is the client's wall clock; any
+  offset between the client's and the Ingress's clocks shifts `remaining_ns` by that much. When `pick` drops the
+  request, the Frontend answers `503` with the body `{"id":"<dec>"}` (the CancelBody form, which the client's
+  `parse_body` accepts), so the client records it `rejected`. A drop publishes nothing in the InFlightMap and calls
+  no `finish`: the LoadCanceller never sees it.
 - **Clear before relay.** The entry is cleared as soon as the upstream answer is in, before the response is
   written to the client, so the Load Canceller never picks a request that the Ingress has already finished with.
   The `clear` checks identity ([../inflight_map/design.md#publish-and-clear](../inflight_map/design.md#publish-and-clear)).
@@ -113,6 +127,7 @@ stateDiagram-v2
   [*] --> Checked: body parses, client_id < N
   [*] --> Done400: parse error or client_id >= N
   Checked --> Picked: pick, publish
+  Checked --> Dropped503: pick returns Dropped (DeadlineFilter)
   Picked --> Waiting: upstream stream opened
   Picked --> Done502: dial failed
   Waiting --> Relayed: upstream 202/503/400
@@ -122,6 +137,7 @@ stateDiagram-v2
   Done502 --> [*]: clear, finish, write 502
   Aborted --> [*]: clear, finish(reset), no write
   Done400 --> [*]: write 400
+  Dropped503 --> [*]: write 503 {"id"}
 ```
 
 | Situation | InFlightMap | `finish` outcome | Client sees |
@@ -131,6 +147,7 @@ stateDiagram-v2
 | client SLO fires during the burn | published, then cleared | `reset` | nothing (it reset) |
 | backend down | published, then cleared | `bad_gateway` | `502` |
 | body unparseable | never published | (no pick) | `400` |
+| DeadlineFilter leaves no backend | never published | (no `finish`; `filter_dropped += 1`) | `503` + `{"id":"<dec>"}` |
 
 ## Design specific to Go
 
