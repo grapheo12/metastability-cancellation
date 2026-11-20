@@ -141,3 +141,4 @@
 | 0.17.0 | 2026-11-18T00:00:00Z | Command `bench stable-eta` and `retry-timeout --eta`; glossary EtaSlack, RetryFeedback, StableLoad, TippingLoad, MaxStableEta |
 | 0.17.1 | 2026-11-18T00:00:00Z | Child bump: benchmark_runner 0.4.1 (retry_timeout 0.3.0: Convergence, Lean proofs) |
 | 0.18.0 | 2026-11-19T00:00:00Z | Child bump: benchmark_runner 0.5.0 (servers on several machines) |
+| 0.18.1 | 2026-11-19T00:00:00Z | Child bump: benchmark_runner 0.5.1 (experiment_executor 0.8.0) |

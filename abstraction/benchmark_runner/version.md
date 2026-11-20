@@ -49,3 +49,4 @@
 | 0.4.0 | 2026-11-18T00:00:00Z | Retry Timeout 0.2.0: `bench retry-timeout --eta` and new command `bench stable-eta` |
 | 0.4.1 | 2026-11-18T00:00:00Z | Child bump: retry_timeout 0.3.0 (Convergence, Lean proofs) |
 | 0.5.0 | 2026-11-19T00:00:00Z | Several server machines: Run flow opens and sets up every ServerMachine in parallel and passes the list on; Config 0.17.0 (ServerMachines) |
+| 0.5.1 | 2026-11-19T00:00:00Z | Child bump: experiment_executor 0.8.0 (server instances across ServerMachines) |

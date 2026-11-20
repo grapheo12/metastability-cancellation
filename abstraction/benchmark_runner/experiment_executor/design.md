@@ -1,25 +1,42 @@
 # Experiment Executor — Design
 
 Remote paths per point: `RD = <workdir>/runs/<run_id>/point_<id, 4 digits>` on each machine. `run_id` is the last
-path component of the output directory. Pid files live in each machine's workdir: `server_<k>.pid` for server
-instance `k` on the server machine, `ingress.pid` on the Ingress's machine. `I = point.server_instances`.
-`ingress_host = server if point.ingress_machine == "server" else client` is the machine that runs the Ingress
-([../config/design.md#ingressplacement](../config/design.md#ingressplacement)).
+path component of the output directory. `servers` is the list of the ServerMachines' MachineReady, in config order
+([../config/design.md#servermachines](../config/design.md#servermachines)); `machines` is `servers` plus `client`,
+each distinct machine once. `I = point.server_instances`, and server instance `k` (`0 ..= I-1`, the global id) runs
+on `host(k) = servers[point.server_hosts[k]]`. Pid files live in each machine's workdir: `server_<k>.pid` for
+instance `k` on `host(k)`, `ingress.pid` on the Ingress's machine.
+`ingress_host = servers[0] if point.ingress_machine == "server" else client` is the machine that runs the Ingress
+([../config/design.md#ingressplacement](../config/design.md#ingressplacement)); Config allows `server` only with one
+server machine.
+
+```
+function host(k):           return servers[point.server_hosts[k]]
+function local_index(k):    return number of j < k with point.server_hosts[j] == point.server_hosts[k]
+```
+
+`local_index(k)` is the instance's position on its own machine, so it listens on `listen_port + local_index(k)`.
+
+| `server_hosts` | Instance `k` → (machine, `local_index`, port with `listen_port = 8080`) |
+|---|---|
+| `[0, 0]` | 0 → (0, 0, 8080); 1 → (0, 1, 8081) |
+| `[0, 1]` | 0 → (0, 0, 8080); 1 → (1, 0, 8080) |
+| `[0, 0, 1, 1]` | 0 → (0, 0, 8080); 1 → (0, 1, 8081); 2 → (1, 0, 8080); 3 → (1, 1, 8081) |
 
 ## run_point
 
 ```
-function run_point(point, config, server, client, run_id):
+function run_point(point, config, servers, client, run_id):
     pdir = <output_dir>/points/point_<id>
     if exists(pdir/done): return SKIPPED
     empty pdir (delete any previous partial attempt), then write pdir/params.json (the SweepPoint)
     write pdir/placement.json (see ProcessPlacement)
     reason = none
     try:
-        for m in [server, client]: run(m.transport, "mkdir -p " + quote(RD_m))
-        for m in [server, client]: stop_ingress(m, config.run.stop_timeout_s)   # leftovers, either placement
-        stop_servers(server, MAX_INSTANCES, config.run.stop_timeout_s)
-        start_servers(point, config, server)                             # ServerLifecycle
+        for m in machines: run(m.transport, "mkdir -p " + quote(RD_m))
+        for m in machines: stop_ingress(m, config.run.stop_timeout_s)   # leftovers, either placement
+        for m in servers: stop_leftover_servers(m, config.run.stop_timeout_s)
+        start_servers(point, config, servers)                            # ServerLifecycle
         start_ingress(point, config, ingress_host)                       # IngressLifecycle
         ok = client_run(point, config, client)                           # ClientRun
         if not ok: reason = "client run failed or timed out"
@@ -27,9 +44,9 @@ function run_point(point, config, server, client, run_id):
     finally:                                                             # reverse start order
         if stop_ingress(ingress_host, config.run.stop_timeout_s) is FAILED and reason is none:
             reason = "ingress did not stop on SIGINT"
-        if stop_servers(server, I, config.run.stop_timeout_s) is FAILED and reason is none:
+        if stop_servers(servers, point.server_hosts, config.run.stop_timeout_s) is FAILED and reason is none:
             reason = "server did not stop on SIGINT"
-        collect_outputs(point, config, server, client, ingress_host, pdir)   # always, best effort
+        collect_outputs(point, config, servers, client, ingress_host, pdir)  # always, best effort
     if reason is none: reason = validate_outputs(point, pdir)             # see Point outputs
     if reason is none: write pdir/done (empty); return DONE
     write pdir/failed containing reason; return FAILED(reason)
@@ -37,8 +54,8 @@ function run_point(point, config, server, client, run_id):
 
 The Ingress is stopped before the servers, so its last forwards and its LoadCanceller's last `/cancel` responses
 finish while the backends are still up, and every server prints its CancelCounters after all `/cancel`s it will
-ever get. Leftover cleanup stops up to `MAX_INSTANCES` server pid files, so a crash with more instances than the
-current point is also cleaned up.
+ever get. Leftover cleanup stops every server pid file it finds on each server machine, so a crash with more
+instances than the current point is also cleaned up.
 
 ## BackgroundProgram
 
@@ -76,22 +93,32 @@ placement prefix keeps this true, because `env` and `taskset` both replace thems
 ## ServerLifecycle
 
 ```
-function start_servers(point, config, server):
-    for k in 0 ..= I-1:                                                   # in order; each waits for readiness
-        args  = ["--listen_addr", "0.0.0.0:" + (config.server.listen_port + k),
-                 "--queue_log_path", RD_server + "/server_" + k + ".queue.csv"]        # QueueLengthLog
+function start_servers(point, config, servers):
+    for k in 0 ..= I-1:                                                   # in id order; each waits for readiness
+        m = host(k)
+        args  = ["--listen_addr", "0.0.0.0:" + (config.server.listen_port + local_index(k)),
+                 "--queue_log_path", RD_m + "/server_" + k + ".queue.csv"]             # QueueLengthLog
                 + args(point.server_args)
-        words = placement_prefix("server", point, server) + gc_trace_prefix(config, server)    # GcEvents
-                + [server.binaries.server] + args
-        start_program(server, words, RD_server + "/server_" + k + ".out",
-                      <server workdir>/server_<k>.pid, config.run.server_ready_timeout_s)
+        words = placement_prefix("server", point, m) + gc_trace_prefix(config, m)       # GcEvents
+                + [m.binaries.server] + args
+        start_program(m, words, RD_m + "/server_" + k + ".out",
+                      <m workdir>/server_<k>.pid, config.run.server_ready_timeout_s)
 
-function stop_servers(server, count, stop_timeout_s):
+function stop_servers(servers, server_hosts, stop_timeout_s):
     outcome = ok
-    for k in 0 ..= count-1:
-        if stop_program(server, <server workdir>/server_<k>.pid, stop_timeout_s) is FAILED: outcome = FAILED
+    for k in 0 ..= len(server_hosts)-1:
+        m = servers[server_hosts[k]]
+        if stop_program(m, <m workdir>/server_<k>.pid, stop_timeout_s) is FAILED: outcome = FAILED
     return outcome
+
+function stop_leftover_servers(m, stop_timeout_s):
+    names = the files in <m workdir> named "server_" + decimal digits + ".pid", listed with one command
+    for each name, in increasing number: stop_program(m, <m workdir>/name, stop_timeout_s)   # outcome ignored
 ```
+
+Instances start in id order, so with several ServerMachines the machines take turns only in the order of the ids
+(all of machine 0's, then machine 1's). Every instance's files carry its global id, on whichever machine it runs, so
+the point directory looks the same with one machine or several.
 
 Every instance always writes its QueueLengthLog
 ([../../server/api.md#queuelengthlog-output](../../server/api.md#queuelengthlog-output)) to its own file in the
@@ -164,8 +191,9 @@ function placement_prefix(program, point, ready):          # program: "server" |
         words += ["taskset", "-c", p.cpu_set]
     return words                                            # empty when nothing is set
 
-function write_placement(point, server, client, ingress_host, pdir):
-    doc = { "server":  placement_prefix("server", point, server),       # the same for every instance
+function write_placement(point, servers, client, ingress_host, pdir):
+    doc = { "server":  placement_prefix("server", point, servers[0]),   # the same for every instance unless
+                                                                       # the server machines differ in cpu_pinning
             "loadgen": placement_prefix("loadgen", point, client),
             "ingress": placement_prefix("ingress", point, ingress_host) }
     write pdir/placement.json = doc                         # the prefixes actually used, as word lists
@@ -191,9 +219,9 @@ clock. The run flow has already checked that the hook exists
 ([../design.md#run-flow](../design.md#run-flow)).
 
 ```
-function gc_trace_prefix(config, server):                   # -> words
+function gc_trace_prefix(config, m):                        # -> words; m: the instance's server machine
     if not config.server.gc_trace: return []
-    return ["env"] + server.gc_trace_env           # after any ProcessPlacement prefix; env commands chain
+    return ["env"] + m.gc_trace_env                # after any ProcessPlacement prefix; env commands chain
 
 function write_gc_events(point, k, pdir, regex):
     out = pdir/server_<k>.out
@@ -221,7 +249,8 @@ function seconds_to_ns(s):                                  # s: decimal string 
 - **Shared clock.** `start_s` counts from the server's process start. The ProcessStart line gives that start on
   the wall clock, so `t_unix_ns` is a wall-clock time and can be compared with the Ingress's `run_start_unix_ns`
   ([../../ingress/api.md#output_pathsummaryjson](../../ingress/api.md#output_pathsummaryjson)). Both are read on the
-  same machine when the Ingress runs there; across machines the difference also contains their clock offset.
+  same machine when the Ingress runs there; across machines (always, with several ServerMachines) the difference
+  also contains their clock offset.
 - **Never fails the point.** A missing start line, no GcTrace lines, or a missing `.out` file only prints one
   warning; the plots then have no GC overlay for that instance. The file is written even with no events (header
   only), so "no GC ran" and "no trace" can be told apart.
@@ -239,7 +268,7 @@ Worked example, ProcessStart `1700000000000000000`:
 ## Point outputs
 
 ```
-function collect_outputs(point, config, server, client, ingress_host, pdir):
+function collect_outputs(point, config, servers, client, ingress_host, pdir):
     for name in [loadgen.requests.csv, loadgen.summary.json, loadgen.log]:
         fetch(client.transport, RD_client/name, pdir/name)
     for name in [ingress.cancels.csv, ingress.forwards.csv, ingress.summary.json, ingress.log]:
@@ -248,11 +277,12 @@ function collect_outputs(point, config, server, client, ingress_host, pdir):
         print("point <id>: ingress.forwards.csv missing (left out of the forward timeline plots)")
     counters = []
     for k in 0 ..= I-1:
-        fetch(server.transport, RD/server_<k>.out, pdir/server_<k>.out)
-        fetch(server.transport, RD/server_<k>.queue.csv, pdir/server_<k>.queue.csv)     # QueueLengthLog
+        m = host(k)
+        fetch(m.transport, RD_m/server_<k>.out, pdir/server_<k>.out)
+        fetch(m.transport, RD_m/server_<k>.queue.csv, pdir/server_<k>.queue.csv)          # QueueLengthLog
         if pdir/server_<k>.queue.csv does not exist:
             print("point <id>: server_<k>.queue.csv missing (left out of queue_length)")
-        if config.server.gc_trace: write_gc_events(point, k, pdir, server.gc_trace_regex)   # GcEvents
+        if config.server.gc_trace: write_gc_events(point, k, pdir, m.gc_trace_regex)       # GcEvents
         line = last line of pdir/server_<k>.out that starts with COUNTERS_PREFIX
         if line exists:
             c = line parsed as JSON (the three CancelCounters keys)
