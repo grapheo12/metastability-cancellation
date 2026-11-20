@@ -67,7 +67,10 @@ downloads each point's results and plots all points together.
 | Concept | Meaning | Defined in |
 |---|---|---|
 | **RequestId** | 64-bit id: high 32 bits are the client id, low 32 bits are the per-client sequence number | [protocol/design.md](protocol/design.md#requestid) |
-| **PaddedJsonBody** | JSON body `{"id":..,"payload":..}` padded so its byte length is exact; the `/ping` response body | [protocol/design.md](protocol/design.md#paddedjsonbody) |
+| **PaddedJsonBody** | JSON body `{"id":..,"exec_ns":..,"start_slack_ns":..,"payload":..}` padded so its byte length is exact; the `/ping` response body | [protocol/design.md](protocol/design.md#paddedjsonbody) |
+| **ExecReport** | The server's report in every PaddedJsonBody: ExecutionTime and StartSlack | [protocol/design.md](protocol/design.md#execreport) |
+| **ExecutionTime** | `exec_ns`: a request's time on the server minus its queueing delay (worker pop to response built) | [protocol/design.md](protocol/design.md#execreport) |
+| **StartSlack** | `start_slack_ns`: RequestDeadline minus the server's wall clock when a worker popped the request; negative when already late | [protocol/design.md](protocol/design.md#execreport) |
 | **PingRequestBody** | JSON body `{"id":..,"deadline":..,"payload":..}` of a `/ping` request, padded so its byte length is exact | [protocol/design.md](protocol/design.md#pingrequestbody) |
 | **RequestDeadline** | `deadline_unix_ns` in a PingRequestBody: Unix ns of the request's first send plus the SLO; every RequestCopy carries the same one | [load_generator/client/design.md](load_generator/client/design.md#requestdeadline) |
 | **CancelBody** | JSON body `{"id":..}` of a `/cancel` request | [protocol/design.md](protocol/design.md#cancelbody) |

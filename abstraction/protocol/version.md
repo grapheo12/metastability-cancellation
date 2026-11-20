@@ -9,3 +9,4 @@
 | 0.3.1 | 2026-11-02T00:00:00Z | `STATUS_BAD_GATEWAY` (502), sent only by an Ingress; the load-generator client classifies it as `error` |
 | 0.4.0 | 2026-11-13T00:00:00Z | PingRequestBody: `/ping` requests carry the RequestDeadline (`deadline_unix_ns`); `build_request_body`, lenient `parse_deadline`, `MIN_REQUEST_BODY_BYTES = 76` and `validate_request_body_size`; PaddedJsonBody is the response body |
 | 0.5.0 | 2026-11-20T00:00:00Z | HeartbeatStream: `GET /heartbeat` answered `200` with HeartbeatLines `hb <seq>\n`; `build_heartbeat_line`, `parse_heartbeat_line`; constants `HEARTBEAT_PATH`, `HEARTBEAT_METHOD`, `CONTENT_TYPE_TEXT`, `STATUS_STREAM_OK`; headers |
+| 0.6.0 | 2026-11-20T00:00:00Z | ExecReport: PaddedJsonBody carries `exec_ns` (ExecutionTime) and `start_slack_ns` (StartSlack); `build_body` takes both; lenient `parse_exec_report`; `MIN_BODY_BYTES` 42 → 115 |

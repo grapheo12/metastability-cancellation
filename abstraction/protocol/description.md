@@ -7,7 +7,8 @@ server, the load generator and the load canceller must agree on, byte for byte:
   and how it is written in JSON.
 - **PingRequestBody**: the exact JSON serialization of a `/ping` request body, carrying the RequestId and the
   **RequestDeadline**, padded to an exact byte length.
-- **PaddedJsonBody**: the exact JSON serialization of `/ping` response bodies, padded the same way.
+- **PaddedJsonBody**: the exact JSON serialization of `/ping` response bodies, padded the same way, carrying the
+  server's **ExecReport** (ExecutionTime and StartSlack).
 - **CancelBody**: the exact JSON serialization of a `/cancel` request body.
 - **HeartbeatLine**: one line of a **HeartbeatStream**, the never-ending body a server streams on `GET /heartbeat`.
 - **Status codes** and headers for `/ping`, `/cancel` and `/heartbeat`.

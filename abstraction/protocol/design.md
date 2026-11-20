@@ -39,14 +39,17 @@ Worked examples:
 ## PaddedJsonBody
 
 `/ping` response bodies (`202` and `503`) use this exact serialization; `/ping` requests use the
-[PingRequestBody](#pingrequestbody), which adds a RequestDeadline. There is no whitespace, the keys appear in this
-order, and everything is ASCII:
+[PingRequestBody](#pingrequestbody), which adds a RequestDeadline. Every response carries the server's
+[ExecReport](#execreport). There is no whitespace, the keys appear in this order, and everything is ASCII:
 
 ```
-{"id":"<DEC>","payload":"<PAD>"}
+{"id":"<DEC>","exec_ns":"<EX>","start_slack_ns":"<SL>","payload":"<PAD>"}
 ```
 
 - `<DEC>` is the decimal RequestId described above.
+- `<EX>` is the decimal ExecutionTime `exec_ns` (u64, 1 to 20 digits, no leading zeros except `0` itself).
+- `<SL>` is the StartSlack `start_slack_ns` as a signed decimal (see [ExecReport](#execreport)), or empty when the
+  request has no RequestDeadline.
 - `<PAD>` is `k` copies of the ASCII character `x` (byte `0x78`).
 
 Fixed overhead, counted in bytes:
@@ -54,25 +57,47 @@ Fixed overhead, counted in bytes:
 | Fragment | Bytes |
 |---|---|
 | `{"id":"` | 7 |
+| `","exec_ns":"` | 13 |
+| `","start_slack_ns":"` | 20 |
 | `","payload":"` | 13 |
 | `"}` | 2 |
-| **Total fixed** | **22** |
+| **Total fixed** | **55** |
 
 ```
-function build_body(id, total_bytes):
+function build_body(id, exec_ns, start_slack_ns, total_bytes):   # start_slack_ns: i64 or none
     dec = decimal_string(id)
-    k = total_bytes - 22 - length(dec)
+    ex  = decimal_string(exec_ns)
+    sl  = "" if start_slack_ns is none else signed_decimal_string(start_slack_ns)
+    k = total_bytes - 55 - length(dec) - length(ex) - length(sl)
     assert k >= 0                       # guaranteed when total_bytes >= MIN_BODY_BYTES
-    return "{\"id\":\"" + dec + "\",\"payload\":\"" + repeat("x", k) + "\"}"
+    return "{\"id\":\"" + dec + "\",\"exec_ns\":\"" + ex + "\",\"start_slack_ns\":\"" + sl +
+           "\",\"payload\":\"" + repeat("x", k) + "\"}"
 ```
+
+`signed_decimal_string(v)` writes `-` followed by the decimal digits of `|v|` when `v < 0`, and the plain digits
+otherwise: no `+`, no leading zeros, `0` for zero. The longest result is `-9223372036854775808` (20 bytes).
 
 Worked examples:
 
-| id | `len(dec)` | total_bytes | k | check |
-|---|---|---|---|---|
-| `0` | 1 | 128 | 105 | 22 + 1 + 105 = 128 |
-| `12884901889` | 11 | 128 | 95 | 22 + 11 + 95 = 128 |
-| `18446744073709551615` (max) | 20 | 42 | 0 | 22 + 20 + 0 = 42 |
+| id | `len(dec)` | exec_ns | `len(ex)` | start_slack_ns | `len(sl)` | total_bytes | k | check |
+|---|---|---|---|---|---|---|---|---|
+| `0` | 1 | `0` | 1 | none | 0 | 128 | 71 | 55 + 1 + 1 + 0 + 71 = 128 |
+| `12884901889` | 11 | `201345678` | 9 | `4791002113` | 10 | 128 | 43 | 55 + 11 + 9 + 10 + 43 = 128 |
+| `7` | 1 | `150000000` | 9 | `-35000000` | 9 | 128 | 54 | 55 + 1 + 9 + 9 + 54 = 128 |
+| `18446744073709551615` (max) | 20 | `18446744073709551615` (max) | 20 | `-9223372036854775808` (min) | 20 | 115 | 0 | 55 + 20 + 20 + 20 + 0 = 115 |
+
+## ExecReport
+
+The **ExecReport** is what a server tells about how it ran a request, carried in every PaddedJsonBody:
+
+| Field | Type / unit | Meaning |
+|---|---|---|
+| `exec_ns` | u64, ns | **ExecutionTime**: the request's time on the server minus its queueing delay, i.e. from a worker popping it to its response being built |
+| `start_slack_ns` | i64, ns, or none | **StartSlack**: `deadline_unix_ns` minus the server's wall clock when a worker popped it. Positive means time was left before the RequestDeadline; negative means the deadline had already passed. None when the request had no RequestDeadline |
+
+The server measures both ([../server/ping_handler/design.md#run_ping](../server/ping_handler/design.md#run_ping)).
+The Protocol only fixes how they are written and read. `start_slack_ns` compares the client's deadline with the
+server's wall clock, so any clock difference between the two machines adds to it directly.
 
 ## PingRequestBody
 
@@ -118,13 +143,14 @@ RequestDeadline is `none` ([Parsing](#parsing)).
 
 ## Minimum body size
 
-The longest possible `<DEC>` has 20 digits, so a response needs `MIN_BODY_BYTES = 22 + 20 = 42`. A request also
+The longest possible `<DEC>` and `<EX>` have 20 digits each and the longest `<SL>` has 20 bytes, so a response needs
+`MIN_BODY_BYTES = 55 + 20 + 20 + 20 = 115`. A request also
 holds a deadline of up to 20 digits, so `MIN_REQUEST_BODY_BYTES = 36 + 20 + 20 = 76`. Any configured size at least
 as large can be padded exactly for every possible id and deadline.
 
 ```
 function validate_body_size(total_bytes):            # response_bytes
-    if total_bytes < 42: return ConfigError("body size must be >= 42 bytes")
+    if total_bytes < 115: return ConfigError("body size must be >= 115 bytes")
     return ok
 
 function validate_request_body_size(total_bytes):    # request_bytes
@@ -218,6 +244,25 @@ function parse_deadline(body):                         # -> u64 | none; never an
     return n
 ```
 
+```
+function parse_exec_report(body):                      # -> (u64 | none, i64 | none); never an error
+    value = json_parse(body)
+    if value is not an object: return (none, none)
+    exec = none
+    if "exec_ns" in value and value["exec_ns"] is string:
+        s = value["exec_ns"]
+        if s is not empty and has only digits and at most 20 chars and parse_unsigned_decimal(s) <= 2^64 - 1:
+            exec = parse_unsigned_decimal(s)
+    slack = none
+    if "start_slack_ns" in value and value["start_slack_ns"] is string:
+        s = value["start_slack_ns"]                    # empty: no deadline -> none
+        d = s without one leading "-"
+        if d is not empty and has only digits and at most 19 chars:
+            v = parse_unsigned_decimal(d), negated if s starts with "-"
+            if -2^63 <= v <= 2^63 - 1: slack = v
+    return (exec, slack)
+```
+
 `parse_deadline` is as lenient as `parse_body`: a missing or malformed deadline makes the request deadline-less,
 not invalid. Callers parse the id first; a body whose id is invalid is rejected before its deadline matters.
 
@@ -227,6 +272,17 @@ not invalid. Callers parse the id first; a body whose id is invalid is rejected 
 | `{"id":"7","payload":""}` | 7 | none |
 | `{"id":"7","deadline":1000}` (number, not string) | 7 | none |
 | `{"id":"7","deadline":"18446744073709551616"}` (2^64) | 7 | none |
+
+`parse_exec_report` is just as lenient: a missing or malformed field gives none for that field only, so a body from
+a server without an ExecReport is still a valid response.
+
+| Body | `parse_exec_report` |
+|---|---|
+| `{"id":"7","exec_ns":"150000000","start_slack_ns":"-35000000","payload":""}` | (150000000, -35000000) |
+| `{"id":"7","exec_ns":"0","start_slack_ns":"","payload":""}` | (0, none) |
+| `{"id":"7","payload":""}` (no ExecReport) | (none, none) |
+| `{"id":"7","exec_ns":150,"start_slack_ns":"+5"}` (number; `+` sign) | (none, none) |
+| `{"id":"7","exec_ns":"1","start_slack_ns":"-9223372036854775809"}` (below -2^63) | (1, none) |
 
 ## HeartbeatLine
 
