@@ -1,4 +1,4 @@
-// Source: abstraction/server/worker_pool/design.md (worker_pool v0.5.0)
+// Source: abstraction/server/worker_pool/design.md (worker_pool v0.6.0)
 package server
 
 import (
@@ -84,7 +84,8 @@ func (j *PingJob) Reply() Response { return <-j.reply }
 // WorkQueue is the process-wide unbounded MPMC queue: one mutex, one condition
 // variable, and a slice used as a FIFO (fifo) or a container/heap min-heap
 // (edf); Go channels are bounded. armed/openAt
-// are the StallGate, guarded by mu like everything else.
+// are the StallGate and freeze/freezeAt the WorkerFreeze, guarded by mu like
+// everything else (freeze itself never changes after NewWorkQueue).
 //
 // Design: abstraction/server/worker_pool/design.md#workqueue
 type WorkQueue struct {
@@ -97,15 +98,19 @@ type WorkQueue struct {
 	closed   bool
 	stall    time.Duration
 	armed    bool
-	openAt   time.Time // monotonic reading; valid once armed
+	openAt   time.Time     // monotonic reading; valid once armed
+	freeze   time.Duration // WorkerFreeze; 0: never
+	freezeAt time.Time     // valid once armed, when freeze > 0
 }
 
 // NewWorkQueue returns an empty, open queue with the given QueueDiscipline
-// whose StallGate opens initialStallMs after the first push.
+// whose StallGate opens initialStallMs after the first push, and whose
+// WorkerFreeze starts freezeAfterMs after it (0: never).
 //
 // Design: abstraction/server/worker_pool/design.md#workqueue
-func NewWorkQueue(initialStallMs uint64, disc QueueDiscipline) *WorkQueue {
-	q := &WorkQueue{stall: time.Duration(initialStallMs) * time.Millisecond, disc: disc}
+func NewWorkQueue(initialStallMs uint64, disc QueueDiscipline, freezeAfterMs uint64) *WorkQueue {
+	q := &WorkQueue{stall: time.Duration(initialStallMs) * time.Millisecond, disc: disc,
+		freeze: time.Duration(freezeAfterMs) * time.Millisecond}
 	q.notEmpty = sync.NewCond(&q.mu)
 	return q
 }
@@ -120,7 +125,7 @@ func (q *WorkQueue) Push(job *PingJob) error {
 	if q.closed {
 		return ErrQueueClosed
 	}
-	if !q.armed { // StallGate: the first push arms it
+	if !q.armed { // StallGate and WorkerFreeze: the first push arms both
 		q.arm()
 	}
 	q.addItem(job)
@@ -165,7 +170,11 @@ func (q *WorkQueue) lenLocked() int { return len(q.items) + len(q.edf) }
 // Design: abstraction/server/worker_pool/design.md#stallgate
 func (q *WorkQueue) arm() {
 	q.armed = true
-	q.openAt = time.Now().Add(q.stall)
+	armedAt := time.Now()
+	q.openAt = armedAt.Add(q.stall)
+	if q.freeze > 0 {
+		q.freezeAt = armedAt.Add(q.freeze) // WorkerFreeze
+	}
 	if q.stall > 0 {
 		time.AfterFunc(q.stall, func() {
 			q.mu.Lock()
@@ -184,13 +193,36 @@ func (q *WorkQueue) arm() {
 func (q *WorkQueue) Pop() *PingJob {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	for !q.closed && (q.lenLocked() == 0 || time.Now().Before(q.openAt)) {
+	for !q.closed && (q.lenLocked() == 0 || time.Now().Before(q.openAt) || q.frozenLocked()) {
 		q.notEmpty.Wait() // woken by a push, the gate's timer, or Close
 	}
 	if q.closed {
 		return nil
 	}
 	return q.takeItem()
+}
+
+// frozenLocked reports whether the WorkerFreeze has started. Called with mu held.
+//
+// Design: abstraction/server/worker_pool/design.md#workerfreeze
+func (q *WorkQueue) frozenLocked() bool {
+	return q.freeze > 0 && q.armed && !time.Now().Before(q.freezeAt)
+}
+
+// FreezeWait returns at once unless the WorkerFreeze has started; then it
+// blocks until Close. No timer: every wake-up re-checks, and the freeze is
+// permanent, so a push's Signal landing here only waits again.
+//
+// Design: abstraction/server/worker_pool/design.md#workerfreeze
+func (q *WorkQueue) FreezeWait() {
+	if q.freeze == 0 {
+		return // no WorkerFreeze: no lock taken
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for !q.closed && q.frozenLocked() {
+		q.notEmpty.Wait() // only Close ends the wait
+	}
 }
 
 // Close closes the queue, answers every queued job Aborted in pop order
@@ -251,7 +283,7 @@ func workerLoop(q *WorkQueue, cfg Config, registry *CancelRegistry, counters *Ca
 		if job == nil {
 			return
 		}
-		job.reply <- runPing(job, cfg, registry, counters, buf) // buf: nil unless message_buffer
+		job.reply <- runPing(job, cfg, registry, counters, buf, q) // buf: nil unless message_buffer; q for FreezeWait
 	}
 }
 

@@ -231,15 +231,16 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 
 ### Go choices
 
-- File `internal/server/pinghandler.go`. `admit_ping` is `admitPing(task, cfg, rng, st) (*PingJob, Response)`: a nil job means the returned `Response` (a `400`) is the answer. `run_ping` is `runPing(job, cfg, registry, counters, buf) Response`, with `buf` nil for `cpu_burn` and `sleep`.
+- File `internal/server/pinghandler.go`. `admit_ping` is `admitPing(task, cfg, rng, st) (*PingJob, Response)`: a nil job means the returned `Response` (a `400`) is the answer. `run_ping` is `runPing(job, cfg, registry, counters, buf, q) Response`, with `buf` nil for `cpu_burn` and `sleep`, and `q` the WorkQueue for the WorkerFreeze.
 - `admitPing` runs under the connection's admission lock (`connectionHandler.mu`), because x/net/http2 runs one handler goroutine per stream.
 - `runPing` calls `registry.Start` before anything else. `id_check` is a Go closure over the registry, the slot and the request id, passed to `Burn`. `finish(completed)` is a closure over `PublishFinished(slot, id, completed, counters)`, called explicitly on each way out.
 - MessageWork's stream is `sampling.NewRng(sampling.DeriveSeed(sampling.DeriveSeed(cfg.Seed, StreamServerMessages, clientID), StreamServerMessages, seq))`, with `seq` and `clientID` from `protocol.SplitRequestID`; the trees come from `makeTree`. `TestMessageBufferEndToEnd` and `TestFillMessagesCancel` rebuild the expected trees from the same stream.
 - `fill_messages` is `fillMessages(job, cfg, buf, cancelled *atomic.Bool, idCheck func() bool) BurnOutcome`, reusing the CPU Burner's `BurnOutcome` values. `nil` arguments are the design's `NONE`. Messages are collected in a slice with capacity `n_messages_per_request`, then written with one `buf.Push`.
 - `admitPing` leaves `ServiceUs` at 0 and does not touch the `Rng` when the workload is `message_buffer`; it samples for `WorkloadCPUBurn` and `WorkloadSleep`.
-- In `cooperative` mode `runPing` switches on `cfg.Workload`: `Burn`, `Sleep(job.ServiceUs, &job.Task.Cancelled, idCheck)` (QuantumSleep, the Sleeper's `Sleep`) or `fillMessages`; in `ignore` mode it calls `Sleep(job.ServiceUs, nil, nil)` for `sleep`. `TestSleepWorkloadEndToEnd` (in `server_test.go`) checks `202`s in both modes and that an RST frees a worker in the middle of a 10000 s sleep.
+- In `cooperative` mode `runPing` switches on `cfg.Workload`: `Burn`, `Sleep(job.ServiceUs, &job.Task.Cancelled, idCheck)` (QuantumSleep, the Sleeper's `Sleep`) or `fillMessages`; in `ignore` mode it calls `Sleep(job.ServiceUs, nil, freezeCheck)` for `sleep`. `TestSleepWorkloadEndToEnd` (in `server_test.go`) checks `202`s in both modes and that an RST frees a worker in the middle of a 10000 s sleep.
 - `admitPing` reads the RequestDeadline with `protocol.ParseDeadline` after the ServiceTime draw; `ok == false` becomes `NoDeadline`. `newPingJob` takes the deadline as its last argument.
 - Counters are incremented with `atomic.Uint64.Add(1)`.
+- WorkerFreeze checks: `freeze()` is `q.FreezeWait()`, called before the RST check of check point 1 and at the start of the `idCheck` closure. In `ignore` mode, `freezeCheck` is a closure `{ q.FreezeWait(); return false }` when `cfg.FreezeAfterMs > 0`, else `nil` (the design's `NONE`), passed as the `idCheck` argument of `Burn`, `Sleep` and `fillMessages`. `workerpool_test.go` `TestWorkerFreezeHoldsRunningRequest` checks, in both modes, that a 300 ms sleep running at the freeze is still unanswered at 600 ms and completes with `202` after `Close`.
 - Tests: `server_test.go` `TestFinishedWatermarkReplies` checks the `/cancel` reply end to end after a `202`, a `503`, and an RST-stopped burn. `workerpool_test.go` `TestResetWhileQueued` checks check point 1 for a job reset while queued. `TestFillMessagesCancel` checks the MessageWork worked example: `/cancel` at the second check, RST checked first, and that a cancelled request leaves the buffer untouched.
 
 ### Traceability
@@ -253,10 +254,10 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [handle_ping](#handle_ping) | [pinghandler.go:16](../../../implementation/go/internal/server/pinghandler.go#L16) |
 | [admit_ping](#admit_ping) | [pinghandler.go:16](../../../implementation/go/internal/server/pinghandler.go#L16), [server_test.go:536](../../../implementation/go/internal/server/server_test.go#L536) |
 | [run_ping](#run_ping) | [pinghandler.go:49](../../../implementation/go/internal/server/pinghandler.go#L49), [server_test.go:337](../../../implementation/go/internal/server/server_test.go#L337) |
-| [MessageWork](#messagework) | [pinghandler.go:106](../../../implementation/go/internal/server/pinghandler.go#L106), [server_test.go:380](../../../implementation/go/internal/server/server_test.go#L380), [server_test.go:420](../../../implementation/go/internal/server/server_test.go#L420) |
+| [MessageWork](#messagework) | [pinghandler.go:116](../../../implementation/go/internal/server/pinghandler.go#L116), [server_test.go:380](../../../implementation/go/internal/server/server_test.go#L380), [server_test.go:420](../../../implementation/go/internal/server/server_test.go#L420) |
 | [Client binding](#client-binding) | [pinghandler.go:24](../../../implementation/go/internal/server/pinghandler.go#L24) |
 | [Sampling order](#sampling-order) | [pinghandler.go:33](../../../implementation/go/internal/server/pinghandler.go#L33) |
-| [CancelCheckPoints](#cancelcheckpoints) | [pinghandler.go:60](../../../implementation/go/internal/server/pinghandler.go#L60), [server_test.go:420](../../../implementation/go/internal/server/server_test.go#L420) |
+| [CancelCheckPoints](#cancelcheckpoints) | [pinghandler.go:61](../../../implementation/go/internal/server/pinghandler.go#L61), [pinghandler.go:92](../../../implementation/go/internal/server/pinghandler.go#L92), [server_test.go:420](../../../implementation/go/internal/server/server_test.go#L420), [workerpool_test.go:372](../../../implementation/go/internal/server/workerpool_test.go#L372) |
 | [FinishedWatermark](#finishedwatermark) | [pinghandler.go:54](../../../implementation/go/internal/server/pinghandler.go#L54), [server_test.go:159](../../../implementation/go/internal/server/server_test.go#L159) |
-| [Response status](#response-status) | [pinghandler.go:98](../../../implementation/go/internal/server/pinghandler.go#L98) |
+| [Response status](#response-status) | [pinghandler.go:108](../../../implementation/go/internal/server/pinghandler.go#L108) |
 <!-- trace:end -->

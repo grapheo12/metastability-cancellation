@@ -1,6 +1,6 @@
 // Command server runs the HTTP/2 /ping + /cancel server.
 //
-// Source: abstraction/server/api.md (server v0.9.1)
+// Source: abstraction/server/api.md (server v0.10.1)
 package main
 
 import (
@@ -29,6 +29,7 @@ func main() {
 	fs.StringVar(&p.Seed, "seed", p.Seed, "base seed")
 	fs.StringVar(&p.NWorkerThreads, "n_worker_threads", p.NWorkerThreads, "number of WorkerPool workers (>= 1)")
 	fs.StringVar(&p.InitialStallMs, "initial_stall_ms", p.InitialStallMs, "ms after the first /ping before any /ping runs (>= 0)")
+	fs.StringVar(&p.FreezeAfterMs, "freeze_after_ms", p.FreezeAfterMs, "WorkerFreeze: ms after the first /ping when every worker stops for good (>= 1; empty: never)")
 	fs.StringVar(&p.QueueDiscipline, "queue_discipline", p.QueueDiscipline, "WorkQueue order: fifo or edf (earliest RequestDeadline first)")
 	fs.StringVar(&p.QueueLogPath, "queue_log_path", p.QueueLogPath, "QueueLengthLog CSV path (empty: no log)")
 	fs.StringVar(&p.WindowSize, "window_size", p.WindowSize, "MessageBuffer slots (message_buffer)")

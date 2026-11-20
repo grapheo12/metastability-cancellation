@@ -1,4 +1,4 @@
-// Source: abstraction/server/ping_handler/design.md (ping_handler v0.9.0)
+// Source: abstraction/server/ping_handler/design.md (ping_handler v0.10.0)
 package server
 
 import (
@@ -46,7 +46,7 @@ func admitPing(task *StreamTask, cfg Config, rng *sampling.Rng, st *ConnectionCa
 //
 // Design: abstraction/server/ping_handler/design.md#run_ping
 // Design: abstraction/server/design.md#cancellation-semantics
-func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *CancelCounters, buf *MessageBuffer) Response {
+func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *CancelCounters, buf *MessageBuffer, q *WorkQueue) Response {
 	id := job.RequestID
 	slot := registry.Client(job.ClientID) // NoSlot if the registry is full
 	registry.Start(slot, id)              // CancelMatching: started, not finished
@@ -54,9 +54,11 @@ func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *Cance
 	finish := func(completed bool) { registry.PublishFinished(slot, id, completed, counters) }
 
 	if cfg.CancelMode == CancelCooperative {
-		idCheck := func() bool { return ShouldCancel(registry, slot, counters, id) }
+		// WorkerFreeze first at every check: returns at once unless frozen.
+		idCheck := func() bool { q.FreezeWait(); return ShouldCancel(registry, slot, counters, id) }
 
 		// Design: abstraction/server/ping_handler/design.md#cancelcheckpoints
+		q.FreezeWait()
 		if job.Task.Cancelled.Load() {
 			finish(false)
 			return Response{Aborted: true} // RST wins
@@ -85,12 +87,20 @@ func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *Cance
 			finish(false)
 			return Response{Status: protocol.StatusRejected, Body: protocol.BuildBody(id, cfg.ResponseBytes)}
 		}
-	} else if cfg.Workload == WorkloadCPUBurn {
-		Burn(job.ServiceUs, nil, cfg.CancelCheckIntervalUs, nil, CheckIter)
-	} else if cfg.Workload == WorkloadSleep {
-		Sleep(job.ServiceUs, nil, nil) // always BurnCompleted
 	} else {
-		fillMessages(job, cfg, buf, nil, nil) // always BurnCompleted
+		// Design: abstraction/server/ping_handler/design.md#cancelcheckpoints
+		var freezeCheck func() bool // ignore mode: only a WorkerFreeze wait, never cancels
+		if cfg.FreezeAfterMs > 0 {
+			freezeCheck = func() bool { q.FreezeWait(); return false }
+		}
+		switch cfg.Workload {
+		case WorkloadCPUBurn:
+			Burn(job.ServiceUs, nil, cfg.CancelCheckIntervalUs, freezeCheck, CheckIter)
+		case WorkloadSleep:
+			Sleep(job.ServiceUs, nil, freezeCheck) // always BurnCompleted
+		default:
+			fillMessages(job, cfg, buf, nil, freezeCheck) // always BurnCompleted
+		}
 	}
 
 	finish(true) // completed: a later /cancel counts completed_before_cancel

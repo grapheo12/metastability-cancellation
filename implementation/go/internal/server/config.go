@@ -1,7 +1,7 @@
 // Package server implements the HTTP/2 /ping + /cancel server. Each file maps
 // to one component of abstraction/server.
 //
-// Source: abstraction/server/design.md (server v0.9.1)
+// Source: abstraction/server/design.md (server v0.10.1)
 package server
 
 import (
@@ -51,6 +51,7 @@ type Config struct {
 	QueueLogPath          string // empty: no QueueLengthLog
 	QueueSampleIntervalMs uint64
 	InitialStallMs        uint64 // StallGate; 0: no stall
+	FreezeAfterMs         uint64 // WorkerFreeze; 0: never (the parameter itself must be empty or >= 1)
 	QueueDiscipline       QueueDiscipline
 	Workload              Workload
 	WindowSize            uint32 // MessageBuffer slots
@@ -70,6 +71,7 @@ type Params struct {
 	QueueLogPath          string
 	QueueSampleIntervalMs string
 	InitialStallMs        string
+	FreezeAfterMs         string // empty: never
 	QueueDiscipline       string
 	Workload              string
 	WindowSize            string
@@ -166,6 +168,13 @@ func Validate(p Params) (Config, error) {
 		return c, errors.New("initial_stall_ms must be an integer >= 0")
 	}
 	c.InitialStallMs = st
+	if p.FreezeAfterMs != "" { // WorkerFreeze
+		fz, err := strconv.ParseUint(p.FreezeAfterMs, 10, 64)
+		if err != nil || fz < 1 {
+			return c, errors.New("freeze_after_ms must be empty or an integer >= 1")
+		}
+		c.FreezeAfterMs = fz
+	}
 	switch p.QueueDiscipline {
 	case "fifo":
 		c.QueueDiscipline = QueueFIFO

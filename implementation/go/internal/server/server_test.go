@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.9.1)
+// Source: abstraction/server/design.md (server v0.10.1)
 package server
 
 import (
@@ -591,6 +591,27 @@ func TestValidateQueueDiscipline(t *testing.T) {
 	p.QueueDiscipline = "lifo"
 	if _, err := Validate(p); err == nil {
 		t.Fatal("unknown discipline must be rejected")
+	}
+}
+
+// freeze_after_ms: empty (never, the default) or an integer >= 1.
+//
+// Design: abstraction/server/design.md#configuration-validation
+func TestValidateFreezeAfterMs(t *testing.T) {
+	p := DefaultParams()
+	p.ResponseRate, p.ResponseBytes = "100", "64"
+	if c, err := Validate(p); err != nil || c.FreezeAfterMs != 0 {
+		t.Fatalf("default: %+v %v", c, err)
+	}
+	p.FreezeAfterMs = "60000"
+	if c, err := Validate(p); err != nil || c.FreezeAfterMs != 60000 {
+		t.Fatalf("60000: %+v %v", c, err)
+	}
+	for _, bad := range []string{"0", "-1", "1.5", "x"} {
+		p.FreezeAfterMs = bad
+		if _, err := Validate(p); err == nil || err.Error() != "freeze_after_ms must be empty or an integer >= 1" {
+			t.Fatalf("%q: got %v", bad, err)
+		}
 	}
 }
 
