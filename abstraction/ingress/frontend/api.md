@@ -30,7 +30,7 @@ Runs one ForwardTask. `ctx` holds the In-Flight Map, the Load Balancer, the Upst
 
 ## Uses
 
-- [../../protocol/api.md](../../protocol/api.md): `parse_body`, `split_request_id`, status constants
+- [../../protocol/api.md](../../protocol/api.md): `parse_body`, `parse_exec_report`, `split_request_id`, status constants
 - [../inflight_map/api.md](../inflight_map/api.md): `publish`, `clear`
 - [../load_balancer/api.md](../load_balancer/api.md): `pick`, `finish`, `ForwardTicket`, `ForwardOutcome`
 - [../upstream_pool/api.md](../upstream_pool/api.md): `get`, `discard`

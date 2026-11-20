@@ -159,3 +159,4 @@
 | 0.27.0 | 2026-11-20T00:00:00Z | Child bump: load_generator 0.7.0 (metrics 0.5.0) |
 | 0.27.1 | 2026-11-20T00:00:00Z | Child bump: load_generator 0.7.1 (client 0.8.0) |
 | 0.28.0 | 2026-11-20T00:00:00Z | Glossary EwmaExecTime. Child bump: ingress 0.3.0 (load_balancer 0.5.0) |
+| 0.28.1 | 2026-11-20T00:00:00Z | Child bump: ingress 0.3.1 (frontend 0.3.0) |
