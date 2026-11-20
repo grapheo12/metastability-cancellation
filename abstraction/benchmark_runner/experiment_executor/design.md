@@ -277,10 +277,12 @@ Worked example, ProcessStart `1700000000000000000`:
 function collect_outputs(point, config, servers, client, ingress_host, pdir):
     for name in [loadgen.requests.csv, loadgen.summary.json, loadgen.log]:
         fetch(client.transport, RD_client/name, pdir/name)
-    for name in [ingress.cancels.csv, ingress.forwards.csv, ingress.summary.json, ingress.log]:
+    for name in [ingress.cancels.csv, ingress.forwards.csv, ingress.liveness.csv, ingress.summary.json, ingress.log]:
         fetch(ingress_host.transport, RD_ingress_host/name, pdir/name)
     if pdir/ingress.forwards.csv does not exist:                 # ForwardLog
         print("point <id>: ingress.forwards.csv missing (left out of the forward timeline plots)")
+    # ingress.liveness.csv (LivenessLog) is fetched like the others; an Ingress from before the Heartbeat Monitor
+    # writes none, and its absence is not reported
     counters = []
     for k in 0 ..= I-1:
         m = host(k)

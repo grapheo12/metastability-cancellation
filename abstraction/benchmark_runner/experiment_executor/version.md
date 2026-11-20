@@ -12,3 +12,4 @@
 | 0.7.0 | 2026-11-12T00:00:00Z | GcEvents: with `gc_trace`, servers start behind `env <gc_trace_env>`; Point outputs turn GcTrace lines of `server_<k>.out` into `server_<k>.gc.csv` on the wall clock via the ProcessStart line (exact decimal arithmetic); warnings only; worked example |
 | 0.8.0 | 2026-11-19T00:00:00Z | Several ServerMachines: `run_point` takes the list `servers`; instance `k` runs on `servers[server_hosts[k]]` at `listen_port + local_index(k)`, with its pid, logs and outputs on that machine; `stop_servers(servers, server_hosts, …)`; new `stop_leftover_servers` (every `server_<j>.pid` on a machine) replaces cleanup by `MAX_INSTANCES`, which is removed; worked example |
 | 0.9.0 | 2026-11-19T00:00:00Z | FreezeTarget: `start_servers` appends `--freeze_after_ms` to the arguments of instance `point.freeze.instance` only |
+| 0.10.0 | 2026-11-20T00:00:00Z | Point outputs fetch `ingress.liveness.csv` (LivenessLog); its absence is not reported |
