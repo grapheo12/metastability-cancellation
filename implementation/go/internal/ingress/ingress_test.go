@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.3.0)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.4.0)
 package ingress
 
 import (
@@ -20,8 +20,13 @@ import (
 
 func startIngress(t *testing.T, backends []string, policy string, cancelRate float64) *Ingress {
 	t.Helper()
+	return startIngressFiltered(t, backends, policy, FilterNone, cancelRate)
+}
+
+func startIngressFiltered(t *testing.T, backends []string, policy, filter string, cancelRate float64) *Ingress {
+	t.Helper()
 	cfg, err := Validate(Params{ListenAddr: "127.0.0.1:0", Backends: joinComma(backends), NumClients: "4",
-		LbPolicy: policy, EwmaBeta: "0.7", CancelRate: ftoa(cancelRate), DurationS: "5", Seed: "1", InitialStallMs: "0", HeartbeatTimeoutMs: "0",
+		LbPolicy: policy, LbFilter: filter, EwmaBeta: "0.7", CancelRate: ftoa(cancelRate), DurationS: "5", Seed: "1", InitialStallMs: "0", HeartbeatTimeoutMs: "0",
 		OutputPath: filepath.Join(t.TempDir(), "ingress")})
 	if err != nil {
 		t.Fatal(err)
@@ -241,6 +246,44 @@ func TestEwmaPrefersFastBackend(t *testing.T) {
 	}
 	slow.Shutdown()
 	fast.Shutdown()
+}
+
+// DeadlineFilter end to end: a request whose deadline has passed is answered
+// 503 {"id"} by the Ingress without reaching a backend; one with time left and
+// one without a deadline are forwarded.
+//
+// Design: abstraction/ingress/frontend/design.md#forwardtask
+// Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
+func TestDeadlineFilterDrops(t *testing.T) {
+	b0 := startBackend(t, 100000)
+	ing := startIngressFiltered(t, []string{b0.Addr().String()}, PolicyEwma, FilterDeadline, 0)
+	conn := dial(t, ing)
+	ctx := context.Background()
+	now := uint64(time.Now().UnixNano())
+	// The first answer gives backend 0 an EwmaExecTime, so later picks are filtered by it.
+	if st, _, err := ping(t, ctx, conn, "POST", "/ping", protocol.BuildRequestBody(protocol.MakeRequestID(0, 1), now+5_000_000_000, 128)); err != nil || st != 202 {
+		t.Fatalf("time left: %d %v", st, err)
+	}
+	late := protocol.MakeRequestID(1, 1)
+	st, b, err := ping(t, ctx, conn, "POST", "/ping", protocol.BuildRequestBody(late, now-1_000_000_000, 128))
+	if got, _ := protocol.ParseBody(b); err != nil || st != 503 || string(b) != string(protocol.BuildCancelBody(late)) || got != late {
+		t.Fatalf("late: %d %s %v", st, b, err)
+	}
+	if st, _, err := ping(t, ctx, conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(2, 1), 0, nil, 128)); err != nil || st != 202 {
+		t.Fatalf("no deadline: %d %v", st, err)
+	}
+	if err := ing.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	var s Summary
+	raw, _ := os.ReadFile(ing.cfg.OutputPath + ".summary.json")
+	if err := json.Unmarshal(raw, &s); err != nil {
+		t.Fatal(err)
+	}
+	if s.FilterDropped != 1 || s.Backends[0].Forwarded != 2 || s.Config.LbFilter != FilterDeadline {
+		t.Fatalf("summary %+v", s)
+	}
+	b0.Shutdown()
 }
 
 var _ = server.CancelCooperative

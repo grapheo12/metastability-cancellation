@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.5.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.6.0)
 package ingress
 
 import (
@@ -50,7 +50,7 @@ func TestLeastOutstandingWorkedExample(t *testing.T) {
 	}{{[3]int64{0, 0, 0}, 0}, {[3]int64{1, 0, 0}, 1}, {[3]int64{1, 1, 0}, 2}, {[3]int64{2, 1, 1}, 1}}
 	for _, c := range cases {
 		setOutstanding(lb, c.out[:]...)
-		if got := lb.choose(); got != c.want {
+		if got := lb.chooseAny(); got != c.want {
 			t.Fatalf("outstanding %v: got %d want %d", c.out, got, c.want)
 		}
 	}
@@ -267,5 +267,76 @@ func TestEwmaExecTimeWorkedExample(t *testing.T) {
 	lb.Finish(lb.Pick(), OutcomeBadRequest, 9, true)
 	if r := lb.ForwardLog()[len(steps)]; r.HasExec || r.EwmaExecNs != 1_340_000 {
 		t.Fatalf("bad_request sampled: %+v", r)
+	}
+}
+
+// chooseAny is choose for a request without a RequestDeadline (never dropped).
+func (lb *LoadBalancer) chooseAny() uint32 {
+	s, _ := lb.choose(0, false)
+	return s
+}
+
+// The DeadlineFilter worked example: B = 2, EwmaExecTime 140 ms each,
+// outstanding (10, 40).
+//
+// Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
+func TestDeadlineFilterWorkedExample(t *testing.T) {
+	mk := func(sampleBoth bool) *LoadBalancer {
+		lb := NewLoadBalancer(Config{LbPolicy: PolicyEwma, LbFilter: FilterDeadline, EwmaBeta: 0.7,
+			Backends: []string{"a:1", "b:1"}, Seed: 7}, nil)
+		lb.stats[0].Outstanding.Store(10)
+		lb.stats[1].Outstanding.Store(40)
+		lb.ewmaExecUpdate(0, 140_000_000)
+		if sampleBoth {
+			lb.ewmaExecUpdate(1, 140_000_000)
+		}
+		return lb
+	}
+	cases := []struct {
+		remaining int64
+		sampled   bool
+		want      []uint64
+	}{
+		{6_000_000_000, true, []uint64{0, 1}},
+		{3_000_000_000, true, []uint64{0}},
+		{1_540_000_000, true, []uint64{0}}, // <=: exactly fits
+		{1_000_000_000, true, []uint64{}},
+		{-5_000_000, true, []uint64{}},      // already late
+		{1_000_000_000, false, []uint64{1}}, // backend 1 has no sample: eligible
+	}
+	for _, c := range cases {
+		lb := mk(c.sampled)
+		got := lb.deadlineFilter([]uint64{0, 1}, c.remaining)
+		if len(got) != len(c.want) || (len(got) > 0 && got[0] != c.want[0]) || (len(got) == 2 && got[1] != c.want[1]) {
+			t.Fatalf("remaining %d: kept %v, want %v", c.remaining, got, c.want)
+		}
+	}
+	// Pick: a drop counts filter_dropped and changes no backend counter; n = 1 picks it without a draw.
+	lb := mk(true)
+	if _, ok := lb.PickWithin(1_000_000_000, true); ok || lb.FilterDropped() != 1 ||
+		lb.stats[0].Forwarded.Load() != 0 || lb.stats[0].Outstanding.Load() != 10 {
+		t.Fatal("drop must only count filter_dropped")
+	}
+	before := *lb.rng
+	if tk, ok := lb.PickWithin(3_000_000_000, true); !ok || tk.ServerID != 0 || *lb.rng != before {
+		t.Fatalf("one eligible backend: %+v %v", tk, ok)
+	}
+	// No deadline, or lb_filter = none: no filtering at all.
+	if _, ok := lb.PickWithin(0, false); !ok {
+		t.Fatal("no RequestDeadline must not be dropped")
+	}
+	off := mk(true)
+	off.filter = FilterNone
+	if _, ok := off.PickWithin(-5_000_000, true); !ok || off.FilterDropped() != 0 {
+		t.Fatal("lb_filter = none must not filter")
+	}
+}
+
+// Design: abstraction/ingress/frontend/design.md#forwardtask
+func TestRemaining(t *testing.T) {
+	if remaining(1794533190000000000, 1794533185000000000) != 5_000_000_000 ||
+		remaining(1794533184995000000, 1794533185000000000) != -5_000_000 ||
+		remaining(1<<64-1, 0) != 1<<63-1 {
+		t.Fatal("remaining")
 	}
 }

@@ -2,7 +2,7 @@
 // proxy in front of several servers, with an in-process LoadCanceller that
 // picks victims from the InFlightMap.
 //
-// Source: abstraction/ingress/design.md (ingress v0.3.1)
+// Source: abstraction/ingress/design.md (ingress v0.4.1)
 package ingress
 
 import (
@@ -28,6 +28,9 @@ const (
 	PolicyLeastOutstanding = "least_outstanding"
 	PolicyPowerOfTwo       = "power_of_two"
 	PolicyEwma             = "ewma"
+	// DeadlineFilter switch, as accepted by --lb_filter.
+	FilterNone     = "none"
+	FilterDeadline = "deadline"
 )
 
 // Config is the validated IngressConfig.
@@ -38,6 +41,7 @@ type Config struct {
 	Backends   []string
 	NumClients uint32
 	LbPolicy   string
+	LbFilter   string // FilterNone or FilterDeadline (DeadlineFilter)
 	EwmaBeta   float64
 	CancelRate float64
 	DurationS  float64
@@ -57,6 +61,7 @@ type Params struct {
 	Backends           string
 	NumClients         string
 	LbPolicy           string
+	LbFilter           string
 	EwmaBeta           string
 	CancelRate         string
 	DurationS          string
@@ -68,7 +73,7 @@ type Params struct {
 
 // DefaultParams returns the defaults from abstraction/ingress/api.md#program-parameters.
 func DefaultParams() Params {
-	return Params{ListenAddr: "0.0.0.0:9090", LbPolicy: PolicyLeastOutstanding, EwmaBeta: "0.7", CancelRate: "0", Seed: "0",
+	return Params{ListenAddr: "0.0.0.0:9090", LbPolicy: PolicyLeastOutstanding, LbFilter: FilterNone, EwmaBeta: "0.7", CancelRate: "0", Seed: "0",
 		OutputPath: "ingress", InitialStallMs: "1000", HeartbeatTimeoutMs: "0"}
 }
 
@@ -104,6 +109,12 @@ func Validate(p Params) (Config, error) {
 		c.LbPolicy = p.LbPolicy
 	default:
 		return c, errors.New("lb_policy must be round_robin, least_outstanding, power_of_two or ewma")
+	}
+	switch p.LbFilter {
+	case FilterNone, FilterDeadline:
+		c.LbFilter = p.LbFilter
+	default:
+		return c, errors.New("lb_filter must be none or deadline")
 	}
 	// !(in range) also rejects NaN; the range rejects infinities.
 	if c.EwmaBeta, err = strconv.ParseFloat(p.EwmaBeta, 64); err != nil || !(c.EwmaBeta >= 0 && c.EwmaBeta <= 1) {

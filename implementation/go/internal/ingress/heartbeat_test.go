@@ -69,13 +69,13 @@ func TestLiveSetWorkedExample(t *testing.T) {
 	}
 	rr := mk(PolicyRoundRobin)
 	for k, want := range []uint32{0, 2, 0} {
-		if got := rr.choose(); got != want {
+		if got := rr.chooseAny(); got != want {
 			t.Fatalf("round_robin pick %d: %d want %d", k, got, want)
 		}
 	}
 	lo := mk(PolicyLeastOutstanding)
 	setOutstanding(lo, 3, 0, 1)
-	if got := lo.choose(); got != 2 {
+	if got := lo.chooseAny(); got != 2 {
 		t.Fatalf("least_outstanding: %d want 2", got)
 	}
 	out := []int64{3, 0, 1}
@@ -85,20 +85,20 @@ func TestLiveSetWorkedExample(t *testing.T) {
 	for _, p := range []string{PolicyPowerOfTwo, PolicyEwma} {
 		lb := mk(p)
 		for i := 0; i < 200; i++ {
-			if lb.choose() == 1 {
+			if lb.chooseAny() == 1 {
 				t.Fatalf("%s chose the dead backend", p)
 			}
 		}
 	}
 	m.live[0].Store(false) // only 2 live: no draw
-	if got := mk(PolicyEwma).choose(); got != 2 {
+	if got := mk(PolicyEwma).chooseAny(); got != 2 {
 		t.Fatalf("n = 1: %d want 2", got)
 	}
 	m.live[2].Store(false) // none live: all of them
 	seen := map[uint32]bool{}
 	lb := mk(PolicyRoundRobin)
 	for i := 0; i < 3; i++ {
-		seen[lb.choose()] = true
+		seen[lb.chooseAny()] = true
 	}
 	if len(seen) != 3 {
 		t.Fatalf("none live: picks %v, want all three", seen)
@@ -117,7 +117,7 @@ func TestHeartbeatMonitorDropsFrozenBackend(t *testing.T) {
 	defer b0.Shutdown()
 	out := filepath.Join(t.TempDir(), "ingress")
 	cfg, err := Validate(Params{ListenAddr: "127.0.0.1:0", Backends: b0.Addr().String() + "," + b1.Addr().String(),
-		NumClients: "4", LbPolicy: PolicyRoundRobin, EwmaBeta: "0.7", CancelRate: "0", DurationS: "5", Seed: "1",
+		NumClients: "4", LbPolicy: PolicyRoundRobin, LbFilter: FilterNone, EwmaBeta: "0.7", CancelRate: "0", DurationS: "5", Seed: "1",
 		InitialStallMs: "0", HeartbeatTimeoutMs: "300", OutputPath: out})
 	if err != nil {
 		t.Fatal(err)

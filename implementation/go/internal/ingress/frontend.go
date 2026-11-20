@@ -1,10 +1,11 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.3.0)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.4.0)
 package ingress
 
 import (
 	"bytes"
 	"context"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -65,7 +66,17 @@ func (ing *Ingress) handlePing(ctx context.Context, body []byte) fwdResponse {
 	ing.startOnce()
 
 	// Design: abstraction/ingress/frontend/design.md#forwardtask
-	ticket := ing.lb.Pick() // ForwardTicket: given back to Finish to time the forward
+	// DeadlineFilter: the request's time left on this Ingress's wall clock.
+	// Design: abstraction/ingress/frontend/design.md#forwardtask
+	var remainingNs int64
+	deadline, hasDeadline := protocol.ParseDeadline(body)
+	if hasDeadline {
+		remainingNs = remaining(deadline, time.Now().UnixNano())
+	}
+	ticket, picked := ing.lb.PickWithin(remainingNs, hasDeadline) // ForwardTicket: given back to Finish to time the forward
+	if !picked {                                                  // no backend can make the deadline: 503 {"id"}, never forwarded
+		return fwdResponse{status: protocol.StatusRejected, body: protocol.BuildCancelBody(id)}
+	}
 	s := ticket.ServerID
 	entry := &InFlightEntry{RequestID: id, ServerID: s}
 	ing.inflight.Publish(entry) // keyed by the RequestId
@@ -140,4 +151,20 @@ func (ing *Ingress) startOnce() {
 	if ing.cfg.CancelRate > 0 {
 		ing.canceller = StartCanceller(ing.cfg, ing.inflight, ing.runStart)
 	}
+}
+
+// remaining is deadline - now in exact signed arithmetic, saturated to int64.
+//
+// Design: abstraction/ingress/frontend/design.md#forwardtask
+func remaining(deadline uint64, now int64) int64 {
+	if now < 0 {
+		now = 0
+	}
+	if deadline > math.MaxInt64 {
+		if d := deadline - uint64(now); d <= math.MaxInt64 {
+			return int64(d)
+		}
+		return math.MaxInt64
+	}
+	return int64(deadline) - now
 }

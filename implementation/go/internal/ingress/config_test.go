@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.3.1)
+// Source: abstraction/ingress/design.md (ingress v0.4.1)
 package ingress
 
 import "testing"
@@ -33,5 +33,24 @@ func TestValidateEwmaBeta(t *testing.T) {
 	p.LbPolicy = "ewmaa"
 	if _, err := Validate(p); err == nil {
 		t.Fatal("unknown lb_policy accepted")
+	}
+}
+
+// Design: abstraction/ingress/design.md#configuration-validation
+func TestValidateLbFilter(t *testing.T) {
+	p := DefaultParams()
+	p.Backends, p.NumClients = "127.0.0.1:8080", "1"
+	if c, err := Validate(p); err != nil || c.LbFilter != FilterNone {
+		t.Fatalf("default: %+v %v", c, err)
+	}
+	p.LbFilter = FilterDeadline
+	if c, err := Validate(p); err != nil || c.LbFilter != FilterDeadline {
+		t.Fatalf("deadline: %+v %v", c, err)
+	}
+	for _, bad := range []string{"", "Deadline", "slo"} {
+		p.LbFilter = bad
+		if _, err := Validate(p); err == nil {
+			t.Fatalf("lb_filter %q must be rejected", bad)
+		}
 	}
 }

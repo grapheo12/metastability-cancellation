@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.3.1)
+// Source: abstraction/ingress/design.md (ingress v0.4.1)
 package ingress
 
 import (
@@ -172,6 +172,7 @@ type summaryConfig struct {
 	Backends           []string `json:"backends"`
 	NumClients         uint32   `json:"num_clients"`
 	LbPolicy           string   `json:"lb_policy"`
+	LbFilter           string   `json:"lb_filter"`
 	EwmaBeta           float64  `json:"ewma_beta"`
 	CancelRate         float64  `json:"cancel_rate"`
 	DurationS          float64  `json:"duration_s"`
@@ -191,6 +192,7 @@ type Summary struct {
 	Counts          cancelCounts        `json:"counts"`
 	RatesPerS       cancelRates         `json:"rates_per_s"`
 	ClientsTargeted int                 `json:"clients_targeted"`
+	FilterDropped   uint64              `json:"filter_dropped"` // DeadlineFilter drops
 	Backends        []BackendStatsValue `json:"backends"`
 }
 
@@ -198,8 +200,8 @@ func (ing *Ingress) writeSummary(records []*CancelRecord, runEndS float64, runSt
 	c := ing.cfg
 	counts, rates, targeted := summarizeCancels(records, c)
 	s := Summary{
-		Config:  summaryConfig{c.ListenAddr, c.Backends, c.NumClients, c.LbPolicy, c.EwmaBeta, c.CancelRate, c.DurationS, c.InitialStallMs, c.HeartbeatTimeoutMs, c.Seed, c.OutputPath},
-		RunEndS: runEndS, RunStartUnixNs: runStartUnixNs, Counts: counts, RatesPerS: rates, ClientsTargeted: targeted, Backends: ing.lb.Snapshot(),
+		Config:  summaryConfig{c.ListenAddr, c.Backends, c.NumClients, c.LbPolicy, c.LbFilter, c.EwmaBeta, c.CancelRate, c.DurationS, c.InitialStallMs, c.HeartbeatTimeoutMs, c.Seed, c.OutputPath},
+		RunEndS: runEndS, RunStartUnixNs: runStartUnixNs, Counts: counts, RatesPerS: rates, ClientsTargeted: targeted, FilterDropped: ing.lb.FilterDropped(), Backends: ing.lb.Snapshot(),
 	}
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {

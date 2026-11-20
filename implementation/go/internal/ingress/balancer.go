@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.5.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.6.0)
 package ingress
 
 import (
@@ -103,6 +103,8 @@ type ForwardRecord struct {
 // Design: abstraction/ingress/load_balancer/design.md#loadbalancer
 type LoadBalancer struct {
 	policy   string
+	filter   string        // DeadlineFilter: FilterNone or FilterDeadline
+	dropped  atomic.Uint64 // filter_dropped: picks the DeadlineFilter dropped
 	beta     float64
 	backends []string
 	stats    []BackendStats
@@ -121,6 +123,7 @@ func NewLoadBalancer(cfg Config, monitor *HeartbeatMonitor) *LoadBalancer {
 	lb := &LoadBalancer{
 		monitor:  monitor,
 		policy:   cfg.LbPolicy,
+		filter:   cfg.LbFilter,
 		beta:     cfg.EwmaBeta,
 		backends: cfg.Backends,
 		stats:    make([]BackendStats, len(cfg.Backends)),
@@ -139,10 +142,25 @@ func NewLoadBalancer(cfg Config, monitor *HeartbeatMonitor) *LoadBalancer {
 // Design: abstraction/ingress/load_balancer/design.md#loadbalancer
 // Design: abstraction/ingress/load_balancer/design.md#forwardticket
 func (lb *LoadBalancer) Pick() ForwardTicket {
-	s := lb.choose()
+	t, _ := lb.PickWithin(0, false) // no RequestDeadline: never dropped
+	return t
+}
+
+// PickWithin is pick(lb, remaining_ns): with hasDeadline, remainingNs is the
+// request's time left for the DeadlineFilter. ok is false when it dropped the
+// request: nothing but filter_dropped changed, and no Finish may follow.
+//
+// Design: abstraction/ingress/load_balancer/design.md#loadbalancer
+// Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
+func (lb *LoadBalancer) PickWithin(remainingNs int64, hasDeadline bool) (ForwardTicket, bool) {
+	s, ok := lb.choose(remainingNs, hasDeadline)
+	if !ok {
+		lb.dropped.Add(1)
+		return ForwardTicket{}, false
+	}
 	lb.stats[s].Outstanding.Add(1)
 	lb.stats[s].Forwarded.Add(1)
-	return ForwardTicket{ServerID: s, Start: time.Now()}
+	return ForwardTicket{ServerID: s, Start: time.Now()}, true
 }
 
 // Finish ends a forward started by Pick: counters, then one clock read; an ok
@@ -293,8 +311,46 @@ func (lb *LoadBalancer) Snapshot() []BackendStatsValue {
 // choose applies the LbPolicy. B == 1 always gives 0 with no draw.
 //
 // Design: abstraction/ingress/load_balancer/design.md#lbpolicy
-func (lb *LoadBalancer) choose() uint32 {
+func (lb *LoadBalancer) choose(remainingNs int64, hasDeadline bool) (uint32, bool) {
 	live := lb.liveSet()
+	if lb.filter == FilterDeadline && hasDeadline {
+		// Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
+		live = lb.deadlineFilter(live, remainingNs)
+		if len(live) == 0 {
+			return 0, false // Dropped
+		}
+	}
+	return lb.policyChoice(live), true
+}
+
+// FilterDropped is the summary's filter_dropped.
+func (lb *LoadBalancer) FilterDropped() uint64 { return lb.dropped.Load() }
+
+// deadlineFilter keeps the backends of live (id order) that have no
+// ExecutionTime sample yet or whose (outstanding + 1) * EwmaExecTime is
+// <= remainingNs, in binary64.
+//
+// Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
+func (lb *LoadBalancer) deadlineFilter(live []uint64, remainingNs int64) []uint64 {
+	kept := make([]uint64, 0, len(live))
+	for _, s := range live {
+		e, ok := lb.execValue(uint32(s))
+		if !ok {
+			kept = append(kept, s) // no sample yet: eligible
+			continue
+		}
+		o := lb.stats[s].Outstanding.Load()
+		if float64(o+1)*e <= float64(remainingNs) {
+			kept = append(kept, s)
+		}
+	}
+	return kept
+}
+
+// policyChoice applies the LbPolicy to a non-empty candidate list in id order.
+//
+// Design: abstraction/ingress/load_balancer/design.md#lbpolicy
+func (lb *LoadBalancer) policyChoice(live []uint64) uint32 {
 	n := uint64(len(live))
 	if n == 1 {
 		return uint32(live[0]) // no draw, no counter change
