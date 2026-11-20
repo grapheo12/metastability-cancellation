@@ -16,8 +16,9 @@ or missing required parameters make the program exit non-zero with a one-line er
 | `cancel_rate` | float, cancels/s, `>= 0` | `0` | Rate of the LoadCanceller's Poisson process. `0` disables the LoadCanceller |
 | `duration_s` | float, s, `> 0` | required if `cancel_rate > 0`, else ignored | Length of the LoadCanceller's sending phase |
 | `initial_stall_ms` | integer, ms, `>= 0` | `1000` | The LoadCanceller schedules no cancel earlier than this after the Ingress's first `/ping`; sending still ends at `duration_s`. `0`: no stall ([load_canceller/design.md](load_canceller/design.md#cancelschedule)) |
+| `heartbeat_timeout_ms` | integer, ms, `>= 0` | `0` | Heartbeat Monitor: a backend whose last HeartbeatLine is this old gets no new requests. `0`: off, every backend is used ([heartbeat_monitor/design.md](heartbeat_monitor/design.md#backendliveness)) |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for the LoadBalancer's and the LoadCanceller's random choices |
-| `output_path` | path prefix | `ingress` | Outputs go to `<output_path>.cancels.csv`, `<output_path>.forwards.csv` and `<output_path>.summary.json` |
+| `output_path` | path prefix | `ingress` | Outputs go to `<output_path>.cancels.csv`, `<output_path>.forwards.csv`, `<output_path>.liveness.csv` and `<output_path>.summary.json` |
 
 ## Constants
 
@@ -92,6 +93,12 @@ is written in decimal without an exponent, as the shortest string that reads bac
 `1300000` or `850000.5`). The file is written at shutdown, header only when no `/ping` was ever forwarded
 ([design.md#shutdown](design.md#shutdown)).
 
+### `<output_path>.liveness.csv`
+
+The Heartbeat Monitor's LivenessLog, one row per change of a backend's liveness plus one per backend at start. The
+format is in [heartbeat_monitor/api.md](heartbeat_monitor/api.md#output_pathlivenesscsv). Header only when the
+monitor is off. Written at shutdown ([design.md#shutdown](design.md#shutdown)).
+
 ### `<output_path>.summary.json`
 
 ```
@@ -114,7 +121,8 @@ separate program, so result tools can read them unchanged (all zero when it is d
 ## Lifecycle
 
 - **Start:** validate the config, create the InFlightMap, the LoadBalancer and the UpstreamPool, bind
-  `listen_addr`, print one line `listening on <addr>` to standard output. Backends are not contacted yet.
+  `listen_addr`, start the Heartbeat Monitor if `heartbeat_timeout_ms > 0` (it dials every backend for
+  `GET /heartbeat`), then print one line `listening on <addr>` to standard output. No `/ping` reaches a backend yet.
 - **Run:** accept client connections until stopped. The LoadCanceller starts with the first `/ping`.
 - **Stop:** on interrupt or termination signal, see [design.md#shutdown](design.md#shutdown). Exit `0` after the
   outputs are written.
@@ -125,7 +133,7 @@ separate program, so result tools can read them unchanged (all zero when it is d
 
 - [../protocol/api.md](../protocol/api.md): `parse_body`, `split_request_id`, status constants, `PING_PATH`, `CANCEL_PATH`
 - [../sampling/api.md](../sampling/api.md): `derive_seed`, `rng_new`, `exponential_ns`, `uniform_int`, `STREAM_CANCELLER`, `STREAM_INGRESS_LB`
-- [../server/api.md](../server/api.md): the backends' wire behavior (one client per connection)
+- [../server/api.md](../server/api.md): the backends' wire behavior (one client per connection, the HeartbeatStream)
 
 ## Subcomponents
 
@@ -136,3 +144,4 @@ separate program, so result tools can read them unchanged (all zero when it is d
 | Upstream Pool | [upstream_pool/api.md](upstream_pool/api.md) |
 | Load Canceller | [load_canceller/api.md](load_canceller/api.md) |
 | Frontend | [frontend/api.md](frontend/api.md) |
+| Heartbeat Monitor | [heartbeat_monitor/api.md](heartbeat_monitor/api.md) |

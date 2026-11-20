@@ -20,3 +20,4 @@
 | 0.1.15 | 2026-11-12T00:00:00Z | New output `<output_path>.forwards.csv` (the ForwardLog); shared state and lock note. Child bump: load_balancer 0.3.0 |
 | 0.1.16 | 2026-11-12T00:00:00Z | `run_start_unix_ns` (wall clock of `run_start`) in the summary, for aligning with other processes' times |
 | 0.1.17 | 2026-11-12T00:00:00Z | Child bump: frontend 0.2.2 |
+| 0.2.0 | 2026-11-20T00:00:00Z | New subcomponent Heartbeat Monitor 0.1.0; parameter `heartbeat_timeout_ms` (validation `>= 0`, default 0 = off); started before `listening on`, stopped at shutdown; output `<output_path>.liveness.csv`; Structure, Shared state, Concurrency model |
