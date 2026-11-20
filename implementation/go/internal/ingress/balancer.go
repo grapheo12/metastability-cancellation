@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.3.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.4.0)
 package ingress
 
 import (
@@ -92,15 +92,17 @@ type LoadBalancer struct {
 	rr       atomic.Uint64
 	rngMu    sync.Mutex
 	rng      *sampling.Rng
-	logMu    sync.Mutex // ForwardLog: held for one append or one copy
+	logMu    sync.Mutex        // ForwardLog: held for one append or one copy
+	monitor  *HeartbeatMonitor // BackendLiveness; nil: every backend live
 	log      []ForwardRecord
 }
 
 // NewLoadBalancer builds the stats array and the policy's random stream.
 //
 // Design: abstraction/ingress/load_balancer/design.md#loadbalancer
-func NewLoadBalancer(cfg Config) *LoadBalancer {
+func NewLoadBalancer(cfg Config, monitor *HeartbeatMonitor) *LoadBalancer {
 	lb := &LoadBalancer{
+		monitor:  monitor,
 		policy:   cfg.LbPolicy,
 		beta:     cfg.EwmaBeta,
 		backends: cfg.Backends,
@@ -224,29 +226,50 @@ func (lb *LoadBalancer) Snapshot() []BackendStatsValue {
 //
 // Design: abstraction/ingress/load_balancer/design.md#lbpolicy
 func (lb *LoadBalancer) choose() uint32 {
-	b := uint64(len(lb.stats))
-	if b == 1 {
-		return 0
+	live := lb.liveSet()
+	n := uint64(len(live))
+	if n == 1 {
+		return uint32(live[0]) // no draw, no counter change
 	}
 	out := func(s uint64) int64 { return lb.stats[s].Outstanding.Load() }
 	switch lb.policy {
 	case PolicyRoundRobin:
-		return uint32((lb.rr.Add(1) - 1) % b)
+		return uint32(live[(lb.rr.Add(1)-1)%n])
 	case PolicyPowerOfTwo:
-		i, j := lb.randomPair(b)
-		return twoChoice(i, j, func(x, y uint64) bool { return out(x) < out(y) })
+		i, j := lb.randomPair(n)
+		return twoChoice(live, i, j, func(x, y uint64) bool { return out(x) < out(y) })
 	case PolicyEwma:
-		i, j := lb.randomPair(b)
-		return twoChoice(i, j, func(x, y uint64) bool { return lb.ewmaScore(x) < lb.ewmaScore(y) })
+		i, j := lb.randomPair(n)
+		return twoChoice(live, i, j, func(x, y uint64) bool { return lb.ewmaScore(x) < lb.ewmaScore(y) })
 	default: // least_outstanding
-		best := uint64(0)
-		for s := uint64(1); s < b; s++ {
+		best := live[0]
+		for _, s := range live[1:] {
 			if out(s) < out(best) { // strict: ties go to the lower id
 				best = s
 			}
 		}
 		return uint32(best)
 	}
+}
+
+// liveSet is L: the live backends in id order, or every backend when none
+// is live (and always every backend without a monitor).
+//
+// Design: abstraction/ingress/load_balancer/design.md#lbpolicy
+func (lb *LoadBalancer) liveSet() []uint64 {
+	b := uint64(len(lb.stats))
+	live := make([]uint64, 0, b)
+	for s := uint64(0); s < b; s++ {
+		if lb.monitor.IsLive(s) {
+			live = append(live, s)
+		}
+	}
+	if len(live) == 0 {
+		for s := uint64(0); s < b; s++ {
+			live = append(live, s)
+		}
+	}
+	return live
 }
 
 // randomPair draws i in [0,B-1] and j in [0,B-2] under rngMu.
@@ -260,15 +283,15 @@ func (lb *LoadBalancer) randomPair(b uint64) (uint64, uint64) {
 	return i, j
 }
 
-// twoChoice maps the draws (i in [0,B-1], j in [0,B-2]) to two distinct
-// backends a < b and returns b if less(b, a), else a (ties go to the lower id).
+// twoChoice maps the draws (i in [0,n-1], j in [0,n-2]) to two distinct
+// members a < b of L and returns b if less(b, a), else a (ties go to the lower id).
 //
 // Design: abstraction/ingress/load_balancer/design.md#lbpolicy
-func twoChoice(i, j uint64, less func(x, y uint64) bool) uint32 {
+func twoChoice(live []uint64, i, j uint64, less func(x, y uint64) bool) uint32 {
 	if j >= i {
-		j++ // uniform over the other B-1 backends
+		j++ // uniform over the other n-1 positions
 	}
-	lo, hi := min(i, j), max(i, j)
+	lo, hi := live[min(i, j)], live[max(i, j)] // L is in id order
 	if less(hi, lo) {
 		return uint32(hi)
 	}

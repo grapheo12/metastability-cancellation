@@ -90,3 +90,31 @@ Worked example, `heartbeat_timeout_ms = 1000`, heartbeats every 500 ms from back
 | Stream ends mid-line | The partial line is dropped |
 | Shutdown while a reader is dialing | `monitor_stop` closes the connection; the reader sees `stop` and returns |
 | Every backend dead | Only the Load Balancer's choice changes ([../load_balancer/design.md#lbpolicy](../load_balancer/design.md#lbpolicy)) |
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`.
+
+### Go choices
+
+- File `internal/ingress/heartbeat.go`. `monitor_start` is `StartMonitor(cfg, start)` and returns `nil` when off; `is_live` is the nil-safe method `(*HeartbeatMonitor).IsLive(s)`; `monitor_stop` is `Stop()`, also nil-safe.
+- Times: `base` is the start `time.Time` (monotonic reading). `lastHb[s]` is an `atomic.Int64` of ns since `base`, starting at `0`, which is the design's `start_ns`. `live` is `[]atomic.Bool`.
+- `stop` is a `context.Context` cancelled by `Stop`. It is the request context of every `GET /heartbeat` (cancelling it ends a blocked body read) and ends the redial and checker waits. `Stop` waits on a `sync.WaitGroup`. The checker appends to `log` without a lock; `Stop` reads it only after `Wait`.
+- A reader dials with `h2client.Dial` (the same dial as the Upstream Pool and the LoadCanceller, with the 5 s timeout of `UPSTREAM_DIAL_TIMEOUT_MS`). It sends the request with `CC.RoundTrip` and reads lines with `bufio.Reader.ReadBytes('\n')`. The checker is a `time.Ticker` of `HEARTBEAT_CHECK_MS`, and each tick is `check(now)`, which a test can call with any time.
+- Tests: `heartbeat_test.go`:
+  - `TestBackendLivenessWorkedExample` replays the worked example on fixed times, plus the nil monitor.
+  - `TestHeartbeatMonitorDropsFrozenBackend` runs two real servers with `HeartbeatIntervalMs: 100`; one freezes 300 ms after its first `/ping`. With `heartbeat_timeout_ms = 300`, it checks that backend 0 turns dead and backend 1 stays live, that no new forward goes to backend 0, and the rows of `liveness.csv`.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [HeartbeatReader](#heartbeatreader) | [heartbeat.go:54](../../../implementation/go/internal/ingress/heartbeat.go#L54), [heartbeat.go:82](../../../implementation/go/internal/ingress/heartbeat.go#L82), [heartbeat.go:98](../../../implementation/go/internal/ingress/heartbeat.go#L98), [heartbeat_test.go:114](../../../implementation/go/internal/ingress/heartbeat_test.go#L114) |
+| [BackendLiveness](#backendliveness) | [heartbeat.go:124](../../../implementation/go/internal/ingress/heartbeat.go#L124), [heartbeat.go:140](../../../implementation/go/internal/ingress/heartbeat.go#L140), [heartbeat.go:154](../../../implementation/go/internal/ingress/heartbeat.go#L154), [heartbeat.go:162](../../../implementation/go/internal/ingress/heartbeat.go#L162), [heartbeat_test.go:33](../../../implementation/go/internal/ingress/heartbeat_test.go#L33) |
+| [Failure and edge cases](#failure-and-edge-cases) | [heartbeat.go:106](../../../implementation/go/internal/ingress/heartbeat.go#L106) |
+<!-- trace:end -->

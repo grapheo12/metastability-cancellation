@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.1.17)
+// Source: abstraction/ingress/design.md (ingress v0.2.1)
 package ingress
 
 import (
@@ -28,6 +28,7 @@ type Ingress struct {
 	inflight *InFlightMap
 	lb       *LoadBalancer
 	pool     *UpstreamPool
+	monitor  *HeartbeatMonitor // nil when heartbeat_timeout_ms = 0
 	h2s      *http2.Server
 	base     *http.Server // only carries the shutdown hook that sends GOAWAY
 
@@ -43,7 +44,7 @@ type Ingress struct {
 }
 
 // Listen creates the shared state, binds listen_addr and prints
-// "listening on <addr>". No backend is contacted.
+// "listening on <addr>". Only the Heartbeat Monitor (if on) contacts the backends.
 //
 // API: abstraction/ingress/api.md#lifecycle
 // Design: abstraction/ingress/design.md#structure
@@ -51,7 +52,6 @@ func Listen(cfg Config) (*Ingress, error) {
 	ing := &Ingress{
 		cfg:      cfg,
 		inflight: NewInFlightMap(cfg.NumClients),
-		lb:       NewLoadBalancer(cfg),
 		pool:     NewUpstreamPool(cfg.Backends),
 		h2s:      &http2.Server{MaxConcurrentStreams: 1000},
 		base:     &http.Server{},
@@ -65,6 +65,8 @@ func Listen(cfg Config) (*Ingress, error) {
 		return nil, err
 	}
 	ing.ln = ln
+	ing.monitor = StartMonitor(cfg, time.Now()) // dials every backend for GET /heartbeat; nil when off
+	ing.lb = NewLoadBalancer(cfg, ing.monitor)
 	fmt.Println("listening on " + cfg.ListenAddr)
 	return ing, nil
 }
@@ -138,6 +140,7 @@ func (ing *Ingress) Shutdown() error {
 	}
 	ing.mu.Unlock()
 	ing.wg.Wait()
+	liveness := ing.monitor.Stop() // nil-safe
 
 	runEnd := 0.0
 	if started {
@@ -149,6 +152,13 @@ func (ing *Ingress) Shutdown() error {
 	if err := writeForwardsCSV(ing.cfg.OutputPath+".forwards.csv", ing.lb.ForwardLog(), runStart); err != nil {
 		return err
 	}
+	base := runStart
+	if !started && ing.monitor != nil {
+		base = ing.monitor.base // no /ping: times from the monitor's start
+	}
+	if err := writeLivenessCSV(ing.cfg.OutputPath+".liveness.csv", liveness, base); err != nil {
+		return err
+	}
 	var runStartUnixNs uint64
 	if started {
 		// Design: abstraction/ingress/design.md#time-base
@@ -158,16 +168,17 @@ func (ing *Ingress) Shutdown() error {
 }
 
 type summaryConfig struct {
-	ListenAddr     string   `json:"listen_addr"`
-	Backends       []string `json:"backends"`
-	NumClients     uint32   `json:"num_clients"`
-	LbPolicy       string   `json:"lb_policy"`
-	EwmaBeta       float64  `json:"ewma_beta"`
-	CancelRate     float64  `json:"cancel_rate"`
-	DurationS      float64  `json:"duration_s"`
-	InitialStallMs uint64   `json:"initial_stall_ms"`
-	Seed           uint64   `json:"seed"`
-	OutputPath     string   `json:"output_path"`
+	ListenAddr         string   `json:"listen_addr"`
+	Backends           []string `json:"backends"`
+	NumClients         uint32   `json:"num_clients"`
+	LbPolicy           string   `json:"lb_policy"`
+	EwmaBeta           float64  `json:"ewma_beta"`
+	CancelRate         float64  `json:"cancel_rate"`
+	DurationS          float64  `json:"duration_s"`
+	InitialStallMs     uint64   `json:"initial_stall_ms"`
+	HeartbeatTimeoutMs uint64   `json:"heartbeat_timeout_ms"`
+	Seed               uint64   `json:"seed"`
+	OutputPath         string   `json:"output_path"`
 }
 
 // Summary has the field order of the Ingress summary JSON.
@@ -187,7 +198,7 @@ func (ing *Ingress) writeSummary(records []*CancelRecord, runEndS float64, runSt
 	c := ing.cfg
 	counts, rates, targeted := summarizeCancels(records, c)
 	s := Summary{
-		Config:  summaryConfig{c.ListenAddr, c.Backends, c.NumClients, c.LbPolicy, c.EwmaBeta, c.CancelRate, c.DurationS, c.InitialStallMs, c.Seed, c.OutputPath},
+		Config:  summaryConfig{c.ListenAddr, c.Backends, c.NumClients, c.LbPolicy, c.EwmaBeta, c.CancelRate, c.DurationS, c.InitialStallMs, c.HeartbeatTimeoutMs, c.Seed, c.OutputPath},
 		RunEndS: runEndS, RunStartUnixNs: runStartUnixNs, Counts: counts, RatesPerS: rates, ClientsTargeted: targeted, Backends: ing.lb.Snapshot(),
 	}
 	b, err := json.MarshalIndent(s, "", "  ")
@@ -221,6 +232,34 @@ func writeForwardsCSV(path string, recs []ForwardRecord, runStart time.Time) err
 		w.WriteString(strconv.FormatInt(tNs[k], 10) + "," + strconv.FormatUint(uint64(r.ServerID), 10) + "," +
 			outcomeNames[r.Outcome] + "," + strconv.FormatUint(r.LatencyNs, 10) + "," +
 			strconv.FormatFloat(r.EwmaLatencyNs, 'f', -1, 64) + "\n") // shortest round-trip, no exponent
+	}
+	if err := w.Flush(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// writeLivenessCSV writes the LivenessLog with t_ns = at - base (signed; base
+// is run_start, or the monitor's start without a /ping). Header only when the
+// monitor is off.
+//
+// API: abstraction/ingress/heartbeat_monitor/api.md#output_pathlivenesscsv
+// Design: abstraction/ingress/design.md#shutdown
+func writeLivenessCSV(path string, recs []LivenessRecord, base time.Time) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	w := bufio.NewWriter(f)
+	w.WriteString("t_ns,server_id,live\n")
+	for _, r := range recs {
+		live := "0"
+		if r.Live {
+			live = "1"
+		}
+		w.WriteString(strconv.FormatInt(r.At.Sub(base).Nanoseconds(), 10) + "," +
+			strconv.FormatUint(uint64(r.ServerID), 10) + "," + live + "\n")
 	}
 	if err := w.Flush(); err != nil {
 		f.Close()

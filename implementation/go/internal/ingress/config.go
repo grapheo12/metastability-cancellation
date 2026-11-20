@@ -2,7 +2,7 @@
 // proxy in front of several servers, with an in-process LoadCanceller that
 // picks victims from the InFlightMap.
 //
-// Source: abstraction/ingress/design.md (ingress v0.1.17)
+// Source: abstraction/ingress/design.md (ingress v0.2.1)
 package ingress
 
 import (
@@ -47,26 +47,29 @@ type Config struct {
 	// InitialStallMs delays the LoadCanceller's first arrival; InitialStallNs is it in ns.
 	InitialStallMs uint64
 	InitialStallNs int64
+	// HeartbeatTimeoutMs: BackendLiveness timeout; 0: no Heartbeat Monitor.
+	HeartbeatTimeoutMs uint64
 }
 
 // Params holds the raw command-line values, named after the API parameters.
 type Params struct {
-	ListenAddr     string
-	Backends       string
-	NumClients     string
-	LbPolicy       string
-	EwmaBeta       string
-	CancelRate     string
-	DurationS      string
-	Seed           string
-	OutputPath     string
-	InitialStallMs string
+	ListenAddr         string
+	Backends           string
+	NumClients         string
+	LbPolicy           string
+	EwmaBeta           string
+	CancelRate         string
+	DurationS          string
+	Seed               string
+	OutputPath         string
+	InitialStallMs     string
+	HeartbeatTimeoutMs string
 }
 
 // DefaultParams returns the defaults from abstraction/ingress/api.md#program-parameters.
 func DefaultParams() Params {
 	return Params{ListenAddr: "0.0.0.0:9090", LbPolicy: PolicyLeastOutstanding, EwmaBeta: "0.7", CancelRate: "0", Seed: "0",
-		OutputPath: "ingress", InitialStallMs: "1000"}
+		OutputPath: "ingress", InitialStallMs: "1000", HeartbeatTimeoutMs: "0"}
 }
 
 // Validate turns Params into a Config or returns a one-line error.
@@ -126,6 +129,11 @@ func Validate(p Params) (Config, error) {
 		return c, errors.New("initial_stall_ms must be an integer >= 0")
 	}
 	c.InitialStallMs, c.InitialStallNs = st, int64(st)*1_000_000
+	ht, err := strconv.ParseUint(p.HeartbeatTimeoutMs, 10, 64)
+	if err != nil || ht > math.MaxInt64/1_000_000 {
+		return c, errors.New("heartbeat_timeout_ms must be an integer >= 0")
+	}
+	c.HeartbeatTimeoutMs = ht
 	c.OutputPath = p.OutputPath
 	return c, nil
 }

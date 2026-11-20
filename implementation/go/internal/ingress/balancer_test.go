@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.3.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.4.0)
 package ingress
 
 import (
@@ -12,8 +12,10 @@ func newLB(policy string, b int) *LoadBalancer {
 	for i := range backends {
 		backends[i] = "h:1"
 	}
-	return NewLoadBalancer(Config{LbPolicy: policy, EwmaBeta: 0.7, Backends: backends, Seed: 7})
+	return NewLoadBalancer(Config{LbPolicy: policy, EwmaBeta: 0.7, Backends: backends, Seed: 7}, nil)
 }
+
+var all3 = []uint64{0, 1, 2} // L with every one of three backends live
 
 func setOutstanding(lb *LoadBalancer, vals ...int64) {
 	for i, v := range vals {
@@ -63,7 +65,7 @@ func TestPowerOfTwoWorkedExample(t *testing.T) {
 		i, j uint64
 		want uint32
 	}{{0, 0, 1}, {2, 1, 1}, {0, 1, 2}, {2, 0, 2}} {
-		if got := twoChoice(c.i, c.j, less); got != c.want {
+		if got := twoChoice(all3, c.i, c.j, less); got != c.want {
 			t.Fatalf("draws (%d,%d): got %d want %d", c.i, c.j, got, c.want)
 		}
 	}
@@ -167,7 +169,7 @@ func TestEwmaWorkedExample(t *testing.T) {
 		i, j uint64
 		want uint32
 	}{{0, 0, 0}, {2, 1, 2}, {0, 1, 0}, {2, 0, 0}} {
-		if got := twoChoice(c.i, c.j, less); got != c.want {
+		if got := twoChoice(all3, c.i, c.j, less); got != c.want {
 			t.Fatalf("draws (%d,%d): got %d want %d", c.i, c.j, got, c.want)
 		}
 	}
@@ -178,12 +180,12 @@ func TestEwmaWorkedExample(t *testing.T) {
 		if j >= i {
 			j++
 		}
-		if got := twoChoice(c[0], c[1], sless); got != uint32(min(i, j)) {
+		if got := twoChoice(all3, c[0], c[1], sless); got != uint32(min(i, j)) {
 			t.Fatalf("start, draws %v: got %d, want the lower id", c, got)
 		}
 	}
 	setOutstanding(start, 0, 1, 0)
-	if got := twoChoice(0, 0, sless); got != 0 {
+	if got := twoChoice(all3, 0, 0, sless); got != 0 {
 		t.Fatalf("(0,1,0) draws (0,0): got %d", got)
 	}
 	for i := 0; i < 100; i++ {
