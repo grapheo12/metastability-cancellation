@@ -20,3 +20,4 @@
 | 0.14.0 | 2026-11-12T00:00:00Z | Load generator program parameter `initial_stall_ms`; `expand_sweep` copies the point's `server.initial_stall_ms` to the load generator unless `load_gen` sets it |
 | 0.15.0 | 2026-11-13T00:00:00Z | Server program parameter `queue_discipline` (settable and sweepable) |
 | 0.16.0 | 2026-11-18T00:00:00Z | LinkedSweep: `[run] link` maps a linked array parameter to a swept driver key; the linked key takes the driver's index at each point, is not a sweep dimension and is recorded in the new SweepPoint field `linked`; validation errors and worked examples |
+| 0.17.0 | 2026-11-19T00:00:00Z | ServerMachines: `[machines.server]` may be an array of 1..=16 distinct tables; `instances` is per server machine; global instance ids (machine by machine), Backends across machines, new SweepPoint field `server_hosts`; `ingress.machine = "server"` needs one server machine; validation errors and worked examples |

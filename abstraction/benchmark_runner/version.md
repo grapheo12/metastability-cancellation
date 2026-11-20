@@ -48,3 +48,4 @@
 | 0.3.0 | 2026-11-18T00:00:00Z | New subcomponent Retry Timeout (RetryTimeoutCalculator 0.1.0) and the command `bench retry-timeout` |
 | 0.4.0 | 2026-11-18T00:00:00Z | Retry Timeout 0.2.0: `bench retry-timeout --eta` and new command `bench stable-eta` |
 | 0.4.1 | 2026-11-18T00:00:00Z | Child bump: retry_timeout 0.3.0 (Convergence, Lean proofs) |
+| 0.5.0 | 2026-11-19T00:00:00Z | Several server machines: Run flow opens and sets up every ServerMachine in parallel and passes the list on; Config 0.17.0 (ServerMachines) |

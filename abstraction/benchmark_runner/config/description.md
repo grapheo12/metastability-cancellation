@@ -11,8 +11,11 @@ Leaf component. It turns the operator's TOML file into a validated **BenchConfig
   keeps the three programs consistent with each other.
 - Each program can be given a **ProcessPlacement** (a worker-thread count and a CPU set), so the programs can be
   split across the cores of a machine. It is fixed for the whole run.
+- The servers run on one or more **ServerMachines**, each with the same number of instances; the Ingress spreads
+  the load over all of them.
 - The Ingress runs on the client machine or, by its **IngressPlacement**, on the server machine next to the
-  servers. That choice sets the load generator's target and the Ingress's backend addresses.
+  servers (only when there is one). That choice sets the load generator's target and the Ingress's backend
+  addresses.
 - The Ingress's cancel rate can be given as a **CancelRateFraction** of the load generator's `global_rate`, so a
   sweep over offered load keeps the cancel load proportional. The fraction itself can be swept.
 - A **LinkedSweep** pairs an array parameter with a swept key element by element instead of crossing them, so a

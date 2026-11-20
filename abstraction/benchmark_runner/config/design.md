@@ -26,7 +26,8 @@ function load_config(path):
     allowed tables: repo, machines (with exactly server, client), server, load_gen, ingress, run
     repo_url = doc.repo.url if present else git_origin_url_of_operator_repo()
     if repo_url is none: ConfigError("[repo] url is required (no origin remote)")
-    for m in [server, client]: validate_machine(m)
+    server_machines = validate_server_machines(doc.machines.server)   # ServerMachines: a list, in file order
+    client_machine  = validate_machine(client, doc.machines.client, "machines.client")
     for section in SECTIONS:
         for key, value in doc[section] in file order:
             if key in FORBIDDEN[section]: ConfigError("<section>.<key> is set by the runner")
@@ -44,7 +45,7 @@ function load_config(path):
     require server.gc_trace, if present, is a boolean    else ConfigError("server.gc_trace must be true or false")   # GcTrace
     require server.listen_port + server.instances - 1 <= 65535
                          else ConfigError("server.listen_port + server.instances - 1 must be <= 65535")
-    check_ingress_placement(config)                           # IngressPlacement: port collision
+    check_ingress_placement(config)                           # IngressPlacement: one server machine, port collision
     validate run table; fill defaults
     link = run.link or empty map                              # LinkedSweep
     # swept keys: every array-valued program parameter and every array-valued SWEEPABLE_RUNNER_KEY,
@@ -65,16 +66,17 @@ Error messages for the runner keys added with ProcessPlacement and CancelRateFra
 | `instances` not an integer in `1..=64` | `server.instances must be an integer in 1..=64` |
 | `gc_trace` not a boolean (an array included: it cannot be swept) | `server.gc_trace must be true or false` |
 | `machine` not `"client"` or `"server"` | `ingress.machine must be "client" or "server"` |
+| `[machines.server]` problems | see [ServerMachines](#servermachines) |
 | a `[canceller]` table (from before the Ingress) | `unknown table [canceller]` |
 | `run.link` problems | see [LinkedSweep](#linkedsweep) |
 | `[server] queue_log_path` | `server.queue_log_path is set by the runner` (the Experiment Executor always sets it, [../experiment_executor/design.md#serverlifecycle](../experiment_executor/design.md#serverlifecycle)) |
 
 ```
-function validate_machine(role, table):
+function validate_machine(role, table, label):              # label: "machines.client", "machines.server" or "machines.server[<m>]"
     allowed keys: host, user, ssh_key, ssh_port, workdir, plus data_addr for the server
-    host: non-empty string                                   else ConfigError("machines.<role>.host is required")
-    user, ssh_key: absent, or non-empty strings              else ConfigError("machines.<role>.<key> must be a non-empty string")
-    ssh_port: absent, or integer in 1..=65535                else ConfigError("machines.<role>.ssh_port must be an integer in 1..=65535")
+    host: non-empty string                                   else ConfigError("<label>.host is required")
+    user, ssh_key: absent, or non-empty strings              else ConfigError("<label>.<key> must be a non-empty string")
+    ssh_port: absent, or integer in 1..=65535                else ConfigError("<label>.ssh_port must be an integer in 1..=65535")
     workdir: non-empty string, default "~/cancellation-bench"
     if role == server:
         data_addr = table.data_addr if present
@@ -92,7 +94,7 @@ of setup compares `(host, user, ssh_port, workdir)` with unset values compared a
 | `host = "metafail-exp-1"` only (server) | user, key and port none; `data_addr` = `HostName` from `ssh -G`, e.g. `18.144.18.190` |
 | `host = "metafail-exp-1"`, `data_addr = "172.31.23.63"` | `data_addr = "172.31.23.63"` (explicit wins) |
 | `host = "local"` | `data_addr = "127.0.0.1"`; SSH keys ignored |
-| `user = ""` | ConfigError `machines.server.user must be a non-empty string` |
+| `user = ""` (one server table) | ConfigError `machines.server.user must be a non-empty string` |
 
 The names in `PROGRAM_PARAMS` are the parameter tables of [../../api.md](../../api.md). The runner checks only
 names and shapes. Values are validated by the programs themselves, which fail fast on bad values
@@ -130,7 +132,8 @@ function expand_sweep(config):
                       for (program, section) in [("server", "server"), ("loadgen", "load_gen"),
                                                  ("ingress", "ingress")] }
         points.append(SweepPoint(id, swept, linked, server_args, loadgen_args, ingress_args,
-                                 config.server.instances, config.ingress.machine, loadgen_target(config),
+                                 len(config.machines.server) × config.server.instances,   # ServerMachines
+                                 server_hosts(config), config.ingress.machine, loadgen_target(config),
                                  placement))
     return points          # with no swept keys: exactly one point, id 0
 ```
@@ -164,23 +167,76 @@ plots ([../result_plotter/design.md#sweepplots](../result_plotter/design.md#swee
 `num_clients` is required by the load generator, and the Ingress always receives the same value, so its
 InFlightMap has exactly one slot per load-generator client at every point.
 
+## ServerMachines
+
+The **ServerMachines** are the machines that run the server instances. `[machines.server]` is either one table (one
+server machine, as before) or an array of tables (`[[machines.server]]`), one per server machine, in file order.
+`config.machines.server` is always the list, of length `M >= 1`.
+
+```
+MAX_SERVER_MACHINES = 16
+
+function validate_server_machines(value):
+    if value is a table: return [validate_machine(server, value, "machines.server")]
+    if value is not an array of tables, or has 0 or more than MAX_SERVER_MACHINES elements:
+        ConfigError("machines.server must be a table or an array of 1..=16 tables")
+    machines = [validate_machine(server, t, "machines.server[" + decimal(m) + "]") for m, t in enumerate(value)]
+    for a < b: if (machines[a].host, .user, .ssh_port, .workdir) == (machines[b].host, .user, .ssh_port, .workdir):
+        ConfigError("machines.server[<a>] and machines.server[<b>] are the same machine (use server.instances)")
+    return machines
+
+function instance_machine(config, id):          # id in 0 ..= M × instances - 1
+    return id div config.server.instances         # integer division
+
+function instance_port(config, id):
+    return config.server.listen_port + id mod config.server.instances
+
+function server_hosts(config):
+    return [instance_machine(config, id) for id in 0 ..= len(config.machines.server) × config.server.instances - 1]
+```
+
+- **`instances` is per machine.** Every server machine runs `[server] instances` processes, so the system has
+  `M × instances` instances. They are numbered machine by machine: instance `id` runs on server machine
+  `id div instances` and listens on `listen_port + id mod instances` there. With one machine, `id = k` as before.
+- **The id is global.** It is the Ingress's `server_id`, the `<k>` of every `server_<k>.*` file, and an index into
+  `server_hosts` (recorded in the SweepPoint), so outputs and plots need not know which machine an instance ran on.
+- **Different machines only.** Two tables naming the same machine would start instances on the same ports; more
+  instances on one machine are asked for with `instances`. The server machines may still be the client machine
+  (the same-machine rule of setup applies per pair, [../remote_setup/design.md#machine-setup](../remote_setup/design.md#machine-setup)).
+
+| `[machines.server]` | `instances` | Instances (id → machine, port) | `server_hosts` |
+|---|---|---|---|
+| one table | 2 | 0 → 0, 8080; 1 → 0, 8081 | `[0, 0]` |
+| two tables | 1 | 0 → 0, 8080; 1 → 1, 8080 | `[0, 1]` |
+| two tables | 2 | 0 → 0, 8080; 1 → 0, 8081; 2 → 1, 8080; 3 → 1, 8081 | `[0, 0, 1, 1]` |
+
+| Situation | ConfigError message |
+|---|---|
+| `machines.server = []`, or 17 tables, or a string | `machines.server must be a table or an array of 1..=16 tables` |
+| second table with `user = ""` | `machines.server[1].user must be a non-empty string` |
+| two tables with the same `host` and no `user`, `ssh_port`, `workdir` | `machines.server[0] and machines.server[1] are the same machine (use server.instances)` |
+
 ## Backends
 
 ```
 function backend_list(config):
-    host = "127.0.0.1" if config.ingress.machine == "server" else config.machines.server.data_addr
-    return ",".join(host + ":" + decimal(config.server.listen_port + k)
-                    for k in 0 ..= config.server.instances - 1)
+    ids = 0 ..= len(config.machines.server) × config.server.instances - 1
+    if config.ingress.machine == "server":        # exactly one server machine (IngressPlacement)
+        return ",".join("127.0.0.1:" + decimal(instance_port(config, id)) for id in ids)
+    return ",".join(config.machines.server[instance_machine(config, id)].data_addr + ":" +
+                    decimal(instance_port(config, id)) for id in ids)
 ```
 
-`server_id` `k` is instance `k`. An Ingress on the client machine reaches the servers at the server machine's
-`data_addr`; an Ingress on the server machine reaches them locally ([IngressPlacement](#ingressplacement)).
+`server_id` `id` is instance `id` ([ServerMachines](#servermachines)). An Ingress on the client machine reaches each
+instance at its server machine's `data_addr`; an Ingress on the server machine reaches them locally
+([IngressPlacement](#ingressplacement)).
 
-| `ingress.machine` | `data_addr` | `listen_port` | `instances` | `backends` |
+| `ingress.machine` | Server machines' `data_addr` | `listen_port` | `instances` | `backends` |
 |---|---|---|---|---|
 | `client` | `172.31.23.63` | 8080 | 2 | `172.31.23.63:8080,172.31.23.63:8081` |
 | `server` | `172.31.23.63` | 8080 | 2 | `127.0.0.1:8080,127.0.0.1:8081` |
 | `client` | `127.0.0.1` | 8080 | 1 | `127.0.0.1:8080` |
+| `client` | `172.31.30.174`, `172.31.21.15` | 8080 | 1 | `172.31.30.174:8080,172.31.21.15:8080` |
 
 ## IngressPlacement
 
@@ -190,10 +246,12 @@ Ingress on and collects its outputs from.
 
 ```
 function loadgen_target(config):
-    host = "127.0.0.1" if config.ingress.machine == "client" else config.machines.server.data_addr
+    host = "127.0.0.1" if config.ingress.machine == "client" else config.machines.server[0].data_addr
     return host + ":" + decimal(config.ingress.listen_port)
 
 function check_ingress_placement(config):
+    if config.ingress.machine == "server" and len(config.machines.server) > 1:
+        ConfigError("ingress.machine = \"server\" needs exactly one server machine")
     if config.ingress.machine == "server" and
        config.server.listen_port <= config.ingress.listen_port <= config.server.listen_port + config.server.instances - 1:
         ConfigError("ingress.listen_port collides with a server instance port")
@@ -211,6 +269,7 @@ With `server`, the Ingress shares the server machine's CPUs with the server inst
 | Situation | ConfigError message |
 |---|---|
 | `machine = "server"` and `ingress.listen_port` in the server ports | `ingress.listen_port collides with a server instance port` |
+| `machine = "server"` and more than one server machine | `ingress.machine = "server" needs exactly one server machine` |
 
 ## ProcessPlacement
 
