@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.2.2)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.3.0)
 package ingress
 
 import (
@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -107,8 +108,22 @@ func TestForwardRelayAndSpread(t *testing.T) {
 		t.Fatalf("run_start_unix_ns %d not within the last minute", s.RunStartUnixNs)
 	}
 	if len(s.Backends) != 2 || s.Backends[0].Forwarded != 6 || s.Backends[1].Forwarded != 6 ||
-		s.Backends[0].OK+s.Backends[1].OK != 12 || s.Counts.Scheduled != 0 || s.RunEndS <= 0 {
+		s.Backends[0].OK+s.Backends[1].OK != 12 || s.Counts.Scheduled != 0 || s.RunEndS <= 0 ||
+		s.Backends[0].EwmaExecNs == nil || s.Backends[1].EwmaExecNs == nil {
 		t.Fatalf("summary %+v", s)
+	}
+	// The backends' ExecReports reach the ForwardLog: every ok row has an exec_ns.
+	// Design: abstraction/ingress/frontend/design.md#forwardtask
+	fw, _ := os.ReadFile(ing.cfg.OutputPath + ".forwards.csv")
+	rows := strings.Split(strings.TrimSuffix(string(fw), "\n"), "\n")
+	if rows[0] != "t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns" || len(rows) != 13 {
+		t.Fatalf("forwards.csv:\n%s", fw)
+	}
+	for _, r := range rows[1:] {
+		f := strings.Split(r, ",")
+		if f[2] != "ok" || f[5] == "" || f[6] == "" {
+			t.Fatalf("ok row without exec_ns/ewma_exec_ns: %s", r)
+		}
 	}
 	if _, err := os.Stat(ing.cfg.OutputPath + ".cancels.csv"); err != nil {
 		t.Fatal("cancels.csv must exist even with the canceller off")

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.2.1)
+// Source: abstraction/ingress/design.md (ingress v0.3.1)
 package ingress
 
 import (
@@ -226,12 +226,20 @@ func writeForwardsCSV(path string, recs []ForwardRecord, runStart time.Time) err
 	}
 	sort.SliceStable(order, func(a, b int) bool { return tNs[order[a]] < tNs[order[b]] })
 	w := bufio.NewWriter(f)
-	w.WriteString("t_ns,server_id,outcome,latency_ns,ewma_latency_ns\n")
+	w.WriteString("t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns\n")
 	for _, k := range order {
 		r := recs[k]
+		exec, ewmaExec := "", "" // empty when none
+		if r.HasExec {
+			exec = strconv.FormatUint(r.ExecNs, 10)
+		}
+		if r.HasEwmaExec {
+			ewmaExec = strconv.FormatFloat(r.EwmaExecNs, 'f', -1, 64)
+		}
 		w.WriteString(strconv.FormatInt(tNs[k], 10) + "," + strconv.FormatUint(uint64(r.ServerID), 10) + "," +
 			outcomeNames[r.Outcome] + "," + strconv.FormatUint(r.LatencyNs, 10) + "," +
-			strconv.FormatFloat(r.EwmaLatencyNs, 'f', -1, 64) + "\n") // shortest round-trip, no exponent
+			strconv.FormatFloat(r.EwmaLatencyNs, 'f', -1, 64) + "," + // shortest round-trip, no exponent
+			exec + "," + ewmaExec + "\n")
 	}
 	if err := w.Flush(); err != nil {
 		f.Close()

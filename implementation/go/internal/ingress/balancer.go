@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.4.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.5.0)
 package ingress
 
 import (
@@ -38,7 +38,18 @@ type BackendStats struct {
 	//
 	// Design: abstraction/ingress/load_balancer/design.md#ewmalatency
 	EwmaBits atomic.Uint64
+	// ExecBits is the EwmaExecTime in ns, as math.Float64bits, or
+	// execNoSampleBits before the first sample.
+	//
+	// Design: abstraction/ingress/load_balancer/design.md#ewmaexectime
+	ExecBits atomic.Uint64
 }
+
+// execNoSampleBits is EXEC_NO_SAMPLE: the quiet NaN 0x7FF8000000000000, stored
+// in ExecBits until the backend's first ExecutionTime sample.
+//
+// API: abstraction/ingress/load_balancer/api.md#constants
+const execNoSampleBits = 0x7FF8000000000000
 
 // EwmaInitialLatencyNs is every backend's EwmaLatency before its first sample.
 //
@@ -65,6 +76,8 @@ type BackendStatsValue struct {
 	Reset      uint64 `json:"reset"`
 	// EwmaLatencyNs is the final EwmaLatency.
 	EwmaLatencyNs float64 `json:"ewma_latency_ns"`
+	// EwmaExecNs is the final EwmaExecTime; nil (JSON null) before a sample.
+	EwmaExecNs *float64 `json:"ewma_exec_ns"`
 }
 
 // outcomeNames are the ForwardOutcome words of forwards.csv, by enum value.
@@ -79,6 +92,10 @@ type ForwardRecord struct {
 	Outcome       ForwardOutcome
 	LatencyNs     uint64
 	EwmaLatencyNs float64 // the backend's EwmaLatency right after this finish
+	ExecNs        uint64  // the ExecutionTime the backend reported; valid if HasExec
+	HasExec       bool
+	EwmaExecNs    float64 // the backend's EwmaExecTime right after this finish; valid if HasEwmaExec
+	HasEwmaExec   bool
 }
 
 // LoadBalancer picks a backend per forward and keeps BackendStats.
@@ -111,6 +128,7 @@ func NewLoadBalancer(cfg Config, monitor *HeartbeatMonitor) *LoadBalancer {
 	}
 	for i := range lb.stats {
 		lb.stats[i].EwmaBits.Store(math.Float64bits(EwmaInitialLatencyNs))
+		lb.stats[i].ExecBits.Store(execNoSampleBits)
 	}
 	return lb
 }
@@ -128,10 +146,12 @@ func (lb *LoadBalancer) Pick() ForwardTicket {
 }
 
 // Finish ends a forward started by Pick: counters, then one clock read; an ok
-// forward is an EwmaLatency sample; every forward gets a ForwardRecord.
+// forward is an EwmaLatency sample, an ok or rejected forward with the
+// backend's ExecutionTime (hasExec) an EwmaExecTime sample; every forward gets
+// a ForwardRecord.
 //
 // Design: abstraction/ingress/load_balancer/design.md#loadbalancer
-func (lb *LoadBalancer) Finish(t ForwardTicket, outcome ForwardOutcome) {
+func (lb *LoadBalancer) Finish(t ForwardTicket, outcome ForwardOutcome, execNs uint64, hasExec bool) {
 	st := &lb.stats[t.ServerID]
 	st.Outstanding.Add(-1)
 	switch outcome {
@@ -155,9 +175,22 @@ func (lb *LoadBalancer) Finish(t ForwardTicket, outcome ForwardOutcome) {
 	} else {
 		e = math.Float64frombits(st.EwmaBits.Load())
 	}
+	// Design: abstraction/ingress/load_balancer/design.md#ewmaexectime
+	sample := hasExec && (outcome == OutcomeOK || outcome == OutcomeRejected)
+	var x float64
+	var hasX bool
+	if sample {
+		x, hasX = lb.ewmaExecUpdate(t.ServerID, execNs), true
+	} else {
+		x, hasX = lb.execValue(t.ServerID)
+	}
+	if !sample {
+		execNs = 0 // none unless ok/rejected with a report
+	}
 	// Design: abstraction/ingress/load_balancer/design.md#forwardlog
 	lb.logMu.Lock()
-	lb.log = append(lb.log, ForwardRecord{End: end, ServerID: t.ServerID, Outcome: outcome, LatencyNs: latencyNs, EwmaLatencyNs: e})
+	lb.log = append(lb.log, ForwardRecord{End: end, ServerID: t.ServerID, Outcome: outcome, LatencyNs: latencyNs, EwmaLatencyNs: e,
+		ExecNs: execNs, HasExec: sample, EwmaExecNs: x, HasEwmaExec: hasX})
 	lb.logMu.Unlock()
 }
 
@@ -191,6 +224,37 @@ func ewmaNext(old float64, sampleNs uint64, beta float64) float64 {
 	return old*beta + float64(sampleNs)*(1-beta)
 }
 
+// ewmaExecUpdate folds one ExecutionTime into the backend's EwmaExecTime with
+// a CAS loop; the first sample becomes the average.
+//
+// Design: abstraction/ingress/load_balancer/design.md#ewmaexectime
+func (lb *LoadBalancer) ewmaExecUpdate(s uint32, sampleNs uint64) float64 {
+	e := &lb.stats[s].ExecBits
+	for {
+		oldBits := e.Load()
+		var next float64
+		if oldBits == execNoSampleBits {
+			next = float64(sampleNs)
+		} else {
+			next = ewmaNext(math.Float64frombits(oldBits), sampleNs, lb.beta)
+		}
+		if e.CompareAndSwap(oldBits, math.Float64bits(next)) {
+			return next
+		}
+	}
+}
+
+// execValue reads the backend's EwmaExecTime; ok is false before a sample.
+//
+// Design: abstraction/ingress/load_balancer/design.md#ewmaexectime
+func (lb *LoadBalancer) execValue(s uint32) (float64, bool) {
+	bits := lb.stats[s].ExecBits.Load()
+	if bits == execNoSampleBits {
+		return 0, false
+	}
+	return math.Float64frombits(bits), true
+}
+
 // ewmaScore is (outstanding + 1) * EwmaLatency.
 //
 // Design: abstraction/ingress/load_balancer/design.md#ewmascore
@@ -216,8 +280,12 @@ func (lb *LoadBalancer) Snapshot() []BackendStatsValue {
 	out := make([]BackendStatsValue, len(lb.stats))
 	for i := range lb.stats {
 		st := &lb.stats[i]
+		var exec *float64
+		if x, ok := lb.execValue(uint32(i)); ok {
+			exec = &x
+		}
 		out[i] = BackendStatsValue{uint32(i), lb.backends[i], st.Forwarded.Load(), st.OK.Load(), st.Rejected.Load(),
-			st.BadRequest.Load(), st.BadGateway.Load(), st.Reset.Load(), math.Float64frombits(st.EwmaBits.Load())}
+			st.BadRequest.Load(), st.BadGateway.Load(), st.Reset.Load(), math.Float64frombits(st.EwmaBits.Load()), exec}
 	}
 	return out
 }

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.4.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.5.0)
 package ingress
 
 import (
@@ -92,7 +92,7 @@ func TestSingleBackendAndStats(t *testing.T) {
 	if lb.stats[s].Outstanding.Load() != 1 || lb.totalOutstanding() != 1 {
 		t.Fatal("pick counts outstanding")
 	}
-	lb.Finish(tk, OutcomeRejected)
+	lb.Finish(tk, OutcomeRejected, 0, false)
 	v := lb.Snapshot()[s]
 	if lb.totalOutstanding() != 0 || v.Forwarded != 1 || v.Rejected != 1 || v.ServerID != s ||
 		v.EwmaLatencyNs != EwmaInitialLatencyNs {
@@ -109,7 +109,7 @@ func TestEwmaOnlyOkSamples(t *testing.T) {
 		lb := newLB(PolicyRoundRobin, 1)
 		tk := lb.Pick()
 		tk.Start = tk.Start.Add(-5 * time.Millisecond) // pretend 5 ms passed
-		lb.Finish(tk, o)
+		lb.Finish(tk, o, 0, false)
 		if v := lb.Snapshot()[0].EwmaLatencyNs; v != EwmaInitialLatencyNs {
 			t.Fatalf("outcome %d moved the EwmaLatency to %v", o, v)
 		}
@@ -117,7 +117,7 @@ func TestEwmaOnlyOkSamples(t *testing.T) {
 	lb := newLB(PolicyRoundRobin, 1)
 	tk := lb.Pick()
 	tk.Start = tk.Start.Add(-5 * time.Millisecond)
-	lb.Finish(tk, OutcomeOK)
+	lb.Finish(tk, OutcomeOK, 0, false)
 	// 1e6*0.7 + (>=5e6)*0.3 >= 2.2e6
 	if v := lb.Snapshot()[0].EwmaLatencyNs; v < 2.2e6 {
 		t.Fatalf("ok sample not applied: %v", v)
@@ -212,9 +212,9 @@ func TestForwardLog(t *testing.T) {
 	lb = newLB(PolicyEwma, 1)
 	tk := lb.Pick()
 	tk.Start = tk.Start.Add(-2 * time.Millisecond)
-	lb.Finish(tk, OutcomeOK)
+	lb.Finish(tk, OutcomeOK, 0, false)
 	tk = lb.Pick()
-	lb.Finish(tk, OutcomeRejected)
+	lb.Finish(tk, OutcomeRejected, 0, false)
 	log := lb.ForwardLog()
 	if len(log) != 2 || log[0].Outcome != OutcomeOK || log[1].Outcome != OutcomeRejected || log[0].ServerID != 0 {
 		t.Fatalf("log %+v", log)
@@ -228,5 +228,44 @@ func TestForwardLog(t *testing.T) {
 	log[0].ServerID = 9 // a copy
 	if lb.ForwardLog()[0].ServerID != 0 {
 		t.Fatal("ForwardLog must return a copy")
+	}
+}
+
+// The EwmaExecTime worked example (ewma_beta = 0.7, one backend, in finish order).
+//
+// Design: abstraction/ingress/load_balancer/design.md#ewmaexectime
+func TestEwmaExecTimeWorkedExample(t *testing.T) {
+	lb := newLB(PolicyRoundRobin, 1)
+	if v := lb.Snapshot()[0].EwmaExecNs; v != nil {
+		t.Fatalf("before a sample: %v, want null", *v)
+	}
+	steps := []struct {
+		outcome  ForwardOutcome
+		exec     uint64
+		hasExec  bool
+		want     float64
+		hasValue bool
+	}{
+		{OutcomeReset, 0, false, 0, false},
+		{OutcomeOK, 2_000_000, true, 2_000_000, true},
+		{OutcomeRejected, 1_000_000, true, 1_700_000, true},
+		{OutcomeBadGateway, 0, false, 1_700_000, true},
+		{OutcomeOK, 500_000, true, 1_340_000, true},
+		{OutcomeOK, 0, false, 1_340_000, true}, // old server: no ExecReport
+	}
+	for i, st := range steps {
+		lb.Finish(lb.Pick(), st.outcome, st.exec, st.hasExec)
+		r := lb.ForwardLog()[i]
+		if r.HasEwmaExec != st.hasValue || r.EwmaExecNs != st.want || r.HasExec != st.hasExec || r.ExecNs != st.exec {
+			t.Fatalf("step %d: %+v", i, r)
+		}
+	}
+	if v := lb.Snapshot()[0].EwmaExecNs; v == nil || *v != 1_340_000 {
+		t.Fatalf("summary ewma_exec_ns: %v", v)
+	}
+	// A bad_request never samples even if given an exec_ns.
+	lb.Finish(lb.Pick(), OutcomeBadRequest, 9, true)
+	if r := lb.ForwardLog()[len(steps)]; r.HasExec || r.EwmaExecNs != 1_340_000 {
+		t.Fatalf("bad_request sampled: %+v", r)
 	}
 }

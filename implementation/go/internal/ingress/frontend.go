@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.2.2)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.3.0)
 package ingress
 
 import (
@@ -71,8 +71,14 @@ func (ing *Ingress) handlePing(ctx context.Context, body []byte) fwdResponse {
 	ing.inflight.Publish(entry) // keyed by the RequestId
 	resp, outcome := ing.forward(ctx, clientID, s, body)
 	ing.inflight.Clear(entry) // before relaying the answer
+	var execNs uint64
+	var hasExec bool
+	if outcome == OutcomeOK || outcome == OutcomeRejected {
+		// ExecReport of the relayed body (relayed unchanged); StartSlack unused here.
+		execNs, hasExec, _, _ = protocol.ParseExecReport(resp.body)
+	}
 	// Design: abstraction/ingress/load_balancer/design.md#forwardticket
-	ing.lb.Finish(ticket, outcome) // after Clear: an ok latency ends when the answer is in
+	ing.lb.Finish(ticket, outcome, execNs, hasExec) // after Clear: an ok latency ends when the answer is in
 	return resp
 }
 
