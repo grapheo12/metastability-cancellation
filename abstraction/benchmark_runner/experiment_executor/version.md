@@ -13,3 +13,4 @@
 | 0.8.0 | 2026-11-19T00:00:00Z | Several ServerMachines: `run_point` takes the list `servers`; instance `k` runs on `servers[server_hosts[k]]` at `listen_port + local_index(k)`, with its pid, logs and outputs on that machine; `stop_servers(servers, server_hosts, …)`; new `stop_leftover_servers` (every `server_<j>.pid` on a machine) replaces cleanup by `MAX_INSTANCES`, which is removed; worked example |
 | 0.9.0 | 2026-11-19T00:00:00Z | FreezeTarget: `start_servers` appends `--freeze_after_ms` to the arguments of instance `point.freeze.instance` only |
 | 0.10.0 | 2026-11-20T00:00:00Z | Point outputs fetch `ingress.liveness.csv` (LivenessLog); its absence is not reported |
+| 0.11.0 | 2026-11-20T00:00:00Z | Load-generator timeout adds `drain_timeout_ms / 1000` when `slo_cancel = false` (DrainDeadline); worked example |

@@ -170,12 +170,20 @@ function client_run(point, config, client):
         wait $LP; L=$?
         echo "loadgen_exit=$L"
         [ "$L" -eq 0 ]
-    timeout = lg duration_s + lg slo_ms / 1000 + config.run.client_timeout_margin_s
+    drain_s = 0
+    if lg slo_cancel is false: drain_s = (lg drain_timeout_ms, or its default 10000) / 1000   # DrainDeadline
+    timeout = lg duration_s + lg slo_ms / 1000 + drain_s + config.run.client_timeout_margin_s
     r = run(client.transport, script joined with newlines, timeout)
     if r.exit_status == -1:                                   # timed out: kill what is left
         run(client.transport, "[ -f RD/loadgen.pid ] && kill -s KILL $(cat RD/loadgen.pid); true")
     return r.exit_status == 0
 ```
+
+The timeout is the load generator's own bound on its run
+([../../load_generator/run_controller/design.md#drainphase](../../load_generator/run_controller/design.md#drainphase))
+plus the margin: `duration_s + slo_ms / 1000` with SLOCancellation, plus `drain_timeout_ms / 1000` when
+`slo_cancel = false`. A point with `duration_s = 120`, `slo_ms = 5000`, `slo_cancel = false`,
+`drain_timeout_ms = 60000` and the default 60 s margin gets 120 + 5 + 60 + 60 = 245 s.
 
 The LoadCanceller's schedule starts at the Ingress's first `/ping`, so it lines up with the load generator
 without any coordination ([../../ingress/design.md#time-base](../../ingress/design.md#time-base)). Its sending phase
