@@ -64,8 +64,9 @@ The minimum body sizes, 76 bytes for a request and 42 for a response, come from
 | `cancel_rate` | float, cancels/s, `>= 0` | `0` | Rate of the LoadCanceller's Poisson process. `0` disables the LoadCanceller |
 | `duration_s` | float, s, `> 0` | required if `cancel_rate > 0`, else ignored | Length of the LoadCanceller's sending phase |
 | `initial_stall_ms` | integer, ms, `>= 0` | `1000` | The LoadCanceller schedules no cancel earlier than this after the Ingress's first `/ping`; sending still ends at `duration_s`. `0`: no stall ([ingress/load_canceller/design.md](ingress/load_canceller/design.md#cancelschedule)) |
+| `heartbeat_timeout_ms` | integer, ms, `>= 0` | `0` | A backend with no HeartbeatLine for this long gets no new requests, until its next one. `0`: off ([ingress/heartbeat_monitor/design.md](ingress/heartbeat_monitor/design.md#backendliveness)) |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for the LoadBalancer's and the LoadCanceller's random choices |
-| `output_path` | path prefix | `ingress` | Outputs go to `<output_path>.cancels.csv`, `<output_path>.forwards.csv` and `<output_path>.summary.json` |
+| `output_path` | path prefix | `ingress` | Outputs go to `<output_path>.cancels.csv`, `<output_path>.forwards.csv`, `<output_path>.liveness.csv` and `<output_path>.summary.json` |
 
 The Ingress's constants, outputs and lifecycle are in [ingress/api.md](ingress/api.md).
 

@@ -13,6 +13,9 @@ flowchart LR
   UP --> S0
   UP --> S1[server 1 ...]
   LC --> S1
+  HM[Heartbeat Monitor: reader per backend + checker] -->|"GET /heartbeat, own conn per backend"| S0
+  HM --> S1
+  LB -->|is_live| HM
 ```
 
 | Subcomponent | Responsibility | Spec |
@@ -22,6 +25,7 @@ flowchart LR
 | Upstream Pool | One h2c connection per (client, backend), dialed once, dropped on connection error | [upstream_pool/description.md](upstream_pool/description.md) |
 | Load Canceller | CancelSchedule from the first `/ping`, InFlightVictimChoice, `/cancel` on its own connection per backend | [load_canceller/description.md](load_canceller/description.md) |
 | Frontend | Client connections, ForwardTask per `/ping`, reset propagation, StartOnce | [frontend/description.md](frontend/description.md) |
+| Heartbeat Monitor | HeartbeatReader per backend, BackendLiveness (`is_live`), LivenessLog; off when `heartbeat_timeout_ms = 0` | [heartbeat_monitor/description.md](heartbeat_monitor/description.md) |
 
 ## Shared state
 
@@ -34,6 +38,7 @@ One of each per process, created at startup and never replaced:
 | `stats: array[B] of BackendStats` | Load Balancer | Frontend (outcomes), Shutdown (summary) |
 | ForwardLog | Load Balancer | Frontend (one append per `finish`), Shutdown (`forwards.csv`) |
 | `run_start` | set once, by the first `/ping` | Load Canceller (time base) |
+| `monitor: HeartbeatMonitor` or none | Heartbeat Monitor | Load Balancer (`is_live`), Shutdown (`liveness.csv`) |
 
 `B` is the number of backends.
 
@@ -52,6 +57,7 @@ function validate(params):
     if cancel_rate > 0: duration_s > 0 and finite           else error "duration_s is required with cancel_rate > 0"
     seed parses as u64                                      else error
     initial_stall_ms is an integer >= 0                     else error
+    heartbeat_timeout_ms is an integer >= 0                 else error "heartbeat_timeout_ms must be an integer >= 0"
     return IngressConfig(..., duration_ns = round(duration_s * 1e9) if cancel_rate > 0,
                          initial_stall_ns = initial_stall_ms * 1_000_000)
 ```
@@ -63,6 +69,8 @@ Duplicate backends are allowed: they are separate `server_id`s that happen to sh
 - **Frontend:** every `/ping` stream is handled by its own coroutine or thread, which blocks while the backend
   works. A reader for each client connection keeps reading frames while forwards are in progress, so a client's
   `RST_STREAM` is seen at once and passed upstream.
+- **Heartbeat Monitor:** one reader per backend, each blocked on its stream, and one checker on a timer. The
+  Load Balancer only loads their atomic `live` flags.
 - **Load Canceller:** one sender activity. Its `/cancel` responses are collected by the reader of its own
   connections, never by the sender.
 - **Lock-free paths:** the In-Flight Map, the BackendStats counters and each EwmaLatency (a compare-and-swap loop)
@@ -93,7 +101,8 @@ procedure shutdown():                                  # on interrupt or termina
     wait until no forward is in progress (sum of stats[*].outstanding == 0) or now() >= deadline
     stop the Load Canceller if it is still sending, then run its drain
     close every upstream and canceller connection           # errors ignored
-    write <output_path>.cancels.csv, <output_path>.forwards.csv and <output_path>.summary.json
+    liveness = heartbeat_monitor.monitor_stop(monitor) if monitor is not none else []
+    write <output_path>.cancels.csv, <output_path>.forwards.csv, <output_path>.liveness.csv and <output_path>.summary.json
     exit 0
 ```
 

@@ -1,6 +1,6 @@
 # Ingress — Description
 
-Subcomponents: In-Flight Map, Load Balancer, Upstream Pool, Load Canceller, Frontend.
+Subcomponents: In-Flight Map, Load Balancer, Upstream Pool, Load Canceller, Frontend, Heartbeat Monitor.
 
 The **Ingress** is a program that sits between the load generator's clients and several **server** instances
 (its **backends**). It exposes the same `POST /ping` as a server, so a client cannot tell the difference, but it
@@ -15,6 +15,8 @@ does no work itself:
 - The **LoadCanceller** runs inside the Ingress. On its Poisson clock it picks a victim uniformly from the
   InFlightMap (**InFlightVictimChoice**) and sends `DELETE /cancel` for that exact RequestId to the backend that
   holds it. It no longer guesses ids.
+- With `heartbeat_timeout_ms` set, the **Heartbeat Monitor** reads every backend's Heartbeat, and the LoadBalancer
+  sends new requests only to backends that are still live.
 
 The Ingress exists so that experiments can put a load balancer and a well-informed canceller in front of more
 than one server, without changing the server or the load generator.
