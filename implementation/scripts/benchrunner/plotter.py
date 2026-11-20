@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.15.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.16.0)
 """PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot, QueueLengthPlot and ForwardTimelinePlots,
 drawn as interactive HTML FigurePages with plotly."""
 
@@ -74,6 +74,8 @@ FIGURES = [
     ("forward_latency", "forward_time", [], "log", None),  # also draws ewma_latency
     # Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
     ("availability", "loadgen_time", [], "linear", (0, 1)),
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
+    ("start_slack", "start_slack", [], "linear", None),
 ]
 X_LABELS = {"lg_goodput": "lg_goodput (requests/s)",
             "lg_goodput_normalized": "lg_goodput / (1 - cx_offered_fraction) (requests/s)"}
@@ -277,6 +279,9 @@ def plot(output_dir):
             continue
         if x == "loadgen_time":  # AvailabilityPlot
             draw_availability(output_dir, done, swept_keys)
+            continue
+        if x == "start_slack":  # StartSlackHistogram
+            draw_start_slack(output_dir, done, swept_keys)
             continue
         if x == "forward_time":  # ForwardTimelinePlots
             draw_forward_timelines(output_dir, done, swept_keys)
@@ -637,3 +642,81 @@ def draw_availability(output_dir, done, swept_keys):
     fig.update_layout(title_text="availability", showlegend=len(lines) > 1)
     save_page(fig, path)
 
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
+START_SLACK_BIN_MS = 100
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
+def read_start_slacks(path):
+    """The start_slack_ns samples of a Requests CSV ([] without the column), skipping
+    StallWindowRequests and empty cells; None if the file is missing."""
+    if not os.path.exists(path):
+        return None
+    slacks = []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        header = f.readline().rstrip("\n").split(",")
+        if "start_slack_ns" not in header:
+            return []  # a run made before the ExecReport
+        i_slack = header.index("start_slack_ns")
+        i_stall = header.index("in_stall_window") if "in_stall_window" in header else None
+        for line in f:
+            parts = line.rstrip("\n").split(",")
+            if len(parts) != len(header):
+                break  # e.g. a truncated last line
+            if i_stall is not None and parts[i_stall] == "1":
+                continue  # StallWindowRequest
+            if not parts[i_slack]:
+                continue
+            try:
+                slacks.append(int(parts[i_slack]))
+            except ValueError:
+                break
+    return slacks
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
+def start_slack_histogram(slacks):
+    """[(bin centre s, fraction)] for every 100 ms bin (floor division) from the smallest to the
+    largest non-empty one; empty bins in between are 0. slacks is not empty."""
+    w = START_SLACK_BIN_MS * 1_000_000
+    counts = {}
+    for v in slacks:
+        counts[v // w] = counts.get(v // w, 0) + 1  # Python // floors: -1 // w == -1
+    n = len(slacks)
+    return [((b + 0.5) * START_SLACK_BIN_MS / 1000, counts.get(b, 0) / n)
+            for b in range(min(counts), max(counts) + 1)]
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
+def start_slack_lines(output_dir, done, swept_keys):
+    """[(label, histogram, color index)] for the done points with StartSlack samples."""
+    lines = []
+    for row in sorted(done, key=lambda r: int(r["point"])):
+        pdir = os.path.join(output_dir, "points", f"point_{int(row['point']):04d}")
+        slacks = read_start_slacks(os.path.join(pdir, "loadgen.requests.csv"))
+        if not slacks:
+            continue
+        label = ", ".join(f"{k}={_cell(row[k])}" for k in swept_keys) or f"point {row['point']}"
+        lines.append((label, start_slack_histogram(slacks), len(lines)))
+    return lines
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
+def draw_start_slack(output_dir, done, swept_keys):
+    path = os.path.join(output_dir, "plots", "start_slack.html")
+    lines = start_slack_lines(output_dir, done, swept_keys)
+    if not lines:
+        if os.path.exists(path):
+            os.remove(path)
+        return
+    fig = new_figure([f"start slack per {START_SLACK_BIN_MS} ms bin (deadline - worker pick-up)"])
+    for label, h, color in lines:
+        add_line(fig, 1, (p[0] for p in h), (p[1] for p in h), label, "lines+markers", True,
+                 color=palette_color(color))
+    fig.update_traces(marker=dict(size=3), line=dict(width=1))
+    fig.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="deadline")
+    fig.update_xaxes(title_text="start slack: RequestDeadline - worker pick-up (s)")
+    fig.update_yaxes(title_text="fraction of requests", rangemode="tozero")
+    fig.update_layout(title_text="start_slack", showlegend=len(lines) > 1)
+    save_page(fig, path)

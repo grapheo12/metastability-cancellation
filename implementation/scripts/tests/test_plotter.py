@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.15.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.16.0)
 import csv
 import json
 import os
@@ -456,6 +456,51 @@ class AvailabilityPlotTest(unittest.TestCase):
                 os.remove(os.path.join(pd(pid), "loadgen.requests.csv"))
             plotter.plot(out)
             self.assertFalse(os.path.exists(path))                                         # stale page removed
+
+
+class StartSlackHistogramTest(unittest.TestCase):
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
+    def test_worked_example(self):
+        slacks = [5_000_000_000, 4_999_999_999, 4_950_000_000, -1, -100_000_000, -100_000_001]
+        h = plotter.start_slack_histogram(slacks)
+        self.assertEqual(len(h), 53)                                   # bins -2 ..= 50
+        self.assertEqual([round(x, 2) for x, _ in h[:2]], [-0.15, -0.05])
+        self.assertEqual([f for _, f in h[:2]], [1 / 6, 2 / 6])
+        self.assertTrue(all(f == 0 for _, f in h[2:51]))               # bins 0 ..= 48 drawn at 0
+        self.assertEqual([(round(x, 2), f) for x, f in h[51:]], [(4.95, 2 / 6), (5.05, 1 / 6)])
+
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
+    def test_reading_and_edge_cases(self):
+        with tempfile.TemporaryDirectory() as out:
+            for pid in range(3):
+                write_point(out, pid, {"load_gen.global_rate": 40 + 10 * pid})
+            pd = lambda pid: os.path.join(out, "points", f"point_{pid:04d}")
+            with open(os.path.join(pd(0), "loadgen.requests.csv"), "w") as f:
+                f.write(REQ_HEADER + ",copies,in_stall_window,exec_ns,start_slack_ns\n")
+                f.write("0,0,0,ok,202,0,1,2,1,1,1,1,5,4000000000\n")        # StallWindowRequest: skipped
+                f.write("1,0,1,ok,202,0,1,2,1,1,1,0,5,4950000000\n")
+                f.write("2,0,2,rejected,503,0,1,2,1,1,1,0,5,-35000000\n")
+                f.write("3,0,3,cancelled,,0,1,2,1,1,1,0,,\n")                 # no ExecReport
+                f.write("4,0,4,ok,202,0,1,2,1,1,1,0,5,-")                       # truncated last line
+            write_requests(pd(1), [("ok", 1, 2)])                                # before the ExecReport
+            # point 2: no Requests CSV
+            path = os.path.join(pd(0), "loadgen.requests.csv")
+            self.assertEqual(plotter.read_start_slacks(path), [4950000000, -35000000])
+            self.assertEqual(plotter.read_start_slacks(os.path.join(pd(1), "loadgen.requests.csv")), [])
+            self.assertIsNone(plotter.read_start_slacks(os.path.join(pd(2), "loadgen.requests.csv")))
+            table, keys = plotter.build_table(out)
+            (label, h, color), = plotter.start_slack_lines(out, table, keys)
+            self.assertEqual((label, color, len(h)), ("load_gen.global_rate=40", 0, 51))   # bins -1 ..= 49
+            try:
+                import plotly  # noqa: F401
+            except ImportError:
+                self.skipTest("plotly not installed")
+            plotter.plot(out)
+            page = os.path.join(out, "plots", "start_slack.html")
+            self.assertTrue(os.path.exists(page))
+            os.remove(path)
+            plotter.plot(out)
+            self.assertFalse(os.path.exists(page))                                       # stale page removed
 
 
 if __name__ == "__main__":
