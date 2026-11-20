@@ -57,13 +57,14 @@ concurrent callers. See [design.md#loadbalancer](design.md#loadbalancer).
 
 ## Functions
 
-### `lb_new(config: IngressConfig) -> LoadBalancer`
+### `lb_new(config: IngressConfig, monitor: HeartbeatMonitor | none) -> LoadBalancer`
 `B = len(config.backends)` BackendStats, all counters zero and every `ewma_latency_ns = EWMA_INITIAL_LATENCY_NS`.
+`monitor` gives the BackendLiveness; with `none` every backend is live.
 The random stream is `rng_new(derive_seed(config.seed, STREAM_INGRESS_LB, 0))`.
 See [design.md#loadbalancer](design.md#loadbalancer).
 
 ### `pick(lb) -> ForwardTicket`
-Chooses a backend by the policy, then increments its `outstanding` and `forwarded`, and stamps the ticket with the
+Chooses a backend by the policy among the live ones (all of them if none is live), then increments its `outstanding` and `forwarded`, and stamps the ticket with the
 current monotonic time. Every `pick` must be followed by exactly one `finish` with the same ticket.
 See [design.md#lbpolicy](design.md#lbpolicy) and [design.md#forwardticket](design.md#forwardticket).
 
@@ -83,3 +84,4 @@ A copy of the ForwardLog in append order, for the Ingress's `<output_path>.forwa
 ## Uses
 
 - [../../sampling/api.md](../../sampling/api.md): `derive_seed`, `rng_new`, `uniform_int`, `STREAM_INGRESS_LB`
+- [../heartbeat_monitor/api.md](../heartbeat_monitor/api.md): `is_live`, `HeartbeatMonitor`
