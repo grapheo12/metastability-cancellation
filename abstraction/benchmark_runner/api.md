@@ -39,6 +39,7 @@ set `[run] output_dir` to that run's directory.
       ingress.cancels.csv     # Ingress outputs (../ingress/api.md#outputs)
       ingress.forwards.csv    # the Ingress's ForwardLog
       ingress.liveness.csv    # the Ingress's LivenessLog (../ingress/heartbeat_monitor/api.md#outputs)
+      ingress.picks.csv       # the Ingress's PickLog (../ingress/api.md#output_pathpickscsv)
       ingress.summary.json
       ingress.log
       server_<k>.out          # stdout + stderr of server instance k

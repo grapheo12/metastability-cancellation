@@ -61,3 +61,4 @@
 | 0.8.2 | 2026-11-20T00:00:00Z | Child bump: experiment_executor 0.11.0 (timeout covers the DrainDeadline) |
 | 0.8.3 | 2026-11-20T00:00:00Z | Child bump: result_plotter 0.17.0 (StartSlackHistogram before/after the failure) |
 | 0.8.4 | 2026-11-20T00:00:00Z | Child bump: config 0.21.0 (`lb_filter`) |
+| 0.9.0 | 2026-11-21T00:00:00Z | Output directory lists `ingress.picks.csv`. Child bump: experiment_executor 0.12.0 |
