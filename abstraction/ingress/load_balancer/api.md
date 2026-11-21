@@ -55,6 +55,18 @@ Returned by `pick`, given back unchanged to `finish`. See [design.md#forwardtick
 
 One per `finish`, kept in the **ForwardLog**. See [design.md#forwardlog](design.md#forwardlog).
 
+### `PickRecord`
+
+| Field | Type | Meaning |
+|---|---|---|
+| `t_ns` | u64, ns | Monotonic time of the `pick`, read before `choose` |
+| `server_id` | u32 | The backend described (every backend gets a record per pick) |
+| `outstanding` | i64 | Its forwards in progress, before this pick's |
+| `ewma_exec_ns` | float (binary64), ns, or none | Its EwmaExecTime; none before its first sample |
+| `worker_count` | u32 | Its WorkerCount, `0` before its first answer |
+
+`B` per `pick`, kept in the **PickLog**. See [design.md#picklog](design.md#picklog).
+
 ### `LoadBalancer`
 
 The policy, `ewma_beta`, the BackendStats array, the round-robin counter, the policy's random stream and the
@@ -88,6 +100,10 @@ it into the backend's EwmaExecTime ([design.md#ewmaexectime](design.md#ewmaexect
 ### `stats_snapshot(lb) -> list of BackendStats values`
 Reads every counter, `ewma_latency_ns` and `ewma_exec_ns` (acquire), in `server_id` order, for the summary.
 See [design.md#loadbalancer](design.md#loadbalancer).
+
+### `pick_log(lb) -> list of PickRecord`
+A copy of the PickLog in append order, for the Ingress's `<output_path>.picks.csv`. See
+[design.md#picklog](design.md#picklog).
 
 ### `forward_log(lb) -> list of ForwardRecord`
 A copy of the ForwardLog in append order, for the Ingress's `<output_path>.forwards.csv`. See

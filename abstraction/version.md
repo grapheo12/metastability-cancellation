@@ -176,3 +176,4 @@
 | 0.33.0 | 2026-11-20T00:00:00Z | DeadlineFilter divides by the WorkerCount (glossary). Child bump: ingress 0.5.0 (load_balancer 0.7.0) |
 | 0.33.1 | 2026-11-20T00:00:00Z | Child bump: ingress 0.5.1 (frontend 0.5.0) |
 | 0.34.0 | 2026-11-21T00:00:00Z | DeadlineFilter is an M/M/k on-time probability test (glossary). Child bump: ingress 0.5.2 (load_balancer 0.8.0) |
+| 0.35.0 | 2026-11-21T00:00:00Z | Glossary PickLog. Child bump: ingress 0.6.0 (load_balancer 0.9.0) |

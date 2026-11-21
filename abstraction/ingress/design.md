@@ -37,6 +37,7 @@ One of each per process, created at startup and never replaced:
 | `inflight: InFlightMap`, with client ids bounded by `num_clients` | In-Flight Map | Frontend (publish, clear), Load Canceller (snapshot) |
 | `stats: array[B] of BackendStats` | Load Balancer | Frontend (outcomes), Shutdown (summary) |
 | ForwardLog | Load Balancer | Frontend (one append per `finish`), Shutdown (`forwards.csv`) |
+| PickLog | Load Balancer | Frontend (`B` appends per `pick`), Shutdown (`picks.csv`) |
 | `run_start` | set once, by the first `/ping` | Load Canceller (time base) |
 | `monitor: HeartbeatMonitor` or none | Heartbeat Monitor | Load Balancer (`is_live`), Shutdown (`liveness.csv`) |
 
@@ -103,13 +104,17 @@ procedure shutdown():                                  # on interrupt or termina
     stop the Load Canceller if it is still sending, then run its drain
     close every upstream and canceller connection           # errors ignored
     liveness = heartbeat_monitor.monitor_stop(monitor) if monitor is not none else []
-    write <output_path>.cancels.csv, <output_path>.forwards.csv, <output_path>.liveness.csv and <output_path>.summary.json
+    write <output_path>.cancels.csv, <output_path>.forwards.csv, <output_path>.liveness.csv, <output_path>.picks.csv
+          and <output_path>.summary.json
     exit 0
 ```
 
 `forwards.csv` is the ForwardLog (`load_balancer.forward_log`) with `t_ns = end_ns - run_start` for every record,
 sorted stably by `t_ns`. Every record has `end_ns >= run_start`: `run_start` is set before the first `pick`. If no
 `/ping` was received, the log is empty and the file has only its header.
+
+`picks.csv` is the PickLog (`load_balancer.pick_log`) with `t_ns = t - run_start`, sorted stably by `t_ns`; every
+pick happens after `run_start` is set.
 
 Forwards still in progress at the deadline are abandoned: their client streams are reset and they are counted in
 neither `ok` nor `rejected`. The load generator finishes before the operator stops the Ingress, so in a normal run

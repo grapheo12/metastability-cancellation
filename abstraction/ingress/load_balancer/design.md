@@ -15,9 +15,11 @@ lb = { policy, filter: lb_filter, beta: ewma_beta, monitor: HeartbeatMonitor or 
                                         worker_count = 0),                 # WorkerCount; 0: not known yet
        rr: atomic u64 = 0,
        rng: rng_new(derive_seed(seed, STREAM_INGRESS_LB, 0)), rng_lock: mutex,
-       log: list of ForwardRecord (empty), log_lock: mutex }                    # ForwardLog
+       log: list of ForwardRecord (empty), log_lock: mutex,                     # ForwardLog
+       picks: list of PickRecord (empty) }                                      # PickLog, also under log_lock
 
 function pick(lb, remaining_ns):                     # remaining_ns: i64 or none (the request's time to its deadline)
+    record_pick(lb)                                  # PickLog: what the choice below is about to see
     s = choose(lb, remaining_ns)                     # LbPolicy over the DeadlineFilter's set
     if s is Dropped:
         lb.filter_dropped.fetch_add(1)
@@ -309,6 +311,40 @@ Other cases: `T <= 0` gives 1 (dropped); a backend without an EwmaExecTime sampl
 
 For comparison, the former mean test `(n + 1) × e / k <= T` admitted `n <= 249` at `k = 10` and `n <= 24` at
 `k = 1`: the 0.99 test is stricter because it bounds the tail, not the mean.
+
+## PickLog
+
+The **PickLog** records, at every `pick` (forwarded or dropped), what the LoadBalancer sees of every backend, so the
+DeadlineFilter's inputs can be plotted over time.
+
+```
+function record_pick(lb):
+    t = monotonic_now_ns()
+    rows = [ PickRecord(t, s, lb.stats[s].outstanding.load(), exec_value(lb, s), lb.stats[s].worker_count.load())
+             for s in 0 ..= B-1 ]                     # every backend, live or not, in id order
+    with lb.log_lock:
+        lb.picks.extend(rows)
+
+function pick_log(lb):                               # -> list of PickRecord, in append order
+    with lb.log_lock:
+        return copy of lb.picks
+```
+
+- **When.** Before `choose`, so `outstanding` excludes the request being placed: `(outstanding + 1) × EwmaExecTime`
+  is the mean-based expected time to completion this request would face on that backend, and `outstanding`,
+  WorkerCount and EwmaExecTime are the DeadlineFilter's `n`, `k` and `e`. Every policy and every `lb_filter` value
+  records, so the log is comparable across runs.
+- **Reads.** The loads are separate from those of `choose`, a few nanoseconds earlier; another pick may change a
+  counter in between. The log describes the state, it does not replay the decision exactly.
+- **Memory and lock.** `B` records per `/ping`, kept until shutdown (a 120 s run at 70 req/s with 2 backends is
+  about 17_000 records). `log_lock` is held for one append of `B` records, as for the ForwardLog, and never nests.
+
+Worked example, `B = 2`, backend 1 without an ExecutionTime sample yet, a pick at `t = 1_000`:
+
+| `t_ns` | `server_id` | `outstanding` | `ewma_exec_ns` | `worker_count` | `(outstanding + 1) × ewma_exec_ns` |
+|---|---|---|---|---|---|
+| 1_000 | 0 | 12 | 140_000_000 | 10 | 1_820_000_000 |
+| 1_000 | 1 | 0 | none | 0 | — (no sample) |
 
 ## ForwardLog
 
