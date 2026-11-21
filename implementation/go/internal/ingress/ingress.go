@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.5.1)
+// Source: abstraction/ingress/design.md (ingress v0.6.0)
 package ingress
 
 import (
@@ -156,6 +156,9 @@ func (ing *Ingress) Shutdown() error {
 	if !started && ing.monitor != nil {
 		base = ing.monitor.base // no /ping: times from the monitor's start
 	}
+	if err := writePicksCSV(ing.cfg.OutputPath+".picks.csv", ing.lb.PickLog(), runStart); err != nil {
+		return err
+	}
 	if err := writeLivenessCSV(ing.cfg.OutputPath+".liveness.csv", liveness, base); err != nil {
 		return err
 	}
@@ -242,6 +245,41 @@ func writeForwardsCSV(path string, recs []ForwardRecord, runStart time.Time) err
 			outcomeNames[r.Outcome] + "," + strconv.FormatUint(r.LatencyNs, 10) + "," +
 			strconv.FormatFloat(r.EwmaLatencyNs, 'f', -1, 64) + "," + // shortest round-trip, no exponent
 			exec + "," + ewmaExec + "\n")
+	}
+	if err := w.Flush(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// writePicksCSV writes the PickLog with t_ns = t - run_start, sorted stably
+// by t_ns (header only if nothing was picked).
+//
+// API: abstraction/ingress/api.md#output_pathpickscsv
+// Design: abstraction/ingress/design.md#shutdown
+func writePicksCSV(path string, recs []PickRecord, runStart time.Time) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	tNs := make([]int64, len(recs))
+	order := make([]int, len(recs))
+	for k, r := range recs {
+		tNs[k] = r.T.Sub(runStart).Nanoseconds() // run_start is set before the first pick
+		order[k] = k
+	}
+	sort.SliceStable(order, func(a, b int) bool { return tNs[order[a]] < tNs[order[b]] })
+	w := bufio.NewWriter(f)
+	w.WriteString("t_ns,server_id,outstanding,ewma_exec_ns,worker_count\n")
+	for _, k := range order {
+		r := recs[k]
+		ewma := "" // empty before the backend's first ExecutionTime sample
+		if r.HasEwmaExec {
+			ewma = strconv.FormatFloat(r.EwmaExecNs, 'f', -1, 64)
+		}
+		w.WriteString(strconv.FormatInt(tNs[k], 10) + "," + strconv.FormatUint(uint64(r.ServerID), 10) + "," +
+			strconv.FormatInt(r.Outstanding, 10) + "," + ewma + "," + strconv.FormatUint(r.WorkerCount, 10) + "\n")
 	}
 	if err := w.Flush(); err != nil {
 		f.Close()

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.8.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.9.0)
 package ingress
 
 import (
@@ -389,5 +389,35 @@ func TestRemaining(t *testing.T) {
 		remaining(1794533184995000000, 1794533185000000000) != -5_000_000 ||
 		remaining(1<<64-1, 0) != 1<<63-1 {
 		t.Fatal("remaining")
+	}
+}
+
+// The PickLog worked example: B = 2, backend 1 without a sample; a dropped
+// pick is recorded too.
+//
+// Design: abstraction/ingress/load_balancer/design.md#picklog
+func TestPickLogWorkedExample(t *testing.T) {
+	lb := NewLoadBalancer(Config{LbPolicy: PolicyEwma, LbFilter: FilterDeadline, EwmaBeta: 0.7,
+		Backends: []string{"a:1", "b:1"}, Seed: 7}, nil)
+	lb.stats[0].Outstanding.Store(12)
+	lb.stats[0].WorkerCount.Store(10)
+	lb.ewmaExecUpdate(0, 140_000_000)
+	lb.Pick()               // no deadline: forwarded
+	lb.PickWithin(-1, true) // late: dropped, still recorded
+	log := lb.PickLog()
+	if len(log) != 4 {
+		t.Fatalf("want 2 records per pick, got %d", len(log))
+	}
+	r0, r1 := log[0], log[1]
+	if r0.ServerID != 0 || r0.Outstanding != 12 || !r0.HasEwmaExec || r0.EwmaExecNs != 140_000_000 || r0.WorkerCount != 10 ||
+		r1.ServerID != 1 || r1.Outstanding != 0 || r1.HasEwmaExec || r1.WorkerCount != 0 || !r0.T.Equal(r1.T) {
+		t.Fatalf("first pick: %+v %+v", r0, r1)
+	}
+	if float64(r0.Outstanding+1)*r0.EwmaExecNs != 1_820_000_000 {
+		t.Fatal("(outstanding + 1) x EwmaExecTime")
+	}
+	log[0].ServerID = 9 // a copy
+	if lb.PickLog()[0].ServerID != 0 {
+		t.Fatal("PickLog must return a copy")
 	}
 }

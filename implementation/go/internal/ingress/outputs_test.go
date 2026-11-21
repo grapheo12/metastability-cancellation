@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.5.1)
+// Source: abstraction/ingress/design.md (ingress v0.6.0)
 package ingress
 
 import (
@@ -37,6 +37,39 @@ func TestWriteForwardsCSV(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(path); string(got) != "t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns\n" {
+		t.Fatalf("empty: %q", got)
+	}
+}
+
+// picks.csv: t_ns from run_start, stable sort by t_ns, empty ewma_exec_ns
+// before a sample; header only for an empty log.
+//
+// API: abstraction/ingress/api.md#output_pathpickscsv
+// Design: abstraction/ingress/design.md#shutdown
+func TestWritePicksCSV(t *testing.T) {
+	run := time.Now()
+	at := run.Add(1000)
+	recs := []PickRecord{
+		{T: at, ServerID: 0, Outstanding: 12, EwmaExecNs: 140_000_000, HasEwmaExec: true, WorkerCount: 10},
+		{T: at, ServerID: 1, Outstanding: 0, WorkerCount: 0},
+		{T: run.Add(500), ServerID: 0, Outstanding: -1, EwmaExecNs: 850000.5, HasEwmaExec: true, WorkerCount: 10},
+	}
+	path := filepath.Join(t.TempDir(), "p.csv")
+	if err := writePicksCSV(path, recs, run); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	want := "t_ns,server_id,outstanding,ewma_exec_ns,worker_count\n" +
+		"500,0,-1,850000.5,10\n" +
+		"1000,0,12,140000000,10\n" + // equal t_ns: log order kept (id order within a pick)
+		"1000,1,0,,0\n"
+	if string(got) != want {
+		t.Fatalf("got\n%s\nwant\n%s", got, want)
+	}
+	if err := writePicksCSV(path, nil, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "t_ns,server_id,outstanding,ewma_exec_ns,worker_count\n" {
 		t.Fatalf("empty: %q", got)
 	}
 }

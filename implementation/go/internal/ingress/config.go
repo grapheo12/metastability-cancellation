@@ -2,7 +2,7 @@
 // proxy in front of several servers, with an in-process LoadCanceller that
 // picks victims from the InFlightMap.
 //
-// Source: abstraction/ingress/design.md (ingress v0.5.1)
+// Source: abstraction/ingress/design.md (ingress v0.6.0)
 package ingress
 
 import (

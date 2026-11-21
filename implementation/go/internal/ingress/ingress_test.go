@@ -283,6 +283,11 @@ func TestDeadlineFilterDrops(t *testing.T) {
 	if s.FilterDropped != 1 || s.Backends[0].Forwarded != 2 || s.Config.LbFilter != FilterDeadline || s.Backends[0].WorkerCount != 1 {
 		t.Fatalf("summary %+v", s)
 	}
+	// Every pick, the dropped one included, is in picks.csv (one backend: one row each).
+	// Design: abstraction/ingress/load_balancer/design.md#picklog
+	if raw, err := os.ReadFile(ing.cfg.OutputPath + ".picks.csv"); err != nil || bytes.Count(raw, []byte("\n")) != 4 {
+		t.Fatalf("picks.csv: want header + 3 rows, %v\n%s", err, raw)
+	}
 	b0.Shutdown()
 }
 

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.8.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.9.0)
 package ingress
 
 import (
@@ -104,6 +104,18 @@ type ForwardRecord struct {
 	HasEwmaExec   bool
 }
 
+// PickRecord is what the LoadBalancer saw of one backend at one pick.
+//
+// API: abstraction/ingress/load_balancer/api.md#pickrecord
+type PickRecord struct {
+	T           time.Time // the pick, before choose; carries the monotonic reading
+	ServerID    uint32
+	Outstanding int64
+	EwmaExecNs  float64 // valid if HasEwmaExec
+	HasEwmaExec bool
+	WorkerCount uint64
+}
+
 // LoadBalancer picks a backend per forward and keeps BackendStats.
 //
 // Design: abstraction/ingress/load_balancer/design.md#loadbalancer
@@ -120,6 +132,7 @@ type LoadBalancer struct {
 	logMu    sync.Mutex        // ForwardLog: held for one append or one copy
 	monitor  *HeartbeatMonitor // BackendLiveness; nil: every backend live
 	log      []ForwardRecord
+	picks    []PickRecord // PickLog, under logMu
 }
 
 // NewLoadBalancer builds the stats array and the policy's random stream.
@@ -159,6 +172,7 @@ func (lb *LoadBalancer) Pick() ForwardTicket {
 // Design: abstraction/ingress/load_balancer/design.md#loadbalancer
 // Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
 func (lb *LoadBalancer) PickWithin(remainingNs int64, hasDeadline bool) (ForwardTicket, bool) {
+	lb.recordPick() // PickLog: what choose is about to see
 	s, ok := lb.choose(remainingNs, hasDeadline)
 	if !ok {
 		lb.dropped.Add(1)
@@ -219,6 +233,32 @@ func (lb *LoadBalancer) Finish(t ForwardTicket, outcome ForwardOutcome, execNs u
 	lb.log = append(lb.log, ForwardRecord{End: end, ServerID: t.ServerID, Outcome: outcome, LatencyNs: latencyNs, EwmaLatencyNs: e,
 		ExecNs: execNs, HasExec: sample, EwmaExecNs: x, HasEwmaExec: hasX})
 	lb.logMu.Unlock()
+}
+
+// recordPick appends one PickRecord per backend, in id order, read before
+// choose.
+//
+// Design: abstraction/ingress/load_balancer/design.md#picklog
+func (lb *LoadBalancer) recordPick() {
+	t := time.Now()
+	rows := make([]PickRecord, len(lb.stats))
+	for s := range lb.stats {
+		e, ok := lb.execValue(uint32(s))
+		rows[s] = PickRecord{T: t, ServerID: uint32(s), Outstanding: lb.stats[s].Outstanding.Load(),
+			EwmaExecNs: e, HasEwmaExec: ok, WorkerCount: lb.stats[s].WorkerCount.Load()}
+	}
+	lb.logMu.Lock()
+	lb.picks = append(lb.picks, rows...)
+	lb.logMu.Unlock()
+}
+
+// PickLog returns a copy of the PickLog in append order.
+//
+// Design: abstraction/ingress/load_balancer/design.md#picklog
+func (lb *LoadBalancer) PickLog() []PickRecord {
+	lb.logMu.Lock()
+	defer lb.logMu.Unlock()
+	return append([]PickRecord(nil), lb.picks...)
 }
 
 // ForwardLog returns a copy of the ForwardLog in append order.
