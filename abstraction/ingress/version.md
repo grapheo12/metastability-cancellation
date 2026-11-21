@@ -30,3 +30,4 @@
 | 0.5.1 | 2026-11-20T00:00:00Z | Child bump: frontend 0.5.0 (WorkerCount to finish) |
 | 0.5.2 | 2026-11-21T00:00:00Z | `lb_filter` text: on-time probability >= 0.99. Child bump: load_balancer 0.8.0 |
 | 0.6.0 | 2026-11-21T00:00:00Z | New output `<output_path>.picks.csv` (the PickLog), shared state and shutdown. Child bump: load_balancer 0.9.0 |
+| 0.7.0 | 2026-11-21T00:00:00Z | `lb_filter` values `deadline_mean`, `deadline_mean_per_worker`, `deadline_mmk` (validation; `deadline` removed). Child bump: load_balancer 0.10.0 |
