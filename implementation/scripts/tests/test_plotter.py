@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.17.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.18.0)
 import csv
 import json
 import os
@@ -522,6 +522,61 @@ class StartSlackSplitTest(unittest.TestCase):
         self.assertEqual(plotter.failure_time_ms({"freeze": None, "server_args": [["freeze_after_ms", 500]]}), 500)
         self.assertIsNone(plotter.failure_time_ms({"freeze": None, "server_args": [["response_rate", 5]]}))
         self.assertIsNone(plotter.failure_time_ms({}))
+
+
+class ExpectedWaitPlotTest(unittest.TestCase):
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#expectedwaitplot
+    def test_worked_example(self):
+        with tempfile.TemporaryDirectory() as out:
+            path = os.path.join(out, "ingress.picks.csv")
+            with open(path, "w") as f:
+                f.write("t_ns,server_id,outstanding,ewma_exec_ns,worker_count\n"
+                        "100000000,0,12,140000000,10\n"
+                        "150000000,0,2,140000000,10\n"
+                        "150000000,1,0,,0\n"
+                        "250000000,0,0,100000000,10\n"
+                        "260000000,0,1")                                            # truncated last line
+            rows = plotter.read_pick_log(path)
+            self.assertEqual(len(rows), 4)
+            s0 = plotter.expected_wait_series(rows, 0)
+            self.assertEqual([round(x, 3) for x, _ in s0], [0.1, 0.3])
+            self.assertAlmostEqual(s0[0][1], 1.12, places=12)
+            self.assertAlmostEqual(s0[1][1], 0.1, places=12)
+            self.assertEqual(plotter.expected_wait_series(rows, 1), [])                # no sample: no line
+
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#expectedwaitplot
+    def test_lines_and_page(self):
+        with tempfile.TemporaryDirectory() as out:
+            for pid in range(3):
+                write_point(out, pid, {"load_gen.global_rate": 40 + 10 * pid})
+            pd = lambda pid: os.path.join(out, "points", f"point_{pid:04d}")
+            for pid in (0, 1):
+                with open(os.path.join(pd(pid), "ingress.picks.csv"), "w") as f:
+                    f.write("t_ns,server_id,outstanding,ewma_exec_ns,worker_count\n"
+                            f"100000000,0,{pid},200000000,10\n100000000,1,3,200000000,10\n")
+                params = json.load(open(os.path.join(pd(pid), "params.json")))
+                params["loadgen_args"] = [["slo_ms", 5000]]
+                json.dump(params, open(os.path.join(pd(pid), "params.json"), "w"))
+            # point 2: no PickLog (a run from before it)
+            table, keys = plotter.build_table(out)
+            lines = plotter.expected_wait_lines(out, table, keys)
+            self.assertEqual([(l[0], sorted(l[1]), l[2], l[3]) for l in lines],
+                             [("load_gen.global_rate=40", [0, 1], 0, 5.0), ("load_gen.global_rate=50", [0, 1], 1, 5.0)])
+            self.assertAlmostEqual(lines[1][1][0][0][1], 0.4, places=12)                 # (1 + 1) x 0.2 s
+            try:
+                import plotly  # noqa: F401
+            except ImportError:
+                self.skipTest("plotly not installed")
+            plotter.plot(out)
+            page = os.path.join(out, "plots", "expected_wait.html")
+            with open(page) as f:
+                html = f.read()
+            self.assertIn("server 0", html)
+            self.assertIn("server 1", html)
+            for pid in (0, 1):
+                os.remove(os.path.join(pd(pid), "ingress.picks.csv"))
+            plotter.plot(out)
+            self.assertFalse(os.path.exists(page))                                     # stale page removed
 
 
 if __name__ == "__main__":

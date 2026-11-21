@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.17.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.18.0)
 """PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot, QueueLengthPlot and ForwardTimelinePlots,
 drawn as interactive HTML FigurePages with plotly."""
 
@@ -76,6 +76,8 @@ FIGURES = [
     ("availability", "loadgen_time", [], "linear", (0, 1)),
     # Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
     ("start_slack", "start_slack", [], "linear", None),
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#expectedwaitplot
+    ("expected_wait", "pick_time", [], "linear", None),
 ]
 X_LABELS = {"lg_goodput": "lg_goodput (requests/s)",
             "lg_goodput_normalized": "lg_goodput / (1 - cx_offered_fraction) (requests/s)"}
@@ -279,6 +281,9 @@ def plot(output_dir):
             continue
         if x == "loadgen_time":  # AvailabilityPlot
             draw_availability(output_dir, done, swept_keys)
+            continue
+        if x == "pick_time":  # ExpectedWaitPlot
+            draw_expected_wait(output_dir, done, swept_keys)
             continue
         if x == "start_slack":  # StartSlackHistogram
             draw_start_slack(output_dir, done, swept_keys)
@@ -752,3 +757,94 @@ def draw_start_slack(output_dir, done, swept_keys):
     fig.update_yaxes(rangemode="tozero")
     fig.update_layout(title_text="start_slack", showlegend=len(lines) > 1)
     save_page(fig, path)
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#expectedwaitplot
+EXPECTED_WAIT_BIN_MS = 200
+PICK_HEADER = "t_ns,server_id,outstanding,ewma_exec_ns"
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#expectedwaitplot
+def read_pick_log(path):
+    """PickLog rows [(t_ns, server_id, outstanding, ewma_ns or None)], [] for an unknown header,
+    None if the file is missing; stops at the first malformed (e.g. truncated) line."""
+    if not os.path.exists(path):
+        return None
+    rows = []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        if not f.readline().startswith(PICK_HEADER):
+            return []
+        for line in f:
+            parts = line.rstrip("\n").split(",")
+            if len(parts) < 4:
+                break
+            try:
+                t, s, o = int(parts[0]), int(parts[1]), int(parts[2])
+                e = float(parts[3]) if parts[3] else None
+            except ValueError:
+                break
+            rows.append((t, s, o, e))
+    return rows
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#expectedwaitplot
+def expected_wait_series(rows, server):
+    """[(window centre s, mean (outstanding + 1) * EwmaExecTime in s)] for one backend, windows in order."""
+    w = EXPECTED_WAIT_BIN_MS * 1_000_000
+    bins = {}
+    for t, s, o, e in rows:
+        if s != server or e is None:
+            continue
+        b = bins.setdefault(t // w, [0.0, 0])
+        b[0] += (o + 1) * e / 1e9
+        b[1] += 1
+    return [((b + 0.5) * EXPECTED_WAIT_BIN_MS / 1000, bins[b][0] / bins[b][1]) for b in sorted(bins)]
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#expectedwaitplot
+def expected_wait_lines(output_dir, done, swept_keys):
+    """[(label, {server_id: series}, color index, slo_s or None)] for the done points with a PickLog."""
+    lines = []
+    for row in sorted(done, key=lambda r: int(r["point"])):
+        pdir = os.path.join(output_dir, "points", f"point_{int(row['point']):04d}")
+        rows = read_pick_log(os.path.join(pdir, "ingress.picks.csv"))
+        if not rows:
+            continue
+        per_server = {s: expected_wait_series(rows, s) for s in sorted({r[1] for r in rows})}
+        per_server = {s: v for s, v in per_server.items() if v}
+        if not per_server:
+            continue
+        params = _read_json(os.path.join(pdir, "params.json")) or {}
+        slo_ms = dict((k, v) for k, v in params.get("loadgen_args") or []).get("slo_ms")
+        label = ", ".join(f"{k}={_cell(row[k])}" for k in swept_keys) or f"point {row['point']}"
+        lines.append((label, per_server, len(lines), slo_ms / 1000 if slo_ms is not None else None))
+    return lines
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#expectedwaitplot
+def draw_expected_wait(output_dir, done, swept_keys):
+    path = os.path.join(output_dir, "plots", "expected_wait.html")
+    lines = expected_wait_lines(output_dir, done, swept_keys)
+    if not lines:
+        if os.path.exists(path):
+            os.remove(path)
+        return
+    servers = sorted({s for _, per_server, _, _ in lines for s in per_server})
+    fig = new_figure([f"server {s}" for s in servers])
+    for col, s in enumerate(servers, start=1):
+        for label, per_server, color, _ in lines:
+            if s not in per_server:
+                continue
+            # one legend entry per point, shown in the first subplot it appears in
+            first = all(t not in per_server for t in servers[:col - 1])
+            add_line(fig, col, (p[0] for p in per_server[s]), (p[1] for p in per_server[s]), label,
+                     "lines+markers", first, color=palette_color(color))
+        for slo in sorted({l[3] for l in lines if l[3] is not None}):
+            fig.add_hline(y=slo, line_dash="dash", line_color="gray", annotation_text=f"SLO {slo:g} s", row=1, col=col)
+    fig.update_traces(marker=dict(size=3), line=dict(width=1))
+    fig.update_xaxes(title_text="time since the Ingress's run start (s)")
+    fig.update_yaxes(title_text="(outstanding + 1) × EwmaExecTime (s)", rangemode="tozero", row=1, col=1)
+    fig.update_yaxes(rangemode="tozero")
+    fig.update_layout(title_text="expected_wait", showlegend=len(lines) > 1)
+    save_page(fig, path)
+
