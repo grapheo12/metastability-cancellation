@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.7.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.8.0)
 package ingress
 
 import (
@@ -276,66 +276,102 @@ func (lb *LoadBalancer) chooseAny() uint32 {
 	return s
 }
 
-// The DeadlineFilter worked example: B = 2, EwmaExecTime 140 ms each,
-// outstanding (10, 40), WorkerCount (10, 10).
+// late_probability against the design's worked example (e = 200 ms, T = 5 s),
+// to a relative 1e-12, plus the cancellation-prone case and the edges.
+//
+// Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
+func TestLatePrWorkedExample(t *testing.T) {
+	const e, T = 200_000_000.0, 5_000_000_000.0
+	cases := []struct {
+		k, n uint64
+		want float64
+	}{
+		{10, 0, 1.3887943864964040e-11}, {10, 9, 1.3887943864964040e-11}, {10, 10, 1.5431048738848933e-11},
+		{10, 50, 1.0439869390746449e-9}, {10, 150, 3.9304667021466753e-5}, {10, 200, 0.0075996341805018727},
+		{10, 202, 0.0093662549934202290}, {10, 203, 0.010395504157208201}, {10, 220, 0.057518866812073766},
+		{1, 0, 1.3887943864964040e-11}, {1, 10, 0.00058646162975308126}, {1, 13, 0.0064674843658217432},
+		{1, 14, 0.012402060718900588},
+	}
+	for _, c := range cases {
+		got := latePr(c.n, c.k, e, T)
+		if math.Abs(got-c.want) > 1e-12*c.want {
+			t.Errorf("k=%d n=%d: %.17g, want %.17g", c.k, c.n, got, c.want)
+		}
+		if (got <= DeadlineFilterMiss) != (c.want <= DeadlineFilterMiss) {
+			t.Errorf("k=%d n=%d: eligibility differs", c.k, c.n)
+		}
+	}
+	// 1 - Q(999, 500) ~ e^-196 times 2^999: the lower-gamma branch (checked by 50-digit quadrature).
+	if got := latePr(1000, 2, 10_000_000, T); math.Abs(got-0.508384337202304) > 1e-12 {
+		t.Errorf("n=1000 k=2: %.17g", got)
+	}
+	if latePr(0, 10, e, 0) != 1 || latePr(0, 10, e, -5) != 1 {
+		t.Error("T <= 0 must be late with probability 1")
+	}
+	if got := latePr(5000, 10, e, T); got < 0.999999 {
+		t.Errorf("a very deep queue is late: %v", got)
+	}
+}
+
+// The filter over two backends (e = 200 ms, T = 5 s) and its effect on pick.
 //
 // Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
 func TestDeadlineFilterWorkedExample(t *testing.T) {
-	mk := func(sampleBoth bool, workers0 uint64) *LoadBalancer {
+	mk := func(out0, out1 int64, w0, w1 uint64, sample1 bool) *LoadBalancer {
 		lb := NewLoadBalancer(Config{LbPolicy: PolicyEwma, LbFilter: FilterDeadline, EwmaBeta: 0.7,
 			Backends: []string{"a:1", "b:1"}, Seed: 7}, nil)
-		lb.stats[0].Outstanding.Store(10)
-		lb.stats[1].Outstanding.Store(40)
-		lb.stats[0].WorkerCount.Store(workers0)
-		lb.stats[1].WorkerCount.Store(10)
-		lb.ewmaExecUpdate(0, 140_000_000)
-		if sampleBoth {
-			lb.ewmaExecUpdate(1, 140_000_000)
+		lb.stats[0].Outstanding.Store(out0)
+		lb.stats[1].Outstanding.Store(out1)
+		lb.stats[0].WorkerCount.Store(w0)
+		lb.stats[1].WorkerCount.Store(w1)
+		lb.ewmaExecUpdate(0, 200_000_000)
+		if sample1 {
+			lb.ewmaExecUpdate(1, 200_000_000)
 		}
 		return lb
 	}
+	const T = 5_000_000_000
 	cases := []struct {
-		remaining int64
-		sampled   bool
-		workers0  uint64
-		want      []uint64
+		name string
+		lb   *LoadBalancer
+		rem  int64
+		want []uint64
 	}{
-		{6_000_000_000, true, 10, []uint64{0, 1}},
-		{500_000_000, true, 10, []uint64{0}},
-		{154_000_000, true, 10, []uint64{0}}, // <=: exactly fits
-		{100_000_000, true, 10, []uint64{}},
-		{-5_000_000, true, 10, []uint64{}},    // already late
-		{100_000_000, false, 10, []uint64{1}}, // backend 1 has no sample: eligible
-		{1_000_000_000, true, 0, []uint64{1}}, // backend 0's WorkerCount unknown: 1 -> 1_540_000_000
+		{"both fit", mk(150, 200, 10, 10, true), T, []uint64{0, 1}},
+		{"admit edge 202 / 203", mk(202, 203, 10, 10, true), T, []uint64{0}},
+		{"both too deep", mk(220, 220, 10, 10, true), T, []uint64{}},
+		{"already late", mk(0, 0, 10, 10, true), -5_000_000, []uint64{}},
+		{"no sample: eligible", mk(220, 220, 10, 10, false), T, []uint64{1}},
+		{"WorkerCount unknown counts as 1", mk(13, 14, 0, 0, true), T, []uint64{0}},
 	}
 	for _, c := range cases {
-		lb := mk(c.sampled, c.workers0)
-		got := lb.deadlineFilter([]uint64{0, 1}, c.remaining)
+		got := c.lb.deadlineFilter([]uint64{0, 1}, c.rem)
 		if len(got) != len(c.want) || (len(got) > 0 && got[0] != c.want[0]) || (len(got) == 2 && got[1] != c.want[1]) {
-			t.Fatalf("remaining %d: kept %v, want %v", c.remaining, got, c.want)
+			t.Fatalf("%s: kept %v, want %v", c.name, got, c.want)
 		}
 	}
 	// Pick: a drop counts filter_dropped and changes no backend counter; n = 1 picks it without a draw.
-	lb := mk(true, 10)
-	if _, ok := lb.PickWithin(100_000_000, true); ok || lb.FilterDropped() != 1 ||
-		lb.stats[0].Forwarded.Load() != 0 || lb.stats[0].Outstanding.Load() != 10 {
+	lb := mk(220, 220, 10, 10, true)
+	if _, ok := lb.PickWithin(T, true); ok || lb.FilterDropped() != 1 ||
+		lb.stats[0].Forwarded.Load() != 0 || lb.stats[0].Outstanding.Load() != 220 {
 		t.Fatal("drop must only count filter_dropped")
 	}
+	lb = mk(202, 203, 10, 10, true)
 	before := *lb.rng
-	if tk, ok := lb.PickWithin(500_000_000, true); !ok || tk.ServerID != 0 || *lb.rng != before {
+	if tk, ok := lb.PickWithin(T, true); !ok || tk.ServerID != 0 || *lb.rng != before {
 		t.Fatalf("one eligible backend: %+v %v", tk, ok)
 	}
 	// No deadline, or lb_filter = none: no filtering at all.
 	if _, ok := lb.PickWithin(0, false); !ok {
 		t.Fatal("no RequestDeadline must not be dropped")
 	}
-	off := mk(true, 10)
+	off := mk(220, 220, 10, 10, true)
 	off.filter = FilterNone
 	if _, ok := off.PickWithin(-5_000_000, true); !ok || off.FilterDropped() != 0 {
 		t.Fatal("lb_filter = none must not filter")
 	}
 	// Finish stores the WorkerCount of ok/rejected answers only.
-	w := mk(true, 0)
+	w := mk(0, 0, 0, 10, true)
 	w.Finish(w.Pick(), OutcomeBadGateway, 0, false, 7)
 	if w.stats[0].WorkerCount.Load() != 0 || w.stats[1].WorkerCount.Load() != 10 {
 		t.Fatal("bad_gateway must not set the WorkerCount")

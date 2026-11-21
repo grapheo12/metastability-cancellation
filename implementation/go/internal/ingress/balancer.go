@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.7.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.8.0)
 package ingress
 
 import (
@@ -339,9 +339,18 @@ func (lb *LoadBalancer) choose(remainingNs int64, hasDeadline bool) (uint32, boo
 // FilterDropped is the summary's filter_dropped.
 func (lb *LoadBalancer) FilterDropped() uint64 { return lb.dropped.Load() }
 
+// DeadlineFilterConfidence and DeadlineFilterMiss are DEADLINE_FILTER_CONFIDENCE
+// and DEADLINE_FILTER_MISS: a backend passes if Pr(late) <= DeadlineFilterMiss.
+//
+// API: abstraction/ingress/load_balancer/api.md#constants
+const (
+	DeadlineFilterConfidence = 0.99
+	DeadlineFilterMiss       = 0.01
+)
+
 // deadlineFilter keeps the backends of live (id order) that have no
-// ExecutionTime sample yet or whose (outstanding + 1) * EwmaExecTime /
-// WorkerCount is <= remainingNs, in binary64 (unknown WorkerCount: 1).
+// ExecutionTime sample yet or where the request is late with probability at
+// most DeadlineFilterMiss under the M/M/k model (WorkerCount 0 read as 1).
 //
 // Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
 func (lb *LoadBalancer) deadlineFilter(live []uint64, remainingNs int64) []uint64 {
@@ -352,16 +361,78 @@ func (lb *LoadBalancer) deadlineFilter(live []uint64, remainingNs int64) []uint6
 			kept = append(kept, s) // no sample yet: eligible
 			continue
 		}
-		o := lb.stats[s].Outstanding.Load()
-		w := lb.stats[s].WorkerCount.Load()
-		if w == 0 {
-			w = 1 // WorkerCount not known yet
+		n := lb.stats[s].Outstanding.Load()
+		if n < 0 {
+			n = 0 // a transient negative read cannot happen with matched pick/finish; be safe
 		}
-		if float64(o+1)*e/float64(w) <= float64(remainingNs) {
+		k := lb.stats[s].WorkerCount.Load()
+		if k == 0 {
+			k = 1 // WorkerCount not known yet
+		}
+		if latePr(uint64(n), k, e, float64(remainingNs)) <= DeadlineFilterMiss {
 			kept = append(kept, s)
 		}
 	}
 	return kept
+}
+
+// latePr is late_probability: Pr(wait + service > T | N = n) for an M/M/k
+// backend with mean service time e (ns), T in ns, in binary64.
+//
+// Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
+func latePr(n, k uint64, e, T float64) float64 {
+	if T <= 0 {
+		return 1
+	}
+	x := T / e
+	if n < k {
+		return math.Exp(-x)
+	}
+	m := n - k + 1
+	if k == 1 {
+		return poissonLowerSum(m+1, x)
+	}
+	a := poissonLowerSum(m, float64(k)*x)
+	logB := float64(float64(-x)+float64(float64(m)*math.Log1p(1/float64(k-1)))) + logPoissonUpper(m, float64(k-1)*x)
+	return math.Min(float64(a+math.Exp(logB)), 1)
+}
+
+// poissonLowerSum is Q(m, y) = sum_{i<m} e^-y y^i / i!, terms in log space,
+// summed in increasing i.
+//
+// Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
+func poissonLowerSum(m uint64, y float64) float64 {
+	ly := math.Log(y)
+	s := 0.0
+	for i := uint64(0); i < m; i++ {
+		lg, _ := math.Lgamma(float64(i + 1))
+		s = float64(s + math.Exp(float64(float64(-y+float64(float64(i)*ly))-lg)))
+	}
+	return math.Min(s, 1)
+}
+
+// logPoissonUpper is ln(1 - Q(m, y)): the lower regularized gamma series when
+// y < m (no cancellation), else log1p(-Q).
+//
+// Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
+func logPoissonUpper(m uint64, y float64) float64 {
+	if y < float64(m) {
+		t, s := 1.0, 1.0
+		for j := uint64(1); ; j++ {
+			t = float64(t * y / float64(m+j))
+			s = float64(s + t)
+			if t < 1e-17*s {
+				break
+			}
+		}
+		lg, _ := math.Lgamma(float64(m + 1))
+		return float64(float64(float64(-y+float64(float64(m)*math.Log(y)))-lg) + math.Log(s))
+	}
+	q := poissonLowerSum(m, y)
+	if q < 1 {
+		return math.Log1p(-q)
+	}
+	return math.Inf(-1)
 }
 
 // policyChoice applies the LbPolicy to a non-empty candidate list in id order.
