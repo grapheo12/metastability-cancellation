@@ -19,7 +19,7 @@ or missing required parameters make the program exit non-zero with a one-line er
 | `initial_stall_ms` | integer, ms, `>= 0` | `1000` | The LoadCanceller schedules no cancel earlier than this after the Ingress's first `/ping`; sending still ends at `duration_s`. `0`: no stall ([load_canceller/design.md](load_canceller/design.md#cancelschedule)) |
 | `heartbeat_timeout_ms` | integer, ms, `>= 0` | `0` | Heartbeat Monitor: a backend whose last HeartbeatLine is this old gets no new requests. `0`: off, every backend is used ([heartbeat_monitor/design.md](heartbeat_monitor/design.md#backendliveness)) |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for the LoadBalancer's and the LoadCanceller's random choices |
-| `output_path` | path prefix | `ingress` | Outputs go to `<output_path>.cancels.csv`, `<output_path>.forwards.csv`, `<output_path>.liveness.csv` and `<output_path>.summary.json` |
+| `output_path` | path prefix | `ingress` | Outputs go to `<output_path>.cancels.csv`, `<output_path>.forwards.csv`, `<output_path>.liveness.csv`, `<output_path>.picks.csv` and `<output_path>.summary.json` |
 
 ## Constants
 
@@ -103,6 +103,28 @@ and `ewma_exec_ns` are written in decimal without an exponent, as the shortest s
 The Heartbeat Monitor's LivenessLog, one row per change of a backend's liveness plus one per backend at start. The
 format is in [heartbeat_monitor/api.md](heartbeat_monitor/api.md#output_pathlivenesscsv). Header only when the
 monitor is off. Written at shutdown ([design.md#shutdown](design.md#shutdown)).
+
+### `<output_path>.picks.csv`
+
+The LoadBalancer's PickLog ([load_balancer/api.md#pickrecord](load_balancer/api.md#pickrecord)): one row per
+backend per `/ping` picked (forwarded or dropped by the DeadlineFilter). UTF-8, comma-separated, `\n` line endings,
+one header line:
+
+```
+t_ns,server_id,outstanding,ewma_exec_ns,worker_count
+```
+
+| Column | Type / unit | Meaning |
+|---|---|---|
+| `t_ns` | u64, ns | `t - run_start`: when the pick happened, on the Ingress's time base ([design.md#time-base](design.md#time-base)) |
+| `server_id` | u32 | The backend |
+| `outstanding` | integer | Its forwards in progress, not counting this pick's |
+| `ewma_exec_ns` | float, ns, or empty | Its EwmaExecTime; empty before its first sample |
+| `worker_count` | u32 | Its WorkerCount; `0` before its first answer |
+
+Rows are sorted by `t_ns`; rows with equal `t_ns` keep their PickLog order (backends in id order within a pick).
+`ewma_exec_ns` is written like `ewma_latency_ns` in `forwards.csv`. Header only when no `/ping` was picked. Written
+at shutdown ([design.md#shutdown](design.md#shutdown)).
 
 ### `<output_path>.summary.json`
 
