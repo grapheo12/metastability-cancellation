@@ -15,6 +15,8 @@ From the Ingress parameters ([../api.md#program-parameters](../api.md#program-pa
 | Name | Value | Meaning |
 |---|---|---|
 | `EWMA_INITIAL_LATENCY_NS` | `1_000_000` (1 ms) | Every backend's EwmaLatency before its first sample. Not 0, so that the `ewma` policy still weighs `outstanding` before any response |
+| `DEADLINE_FILTER_CONFIDENCE` | `0.99` | A backend passes the DeadlineFilter if the request finishes there in time with at least this probability ([design.md#deadlinefilter](design.md#deadlinefilter)) |
+| `DEADLINE_FILTER_MISS` | `0.01` | `1 - DEADLINE_FILTER_CONFIDENCE`: the largest allowed late probability |
 | `EXEC_NO_SAMPLE` | binary64 quiet NaN, bits `0x7FF8000000000000` | Stored in `ewma_exec_ns` until the backend's first ExecutionTime sample ([design.md#ewmaexectime](design.md#ewmaexectime)) |
 
 ## Types

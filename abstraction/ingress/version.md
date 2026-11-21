@@ -28,3 +28,4 @@
 | 0.4.1 | 2026-11-20T00:00:00Z | Child bump: frontend 0.4.0 (deadline-aware pick, filter drops) |
 | 0.5.0 | 2026-11-20T00:00:00Z | BackendStats and summary `worker_count`. Child bump: load_balancer 0.7.0 |
 | 0.5.1 | 2026-11-20T00:00:00Z | Child bump: frontend 0.5.0 (WorkerCount to finish) |
+| 0.5.2 | 2026-11-21T00:00:00Z | `lb_filter` text: on-time probability >= 0.99. Child bump: load_balancer 0.8.0 |
