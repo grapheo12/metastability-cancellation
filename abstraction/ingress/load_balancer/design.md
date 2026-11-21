@@ -182,55 +182,133 @@ function random_pair(lb, L):                         # two different members of 
 
 ## DeadlineFilter
 
-With `lb_filter = deadline`, each request is only sent to a backend expected to reach it before its RequestDeadline.
-The Frontend passes the request's time left, `remaining_ns`
+With `lb_filter = deadline`, each request is only sent to a backend where it is likely to finish before its
+RequestDeadline. The Frontend passes the request's time left, `remaining_ns`
 ([../frontend/design.md#forwardtask](../frontend/design.md#forwardtask)); `choose` keeps from the LiveSet the
-backends whose expected wait fits, and the LbPolicy then chooses among them exactly as it would among `L`.
+backends whose **on-time probability** is at least `DEADLINE_FILTER_CONFIDENCE = 0.99`, and the LbPolicy then
+chooses among them exactly as it would among `L`.
+
+### Model
+
+Each backend is an M/M/k queue seen by the LoadBalancer, with:
+
+| Symbol | Value | Source |
+|---|---|---|
+| `n` | `outstanding` of the backend at pick time: this Ingress's forwards in progress there (queued or running) | BackendStats |
+| `k` | `max(worker_count, 1)`: requests the backend runs at once | WorkerCount ([../../protocol/design.md#workercount](../../protocol/design.md#workercount)) |
+| `e` | EwmaExecTime, in ns: the mean service time, so `μ = 1/e` | [EwmaExecTime](#ewmaexectime) |
+| `T` | `remaining_ns`: the request's time left | Frontend |
+
+The quantity is the **conditional** probability `Pr(t <= T | N = n)` that the request's completion time `t` (its wait
+plus its own service) is within `T`, given the `n` requests seen ahead of it. It is not the stationary M/M/k
+response-time distribution, which averages over `N` and needs the arrival rate.
+
+- **Given `N = n`.** Service is exponential, hence memoryless: every request in service has an `Exp(μ)` remainder,
+  however long it has already run, so nothing else about the past matters. If `n < k` a worker is free and the wait
+  `W` is 0. Otherwise all `k` workers are busy and the request starts after `m = n - k + 1` departures; while all
+  are busy, departures form a Poisson process of rate `kμ`, so `W ~ Erlang(m, kμ)`. Later arrivals do not delay it
+  (FIFO). Its own service `S ~ Exp(μ)` is independent, and `t = W + S`.
+- **Late probability.** With `x = μT = T / e` and `Q(m, y) = Σ_{i=0}^{m-1} e^{-y} y^i / i!` (the probability that
+  a Poisson(y) variable is `< m`, which equals `Pr(Erlang(m, rate) > y / rate)`):
+
+| Case | `Pr(t > T \| N = n)` |
+|---|---|
+| `T <= 0` | 1 (already late) |
+| `n < k` | `e^{-x}` (only the service) |
+| `n >= k`, `k = 1` | `Q(m + 1, x)`: `W + S` is `Erlang(m + 1, μ)` |
+| `n >= k`, `k >= 2` | `Q(m, kx) + e^{-x} (k / (k-1))^m (1 - Q(m, (k-1)x))` |
+
+  The last row: `Pr(W + S > T) = Pr(W > T) + ∫_0^T f_W(w) e^{-μ(T-w)} dw`, with
+  `f_W(w) = (kμ)^m w^{m-1} e^{-kμw} / (m-1)!`. The integral is
+  `e^{-μT} (kμ)^m / (m-1)! ∫_0^T w^{m-1} e^{-(k-1)μw} dw = e^{-μT} (k/(k-1))^m Pr(Erlang(m, (k-1)μ) <= T)`.
+  This derivation is argued here, not machine-checked; the worked example below was checked against direct numerical
+  integration (agreeing to 50 digits) and a Monte Carlo of 10^6 samples per case.
+- **Estimates, not truths.** `μ = 1/e` plugs the EwmaExecTime in as the true mean service time; its own uncertainty is
+  not modeled, so 0.99 is a probability under the fitted model. `n` counts this Ingress's forwards, which include
+  requests still in transit and superseded RequestCopies the server is still running, so it is the server's `N` only
+  approximately. The order is FIFO; under the `edf` QueueDiscipline a request may overtake or be overtaken, and the
+  law is an approximation.
+
+### Filter
 
 ```
+DEADLINE_FILTER_CONFIDENCE = 0.99
+DEADLINE_FILTER_MISS       = 0.01            # 1 - DEADLINE_FILTER_CONFIDENCE, written as its own constant
+
 function deadline_filter(lb, L, remaining_ns):      # L in id order -> sublist of L, in id order
     F = []
     for s in L:
-        e = exec_value(lb, s)                        # EwmaExecTime, binary64 or none (EwmaExecTime section)
+        e = exec_value(lb, s)                        # EwmaExecTime, binary64 or none
         if e is none: F.append(s); continue          # no ExecutionTime sample yet: eligible
-        o = lb.stats[s].outstanding.load()
-        w = max(lb.stats[s].worker_count.load(), 1)  # WorkerCount; not known yet: 1
-        expected_wait = float(o + 1) * e / float(w)  # binary64, evaluated left to right, round to nearest
-        if expected_wait <= float(remaining_ns): F.append(s)     # i64 -> binary64, round to nearest
+        n = lb.stats[s].outstanding.load()
+        k = max(lb.stats[s].worker_count.load(), 1)  # WorkerCount; not known yet: 1
+        if late_probability(n, k, e, float(remaining_ns)) <= DEADLINE_FILTER_MISS: F.append(s)
     return F
+
+function late_probability(n, k, e, T):               # binary64 throughout; -> Pr(t > T | N = n) in [0, 1]
+    if T <= 0: return 1
+    x = T / e
+    if n < k: return exp(-x)
+    m = n - k + 1
+    if k == 1: return poisson_lower_sum(m + 1, x)
+    a = poisson_lower_sum(m, k * x)
+    log_b = -x + m * log1p(1 / (k - 1)) + log_poisson_upper(m, (k - 1) * x)   # ln of e^{-x} (k/(k-1))^m (1 - Q)
+    return min(a + exp(log_b), 1)
+
+function poisson_lower_sum(m, y):                    # Q(m, y), m >= 1, y > 0
+    s = 0
+    for i in 0 ..= m-1:                              # in increasing i
+        s = s + exp(-y + i * ln(y) - lgamma(i + 1))  # each Poisson term computed in log space
+    return min(s, 1)
+
+function log_poisson_upper(m, y):                    # ln(1 - Q(m, y)), m >= 1, y > 0
+    if y < m:                                        # lower regularized gamma series: no cancellation
+        t = 1; s = 1; j = 1
+        loop:
+            t = t * y / (m + j); s = s + t; j = j + 1
+            if t < 1e-17 * s: break
+        return -y + m * ln(y) - lgamma(m + 1) + ln(s)
+    q = poisson_lower_sum(m, y)
+    return log1p(-q) if q < 1 else -infinity        # then exp(log_b) = 0
 ```
 
-- **Expected wait.** `outstanding` is the LoadBalancer's own count of this Ingress's forwards in progress on the
-  backend (queued or running there); `+ 1` is the request being placed. EwmaExecTime is the backend's average
-  ExecutionTime, so queueing delay is not counted twice. The backend runs `w` requests at once, so the work ahead of
-  the request drains `w` times faster: the wait is divided by its WorkerCount
-  ([../../protocol/design.md#workercount](../../protocol/design.md#workercount)), which `finish` takes from every
-  relayed `202`/`503`. Until a backend's first answer its WorkerCount is unknown and 1 is used; it also has no
-  EwmaExecTime then, so it is eligible anyway.
+- **Numerics.** Every Poisson term and the `(k/(k-1))^m` factor are formed in log space, so no intermediate overflows
+  or underflows even for `n` in the thousands. `1 - Q(m, y)` is never formed by subtraction when it is small (`y < m`);
+  computing it as `1 - Q` there loses everything (e.g. `n = 1000`, `k = 2`, `e = 10 ms`, `T = 5 s` needs
+  `1 - Q(999, 500) ≈ e^{-196}`, multiplied by `2^999`). Each product inside a sum is rounded on its own (no fused
+  multiply-add). Implementations must agree with the worked example to a relative `1e-12`.
 - **Drop.** When no backend of `L` passes, `pick` returns `Dropped` and counts it in `filter_dropped`. No backend is
   contacted and no BackendStats counter, ForwardRecord or `finish` follows. A request whose deadline has already
-  passed (`remaining_ns < 0`) passes nowhere and is always dropped.
+  passed (`remaining_ns <= 0`) passes nowhere and is always dropped.
 - **Off.** With `lb_filter = none`, or a request without a RequestDeadline (`remaining_ns` none), `L` is used as
   before: same choices and same random draws.
-- **Races.** `outstanding` and EwmaExecTime are read without a lock and may change during the scan, as for EwmaScore;
-  the filter is a heuristic.
+- **Races.** `outstanding`, WorkerCount and EwmaExecTime are read without a lock and may change during the scan, as
+  for EwmaScore; the filter is a heuristic.
 
-Worked example, `B = 2`, both live, EwmaExecTime `(140_000_000, 140_000_000)` ns, `outstanding = (10, 40)`,
-WorkerCount `(10, 10)`:
+Worked example, `e = 200_000_000` ns (`μ = 5/s`), `T = 5_000_000_000` ns (`x = 25`); `Pr(late)` to 17 significant
+digits:
 
-| `remaining_ns` | expected waits (ns) | `F` | Result |
-|---|---|---|---|
-| 6_000_000_000 | 154_000_000, 574_000_000 | [0, 1] | the LbPolicy over both |
-| 500_000_000 | 154_000_000, 574_000_000 | [0] | 0, no draw (`n = 1`) |
-| 154_000_000 | 154_000_000, 574_000_000 | [0] | `<=`: exactly fits |
-| 100_000_000 | 154_000_000, 574_000_000 | [] | `Dropped`, `filter_dropped += 1` |
-| -5_000_000 | any | [] | already late: `Dropped` |
-| 100_000_000, backend 1 has no sample | 154_000_000, none | [1] | no sample: eligible |
-| 1_000_000_000, WorkerCount `(0, 10)` (backend 0 not known yet) | 1_540_000_000, 574_000_000 | [1] | unknown counts as 1 |
-| none (no RequestDeadline) | — | `L` | as with `lb_filter = none` |
+| `k` | `n` | `m` | `Pr(t > T \| N = n)` | Eligible (`<= 0.01`) |
+|---|---|---|---|---|
+| 10 | 0 | — | 1.3887943864964040e-11 (`e^{-25}`) | yes |
+| 10 | 9 | — | 1.3887943864964040e-11 | yes |
+| 10 | 10 | 1 | 1.5431048738848933e-11 | yes |
+| 10 | 50 | 41 | 1.0439869390746449e-9 | yes |
+| 10 | 150 | 141 | 3.9304667021466753e-5 | yes |
+| 10 | 200 | 191 | 0.0075996341805018727 | yes |
+| 10 | 202 | 193 | 0.0093662549934202290 | yes: the largest admitted `n` |
+| 10 | 203 | 194 | 0.010395504157208201 | no |
+| 10 | 220 | 211 | 0.057518866812073766 | no |
+| 1 | 0 | — | 1.3887943864964040e-11 | yes |
+| 1 | 10 | 10 | 0.00058646162975308126 | yes |
+| 1 | 13 | 13 | 0.0064674843658217432 | yes: the largest admitted `n` |
+| 1 | 14 | 14 | 0.012402060718900588 | no |
 
-Checks: `(10 + 1) × 140_000_000 / 10 = 1_540_000_000 / 10 = 154_000_000` and
-`(40 + 1) × 140_000_000 / 10 = 5_740_000_000 / 10 = 574_000_000`, exact in binary64 (integer results below 2^53).
+Other cases: `T <= 0` gives 1 (dropped); a backend without an EwmaExecTime sample is eligible; WorkerCount 0
+(unknown) is treated as `k = 1`; `lb_filter = none` or no RequestDeadline uses `L`.
+
+For comparison, the former mean test `(n + 1) × e / k <= T` admitted `n <= 249` at `k = 10` and `n <= 24` at
+`k = 1`: the 0.99 test is stricter because it bounds the tail, not the mean.
 
 ## ForwardLog
 
