@@ -256,7 +256,7 @@ func TestEwmaPrefersFastBackend(t *testing.T) {
 // Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
 func TestDeadlineFilterDrops(t *testing.T) {
 	b0 := startBackend(t, 100000)
-	ing := startIngressFiltered(t, []string{b0.Addr().String()}, PolicyEwma, FilterDeadline, 0)
+	ing := startIngressFiltered(t, []string{b0.Addr().String()}, PolicyEwma, FilterDeadlineMMK, 0)
 	conn := dial(t, ing)
 	ctx := context.Background()
 	now := uint64(time.Now().UnixNano())
@@ -280,7 +280,7 @@ func TestDeadlineFilterDrops(t *testing.T) {
 	if err := json.Unmarshal(raw, &s); err != nil {
 		t.Fatal(err)
 	}
-	if s.FilterDropped != 1 || s.Backends[0].Forwarded != 2 || s.Config.LbFilter != FilterDeadline || s.Backends[0].WorkerCount != 1 {
+	if s.FilterDropped != 1 || s.Backends[0].Forwarded != 2 || s.Config.LbFilter != FilterDeadlineMMK || s.Backends[0].WorkerCount != 1 {
 		t.Fatalf("summary %+v", s)
 	}
 	// Every pick, the dropped one included, is in picks.csv (one backend: one row each).

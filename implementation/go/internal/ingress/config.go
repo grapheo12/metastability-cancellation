@@ -2,7 +2,7 @@
 // proxy in front of several servers, with an in-process LoadCanceller that
 // picks victims from the InFlightMap.
 //
-// Source: abstraction/ingress/design.md (ingress v0.6.0)
+// Source: abstraction/ingress/design.md (ingress v0.7.0)
 package ingress
 
 import (
@@ -29,8 +29,10 @@ const (
 	PolicyPowerOfTwo       = "power_of_two"
 	PolicyEwma             = "ewma"
 	// DeadlineFilter switch, as accepted by --lb_filter.
-	FilterNone     = "none"
-	FilterDeadline = "deadline"
+	FilterNone                  = "none"
+	FilterDeadlineMean          = "deadline_mean"            // (n+1) * e <= T
+	FilterDeadlineMeanPerWorker = "deadline_mean_per_worker" // (n+1) * e / k <= T
+	FilterDeadlineMMK           = "deadline_mmk"             // M/M/k Pr(late) <= DeadlineFilterMiss
 )
 
 // Config is the validated IngressConfig.
@@ -41,7 +43,7 @@ type Config struct {
 	Backends   []string
 	NumClients uint32
 	LbPolicy   string
-	LbFilter   string // FilterNone or FilterDeadline (DeadlineFilter)
+	LbFilter   string // FilterNone or a DeadlineStrategy (FilterDeadline*)
 	EwmaBeta   float64
 	CancelRate float64
 	DurationS  float64
@@ -111,10 +113,10 @@ func Validate(p Params) (Config, error) {
 		return c, errors.New("lb_policy must be round_robin, least_outstanding, power_of_two or ewma")
 	}
 	switch p.LbFilter {
-	case FilterNone, FilterDeadline:
+	case FilterNone, FilterDeadlineMean, FilterDeadlineMeanPerWorker, FilterDeadlineMMK:
 		c.LbFilter = p.LbFilter
 	default:
-		return c, errors.New("lb_filter must be none or deadline")
+		return c, errors.New("lb_filter must be none, deadline_mean, deadline_mean_per_worker or deadline_mmk")
 	}
 	// !(in range) also rejects NaN; the range rejects infinities.
 	if c.EwmaBeta, err = strconv.ParseFloat(p.EwmaBeta, 64); err != nil || !(c.EwmaBeta >= 0 && c.EwmaBeta <= 1) {

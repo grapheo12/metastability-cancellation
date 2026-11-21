@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.9.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.10.0)
 package ingress
 
 import (
@@ -121,7 +121,7 @@ type PickRecord struct {
 // Design: abstraction/ingress/load_balancer/design.md#loadbalancer
 type LoadBalancer struct {
 	policy   string
-	filter   string        // DeadlineFilter: FilterNone or FilterDeadline
+	filter   string        // FilterNone or the DeadlineStrategy
 	dropped  atomic.Uint64 // filter_dropped: picks the DeadlineFilter dropped
 	beta     float64
 	backends []string
@@ -366,7 +366,7 @@ func (lb *LoadBalancer) Snapshot() []BackendStatsValue {
 // Design: abstraction/ingress/load_balancer/design.md#lbpolicy
 func (lb *LoadBalancer) choose(remainingNs int64, hasDeadline bool) (uint32, bool) {
 	live := lb.liveSet()
-	if lb.filter == FilterDeadline && hasDeadline {
+	if lb.filter != FilterNone && hasDeadline {
 		// Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
 		live = lb.deadlineFilter(live, remainingNs)
 		if len(live) == 0 {
@@ -389,8 +389,8 @@ const (
 )
 
 // deadlineFilter keeps the backends of live (id order) that have no
-// ExecutionTime sample yet or where the request is late with probability at
-// most DeadlineFilterMiss under the M/M/k model (WorkerCount 0 read as 1).
+// ExecutionTime sample yet or that pass the DeadlineStrategy lb.filter
+// (WorkerCount 0 read as 1).
 //
 // Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
 func (lb *LoadBalancer) deadlineFilter(live []uint64, remainingNs int64) []uint64 {
@@ -409,7 +409,17 @@ func (lb *LoadBalancer) deadlineFilter(live []uint64, remainingNs int64) []uint6
 		if k == 0 {
 			k = 1 // WorkerCount not known yet
 		}
-		if latePr(uint64(n), k, e, float64(remainingNs)) <= DeadlineFilterMiss {
+		T := float64(remainingNs)
+		var keep bool
+		switch lb.filter { // DeadlineStrategy
+		case FilterDeadlineMean:
+			keep = float64(float64(n+1)*e) <= T
+		case FilterDeadlineMeanPerWorker:
+			keep = float64(float64(float64(n+1)*e)/float64(k)) <= T
+		default: // FilterDeadlineMMK
+			keep = latePr(uint64(n), k, e, T) <= DeadlineFilterMiss
+		}
+		if keep {
 			kept = append(kept, s)
 		}
 	}

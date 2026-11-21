@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.6.0)
+// Source: abstraction/ingress/design.md (ingress v0.7.0)
 package ingress
 
 import (

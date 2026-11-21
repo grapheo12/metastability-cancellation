@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.9.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.10.0)
 package ingress
 
 import (
@@ -318,7 +318,7 @@ func TestLatePrWorkedExample(t *testing.T) {
 // Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
 func TestDeadlineFilterWorkedExample(t *testing.T) {
 	mk := func(out0, out1 int64, w0, w1 uint64, sample1 bool) *LoadBalancer {
-		lb := NewLoadBalancer(Config{LbPolicy: PolicyEwma, LbFilter: FilterDeadline, EwmaBeta: 0.7,
+		lb := NewLoadBalancer(Config{LbPolicy: PolicyEwma, LbFilter: FilterDeadlineMMK, EwmaBeta: 0.7,
 			Backends: []string{"a:1", "b:1"}, Seed: 7}, nil)
 		lb.stats[0].Outstanding.Store(out0)
 		lb.stats[1].Outstanding.Store(out1)
@@ -397,7 +397,7 @@ func TestRemaining(t *testing.T) {
 //
 // Design: abstraction/ingress/load_balancer/design.md#picklog
 func TestPickLogWorkedExample(t *testing.T) {
-	lb := NewLoadBalancer(Config{LbPolicy: PolicyEwma, LbFilter: FilterDeadline, EwmaBeta: 0.7,
+	lb := NewLoadBalancer(Config{LbPolicy: PolicyEwma, LbFilter: FilterDeadlineMMK, EwmaBeta: 0.7,
 		Backends: []string{"a:1", "b:1"}, Seed: 7}, nil)
 	lb.stats[0].Outstanding.Store(12)
 	lb.stats[0].WorkerCount.Store(10)
@@ -419,5 +419,54 @@ func TestPickLogWorkedExample(t *testing.T) {
 	log[0].ServerID = 9 // a copy
 	if lb.PickLog()[0].ServerID != 0 {
 		t.Fatal("PickLog must return a copy")
+	}
+}
+
+// The two mean DeadlineStrategies' worked example: e = 140 ms, outstanding
+// (10, 40), WorkerCount (10, 10).
+//
+// Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
+func TestDeadlineMeanStrategiesWorkedExample(t *testing.T) {
+	mk := func(filter string) *LoadBalancer {
+		lb := NewLoadBalancer(Config{LbPolicy: PolicyEwma, LbFilter: filter, EwmaBeta: 0.7,
+			Backends: []string{"a:1", "b:1"}, Seed: 7}, nil)
+		lb.stats[0].Outstanding.Store(10)
+		lb.stats[1].Outstanding.Store(40)
+		lb.stats[0].WorkerCount.Store(10)
+		lb.stats[1].WorkerCount.Store(10)
+		lb.ewmaExecUpdate(0, 140_000_000)
+		lb.ewmaExecUpdate(1, 140_000_000)
+		return lb
+	}
+	cases := []struct {
+		rem             int64
+		mean, perWorker []uint64
+	}{
+		{6_000_000_000, []uint64{0, 1}, []uint64{0, 1}},
+		{3_000_000_000, []uint64{0}, []uint64{0, 1}},
+		{1_540_000_000, []uint64{0}, []uint64{0, 1}},
+		{1_000_000_000, []uint64{}, []uint64{0, 1}},
+		{500_000_000, []uint64{}, []uint64{0}},
+		{154_000_000, []uint64{}, []uint64{0}},
+		{100_000_000, []uint64{}, []uint64{}},
+	}
+	same := func(a, b []uint64) bool {
+		if len(a) != len(b) {
+			return false
+		}
+		for i := range a {
+			if a[i] != b[i] {
+				return false
+			}
+		}
+		return true
+	}
+	for _, c := range cases {
+		if got := mk(FilterDeadlineMean).deadlineFilter([]uint64{0, 1}, c.rem); !same(got, c.mean) {
+			t.Errorf("deadline_mean, remaining %d: %v, want %v", c.rem, got, c.mean)
+		}
+		if got := mk(FilterDeadlineMeanPerWorker).deadlineFilter([]uint64{0, 1}, c.rem); !same(got, c.perWorker) {
+			t.Errorf("deadline_mean_per_worker, remaining %d: %v, want %v", c.rem, got, c.perWorker)
+		}
 	}
 }
