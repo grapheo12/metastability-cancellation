@@ -137,7 +137,7 @@ race is accepted, as for the other counters.
 function choose(lb, remaining_ns):
     L = [ s for s in 0 ..= B-1 if heartbeat_monitor.is_live(lb.monitor, s) ]     # LiveSet, in id order
     if L is empty: L = [0 ..= B-1]                   # every backend silent: use them all, as without a monitor
-    if lb.filter == deadline and remaining_ns is not none:
+    if lb.filter != none and remaining_ns is not none:
         L = deadline_filter(lb, L, remaining_ns)     # DeadlineFilter
         if L is empty: return Dropped
     n = len(L)
@@ -184,11 +184,20 @@ function random_pair(lb, L):                         # two different members of 
 
 ## DeadlineFilter
 
-With `lb_filter = deadline`, each request is only sent to a backend where it is likely to finish before its
+With `lb_filter` other than `none`, each request is only sent to a backend expected to finish it before its
 RequestDeadline. The Frontend passes the request's time left, `remaining_ns`
 ([../frontend/design.md#forwardtask](../frontend/design.md#forwardtask)); `choose` keeps from the LiveSet the
-backends whose **on-time probability** is at least `DEADLINE_FILTER_CONFIDENCE = 0.99`, and the LbPolicy then
-chooses among them exactly as it would among `L`.
+backends that pass the **DeadlineStrategy** named by `lb_filter`, and the LbPolicy then chooses among them exactly as
+it would among `L`. Everything but the per-backend test is shared by the strategies.
+
+| `lb_filter` (DeadlineStrategy) | Keep backend `s` if | Character |
+|---|---|---|
+| `deadline_mean` | `(n + 1) × e <= T` | mean wait as if the backend ran one request at a time: about `k` times too pessimistic |
+| `deadline_mean_per_worker` | `(n + 1) × e / k <= T` | mean wait with `k` workers draining the queue |
+| `deadline_mmk` | `Pr(t > T \| N = n) <= DEADLINE_FILTER_MISS` | M/M/k on-time probability `>= 0.99` (see [Model](#model)) |
+
+`n`, `k`, `e` and `T` are as defined in the [Model](#model): `outstanding`, `max(WorkerCount, 1)`, EwmaExecTime and
+`remaining_ns`.
 
 ### Model
 
@@ -244,7 +253,12 @@ function deadline_filter(lb, L, remaining_ns):      # L in id order -> sublist o
         if e is none: F.append(s); continue          # no ExecutionTime sample yet: eligible
         n = lb.stats[s].outstanding.load()
         k = max(lb.stats[s].worker_count.load(), 1)  # WorkerCount; not known yet: 1
-        if late_probability(n, k, e, float(remaining_ns)) <= DEADLINE_FILTER_MISS: F.append(s)
+        T = float(remaining_ns)                      # i64 -> binary64, round to nearest
+        match lb.filter:                             # DeadlineStrategy
+            deadline_mean:            keep = float(n + 1) * e <= T
+            deadline_mean_per_worker: keep = float(n + 1) * e / float(k) <= T    # left to right, each step rounded
+            deadline_mmk:             keep = late_probability(n, k, e, T) <= DEADLINE_FILTER_MISS
+        if keep: F.append(s)
     return F
 
 function late_probability(n, k, e, T):               # binary64 throughout; -> Pr(t > T | N = n) in [0, 1]
@@ -309,8 +323,23 @@ digits:
 Other cases: `T <= 0` gives 1 (dropped); a backend without an EwmaExecTime sample is eligible; WorkerCount 0
 (unknown) is treated as `k = 1`; `lb_filter = none` or no RequestDeadline uses `L`.
 
-For comparison, the former mean test `(n + 1) × e / k <= T` admitted `n <= 249` at `k = 10` and `n <= 24` at
-`k = 1`: the 0.99 test is stricter because it bounds the tail, not the mean.
+Worked example of the two mean strategies, `B = 2`, both live, `e = 140_000_000` ns for both, `outstanding = (10, 40)`,
+WorkerCount `(10, 10)`; the waits are `(n + 1) × e = (1_540_000_000, 5_740_000_000)` and, divided by `k`,
+`(154_000_000, 574_000_000)`, all exact in binary64:
+
+| `remaining_ns` | `deadline_mean` keeps | `deadline_mean_per_worker` keeps |
+|---|---|---|
+| 6_000_000_000 | [0, 1] | [0, 1] |
+| 3_000_000_000 | [0] | [0, 1] |
+| 1_540_000_000 | [0] (`<=`: exactly fits) | [0, 1] |
+| 1_000_000_000 | [] (`Dropped`) | [0, 1] |
+| 500_000_000 | [] | [0] |
+| 154_000_000 | [] | [0] (`<=`) |
+| 100_000_000 | [] | [] |
+
+**Admit edges compared**, at `e = 200 ms`, `T = 5 s`: `deadline_mean` keeps `n <= 24` whatever `k` is;
+`deadline_mean_per_worker` keeps `n <= 249` at `k = 10` (`n <= 24` at `k = 1`); `deadline_mmk` keeps `n <= 202` at
+`k = 10` and `n <= 13` at `k = 1`, stricter than the per-worker mean because it bounds the tail, not the mean.
 
 ## PickLog
 
