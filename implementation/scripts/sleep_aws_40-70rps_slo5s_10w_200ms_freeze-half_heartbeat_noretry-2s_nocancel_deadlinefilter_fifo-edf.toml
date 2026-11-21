@@ -65,7 +65,7 @@ machine = "client"   # Ingress next to the load generator on metafail-exp-1
 listen_port = 9090
 lb_policy = "ewma"
 heartbeat_timeout_ms = 1000  # BackendLiveness: no new requests after 2 missed heartbeats
-lb_filter = "deadline"       # DeadlineFilter
+lb_filter = "deadline_mmk"   # DeadlineFilter, M/M/k strategy (runs before 2026-11-21 used "deadline" = mean, then mean/k, then M/M/k)
 
 [run]
 sweep_order = ["load_gen.global_rate", "load_gen.max_retries", "server.queue_discipline"]
