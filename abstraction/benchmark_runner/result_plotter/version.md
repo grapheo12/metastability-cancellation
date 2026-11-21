@@ -19,3 +19,4 @@
 | 0.15.0 | 2026-11-20T00:00:00Z | `read_forward_log` reads the first five ForwardLog columns and ignores later ones (`exec_ns`, `ewma_exec_ns`); a line needs at least 5 fields |
 | 0.16.0 | 2026-11-20T00:00:00Z | StartSlackHistogram (`start_slack.html`): per done point, the fraction of `start_slack_ns` samples per 100 ms bin (floor), empty bins between the extremes at 0, dashed line at the deadline; worked example |
 | 0.17.0 | 2026-11-20T00:00:00Z | StartSlackHistogram: with a FailureTime (`freeze_after_ms` from `params.json`), two more subplots, requests first sent before and after it; `read_start_slacks` keeps `send_ns`; split worked example |
+| 0.18.0 | 2026-11-21T00:00:00Z | ExpectedWaitPlot (`expected_wait.html`): per backend subplot, `(outstanding + 1) × EwmaExecTime` from the PickLog, mean per 200 ms, one line per point, dashed SLO line; worked example |

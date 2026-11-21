@@ -39,6 +39,7 @@ function plot(output_dir):
         if figure.x == "forward_time": draw_forward_timelines(output_dir, done, swept_keys); continue   # ForwardTimelinePlots
         if figure.x == "loadgen_time": draw_availability(output_dir, done, swept_keys); continue      # AvailabilityPlot
         if figure.x == "start_slack": draw_start_slack(output_dir, done, swept_keys); continue        # StartSlackHistogram
+        if figure.x == "pick_time": draw_expected_wait(output_dir, done, swept_keys); continue        # ExpectedWaitPlot
         if figure.x == "x_key": draw as below
         else: draw as in ThroughputLatencyPlot; continue
         one subplot per metric of the figure, sharing the x-axis, title = metric name
@@ -584,6 +585,83 @@ Split worked example, `freeze_after_ms = 60000` (`F = 60_000_000_000`):
 
 Before: one sample, bin 49, fraction 1. After: bins -20 (`-2_000_000_000 div W`) and -15 (`-1_440_000_000 div W`),
 fraction 1/2 each, with bins -19 ..= -16 at 0. All: the three samples together.
+
+## ExpectedWaitPlot
+
+The **ExpectedWaitPlot** (`expected_wait.html`) shows, over time, the quantity `(outstanding + 1) × EwmaExecTime`
+that the LoadBalancer sees for each backend at every pick: the mean-based time to completion a request placed on that
+backend would face. It reads the Ingress's PickLog, `ingress.picks.csv`
+([../../ingress/api.md#output_pathpickscsv](../../ingress/api.md#output_pathpickscsv)). One subplot per backend,
+side by side on one page, with one line per done point.
+
+- **Samples:** every PickLog row with a non-empty `ewma_exec_ns` (a backend without an ExecutionTime sample yet has
+  no value). The value is `(outstanding + 1) × ewma_exec_ns / 1e9` seconds, in binary64.
+- **Bins:** `EXPECTED_WAIT_BIN_MS = 200` ms windows of `t_ns` (floor division); each window's y is the **mean** of
+  its samples for that backend, at the window centre. Windows without samples are not drawn. A backend that the
+  LiveSet or the DeadlineFilter excludes keeps getting rows (every pick records every backend), so its line goes on.
+- **Reference:** a dashed horizontal line at the SLO (`slo_ms / 1000` s from each drawn point's `loadgen_args`,
+  one line per distinct value) in every subplot: a request starts with that much time left.
+
+```
+EXPECTED_WAIT_BIN_MS = 200
+
+function read_pick_log(path):                      # -> list of (t_ns, server_id, outstanding, ewma_ns | none) | none
+    if path does not exist: return none
+    header = first line; it must start with "t_ns,server_id,outstanding,ewma_exec_ns", else return []
+    rows = []
+    for each later line:
+        split on ","; stop at a line with fewer than 4 fields or whose first three fields are not integers
+            (outstanding may be negative) or whose ewma_exec_ns is neither empty nor a float   # e.g. truncated
+        rows.append((t_ns, server_id, outstanding, float(ewma_exec_ns) if not empty else none))
+    return rows
+
+function expected_wait_series(rows, s):            # -> list of (x_s, mean_s), windows in increasing order
+    W = EXPECTED_WAIT_BIN_MS * 1_000_000
+    v = group [ (outstanding + 1) * ewma_ns / 1e9 for (t, id, outstanding, ewma_ns) in rows
+                if id == s and ewma_ns is not none ] by t div W
+    return [ ((b + 0.5) * EXPECTED_WAIT_BIN_MS / 1000, sum(v[b]) / len(v[b])) for b in sorted keys of v ]
+
+function draw_expected_wait(output_dir, done, swept_keys):
+    lines = []                                     # (label, {server_id: series}, color index)
+    for row in done, in point-id order:
+        rows = read_pick_log(output_dir/points/point_<row.point>/ingress.picks.csv)
+        if rows is none or rows is empty: continue
+        per_server = { s: expected_wait_series(rows, s) for s in the distinct server_ids of rows, ascending }
+        per_server = { s: series for (s, series) in per_server if series is not empty }
+        if per_server is empty: continue
+        lines.append((label as in the QueueLengthPlot, per_server, the point's color index))
+    if lines is empty: delete output_dir/plots/expected_wait.html if it exists; return
+    servers = sorted union of the server ids over lines
+    subplots: one per server, titled "server <id>", in that order
+    in subplot s, for each line with a series for s: a line with small markers, in the point's color and legend
+        group (one legend entry per point, shown in its first subplot)
+    in every subplot, a dashed horizontal line at each distinct slo_ms / 1000 of the drawn points
+    x-axis linear, label "time since the Ingress's run start (s)"; y-axis linear from 0,
+        label "(outstanding + 1) × EwmaExecTime (s)"
+    save as output_dir/plots/expected_wait.html, full page width (see FigurePage)
+```
+
+- **Mean, not max.** The window mean follows the queue's level; single-pick spikes of one window are averaged out.
+- **Not the filter's decision.** The current DeadlineFilter tests an M/M/k on-time probability, which also uses the
+  WorkerCount; this plot shows the plain mean-based quantity. The PickLog keeps
+  `worker_count`, so other derived curves can be drawn from the same file.
+
+Worked example, `W = 200_000_000` ns:
+
+| `t_ns` | `server_id` | `outstanding` | `ewma_exec_ns` | Value (s) | Window |
+|---|---|---|---|---|---|
+| 100_000_000 | 0 | 12 | 140_000_000 | 1.82 | 0 |
+| 150_000_000 | 0 | 2 | 140_000_000 | 0.42 | 0 |
+| 150_000_000 | 1 | 0 | (empty) | — | skipped |
+| 250_000_000 | 0 | 0 | 100_000_000 | 0.1 | 1 |
+
+Server 0: window 0 at x = 0.1 s, y = (1.82 + 0.42) / 2 = 1.12; window 1 at x = 0.3 s, y = 0.1. Server 1 has no
+sample, so it gets no line (and no subplot if no point has one).
+
+| Situation | Result |
+|---|---|
+| No `ingress.picks.csv` (a run from before the PickLog), or no row with an EwmaExecTime | Point left out |
+| No done point drawable | No `expected_wait.html`; an earlier one is deleted |
 
 ## GcOverlay
 

@@ -21,6 +21,8 @@ Leaf component. It reads every point directory of a run and produces:
 - the **StartSlackHistogram**: per done SweepPoint, the distribution of the requests' StartSlack (time left before
   the RequestDeadline when a worker picked the request up), as fractions per 100 ms bin; for a run with a
   WorkerFreeze also split into requests sent before and after the failure (the **FailureTime**).
+- the **ExpectedWaitPlot**: per backend, one subplot each on one page, `(outstanding + 1) × EwmaExecTime` as the
+  LoadBalancer saw it at every pick (from its PickLog), averaged per 200 ms, one line per done SweepPoint.
 
 Every figure is an interactive page (**FigurePage**, `plots/<name>.html`) that opens offline.
 

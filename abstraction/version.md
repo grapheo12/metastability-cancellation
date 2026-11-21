@@ -178,3 +178,4 @@
 | 0.34.0 | 2026-11-21T00:00:00Z | DeadlineFilter is an M/M/k on-time probability test (glossary). Child bump: ingress 0.5.2 (load_balancer 0.8.0) |
 | 0.35.0 | 2026-11-21T00:00:00Z | Glossary PickLog. Child bump: ingress 0.6.0 (load_balancer 0.9.0) |
 | 0.35.1 | 2026-11-21T00:00:00Z | Child bump: benchmark_runner 0.9.0 (experiment_executor 0.12.0) |
+| 0.35.2 | 2026-11-21T00:00:00Z | Glossary ExpectedWaitPlot. Child bump: benchmark_runner 0.9.1 (result_plotter 0.18.0) |
