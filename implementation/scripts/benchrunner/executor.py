@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.11.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.12.0)
 """run_point: ServerLifecycle, IngressLifecycle, ClientRun and point outputs for one SweepPoint."""
 
 import json
@@ -307,8 +307,8 @@ def collect_outputs(point, servers, client, rd_servers, rd_client, pdir, ingress
     for name in ("loadgen.requests.csv", "loadgen.summary.json", "loadgen.log"):
         client.transport.fetch(f"{rd_client}/{name}", os.path.join(pdir, name))
     ingress_host, rd_ingress = ingress_host or client, rd_ingress or rd_client
-    for name in ("ingress.cancels.csv", "ingress.forwards.csv", "ingress.liveness.csv", "ingress.summary.json",
-                 "ingress.log"):  # LivenessLog: absent from an older Ingress, not reported
+    for name in ("ingress.cancels.csv", "ingress.forwards.csv", "ingress.liveness.csv", "ingress.picks.csv",
+                 "ingress.summary.json", "ingress.log"):  # LivenessLog, PickLog: absent from an older Ingress, not reported
         ingress_host.transport.fetch(f"{rd_ingress}/{name}", os.path.join(pdir, name))
     # ForwardLog: optional, a missing one only warns and never fails the point
     if not os.path.exists(os.path.join(pdir, "ingress.forwards.csv")):

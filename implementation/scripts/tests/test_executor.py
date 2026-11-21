@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.11.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.12.0)
 import contextlib
 import io
 import json
@@ -128,11 +128,14 @@ class PointOutputsTest(unittest.TestCase):
                 f.write("t_ns,server_id,outcome,latency_ns,ewma_latency_ns\n")
             with open(os.path.join(rs, "ingress.liveness.csv"), "w") as f:
                 f.write("t_ns,server_id,live\n")
+            with open(os.path.join(rs, "ingress.picks.csv"), "w") as f:  # PickLog
+                f.write("t_ns,server_id,outstanding,ewma_exec_ns,worker_count\n")
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 executor.collect_outputs(point(instances=0), server, client, rs, rc, pdir, server, rs)
             self.assertTrue(os.path.exists(os.path.join(pdir, "ingress.forwards.csv")))
             self.assertTrue(os.path.exists(os.path.join(pdir, "ingress.liveness.csv")))
+            self.assertTrue(os.path.exists(os.path.join(pdir, "ingress.picks.csv")))
             self.assertEqual(out.getvalue(), "")
 
     # Design: abstraction/benchmark_runner/experiment_executor/design.md#point-outputs
