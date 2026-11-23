@@ -9,7 +9,8 @@ Immutable once published.
 | Field | Type | Meaning |
 |---|---|---|
 | `request_id` | u64 | The RequestId being forwarded (its high 32 bits are the client id) |
-| `server_id` | u32 | The backend it was forwarded to (index into `backends`) |
+| `server_id` | u32 | The backend it was forwarded to (index into `backends`); with LbRetries, the newest attempt's backend |
+| `attempt` | u32 | LbRetries started so far for this ForwardTask: `0` for the first attempt ([../retry_policy/design.md](../retry_policy/design.md#retrypolicy)) |
 
 ### `InFlightMap`
 
