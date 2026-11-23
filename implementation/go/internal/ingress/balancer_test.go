@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.10.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.11.0)
 package ingress
 
 import (
@@ -439,16 +439,17 @@ func TestDeadlineMeanStrategiesWorkedExample(t *testing.T) {
 		return lb
 	}
 	cases := []struct {
-		rem             int64
-		mean, perWorker []uint64
+		rem                        int64
+		mean, perWorker, plusShare []uint64
 	}{
-		{6_000_000_000, []uint64{0, 1}, []uint64{0, 1}},
-		{3_000_000_000, []uint64{0}, []uint64{0, 1}},
-		{1_540_000_000, []uint64{0}, []uint64{0, 1}},
-		{1_000_000_000, []uint64{}, []uint64{0, 1}},
-		{500_000_000, []uint64{}, []uint64{0}},
-		{154_000_000, []uint64{}, []uint64{0}},
-		{100_000_000, []uint64{}, []uint64{}},
+		{6_000_000_000, []uint64{0, 1}, []uint64{0, 1}, []uint64{0, 1}},
+		{3_000_000_000, []uint64{0}, []uint64{0, 1}, []uint64{0}},
+		{1_540_000_000, []uint64{0}, []uint64{0, 1}, []uint64{0}},
+		{1_414_000_000, []uint64{}, []uint64{0, 1}, []uint64{0}},
+		{1_000_000_000, []uint64{}, []uint64{0, 1}, []uint64{}},
+		{500_000_000, []uint64{}, []uint64{0}, []uint64{}},
+		{154_000_000, []uint64{}, []uint64{0}, []uint64{}},
+		{100_000_000, []uint64{}, []uint64{}, []uint64{}},
 	}
 	same := func(a, b []uint64) bool {
 		if len(a) != len(b) {
@@ -467,6 +468,9 @@ func TestDeadlineMeanStrategiesWorkedExample(t *testing.T) {
 		}
 		if got := mk(FilterDeadlineMeanPerWorker).deadlineFilter([]uint64{0, 1}, c.rem); !same(got, c.perWorker) {
 			t.Errorf("deadline_mean_per_worker, remaining %d: %v, want %v", c.rem, got, c.perWorker)
+		}
+		if got := mk(FilterDeadlineMeanQueuePlusShare).deadlineFilter([]uint64{0, 1}, c.rem); !same(got, c.plusShare) {
+			t.Errorf("deadline_mean_queue_plus_share, remaining %d: %v, want %v", c.rem, got, c.plusShare)
 		}
 	}
 }

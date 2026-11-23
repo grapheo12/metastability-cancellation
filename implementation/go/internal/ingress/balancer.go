@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.10.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.11.0)
 package ingress
 
 import (
@@ -416,6 +416,8 @@ func (lb *LoadBalancer) deadlineFilter(live []uint64, remainingNs int64) []uint6
 			keep = float64(float64(n+1)*e) <= T
 		case FilterDeadlineMeanPerWorker:
 			keep = float64(float64(float64(n+1)*e)/float64(k)) <= T
+		case FilterDeadlineMeanQueuePlusShare:
+			keep = float64(float64(float64(n)*e)+float64(e/float64(k))) <= T // each step rounded: no FMA
 		default: // FilterDeadlineMMK
 			keep = latePr(uint64(n), k, e, T) <= DeadlineFilterMiss
 		}

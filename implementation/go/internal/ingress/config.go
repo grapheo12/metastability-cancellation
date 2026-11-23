@@ -2,7 +2,7 @@
 // proxy in front of several servers, with an in-process LoadCanceller that
 // picks victims from the InFlightMap.
 //
-// Source: abstraction/ingress/design.md (ingress v0.7.0)
+// Source: abstraction/ingress/design.md (ingress v0.8.0)
 package ingress
 
 import (
@@ -29,10 +29,11 @@ const (
 	PolicyPowerOfTwo       = "power_of_two"
 	PolicyEwma             = "ewma"
 	// DeadlineFilter switch, as accepted by --lb_filter.
-	FilterNone                  = "none"
-	FilterDeadlineMean          = "deadline_mean"            // (n+1) * e <= T
-	FilterDeadlineMeanPerWorker = "deadline_mean_per_worker" // (n+1) * e / k <= T
-	FilterDeadlineMMK           = "deadline_mmk"             // M/M/k Pr(late) <= DeadlineFilterMiss
+	FilterNone                       = "none"
+	FilterDeadlineMean               = "deadline_mean"                  // (n+1) * e <= T
+	FilterDeadlineMeanPerWorker      = "deadline_mean_per_worker"       // (n+1) * e / k <= T
+	FilterDeadlineMeanQueuePlusShare = "deadline_mean_queue_plus_share" // (n + 1/k) * e <= T
+	FilterDeadlineMMK                = "deadline_mmk"                   // M/M/k Pr(late) <= DeadlineFilterMiss
 )
 
 // Config is the validated IngressConfig.
@@ -113,10 +114,10 @@ func Validate(p Params) (Config, error) {
 		return c, errors.New("lb_policy must be round_robin, least_outstanding, power_of_two or ewma")
 	}
 	switch p.LbFilter {
-	case FilterNone, FilterDeadlineMean, FilterDeadlineMeanPerWorker, FilterDeadlineMMK:
+	case FilterNone, FilterDeadlineMean, FilterDeadlineMeanPerWorker, FilterDeadlineMeanQueuePlusShare, FilterDeadlineMMK:
 		c.LbFilter = p.LbFilter
 	default:
-		return c, errors.New("lb_filter must be none, deadline_mean, deadline_mean_per_worker or deadline_mmk")
+		return c, errors.New("lb_filter must be none, deadline_mean, deadline_mean_per_worker, deadline_mean_queue_plus_share or deadline_mmk")
 	}
 	// !(in range) also rejects NaN; the range rejects infinities.
 	if c.EwmaBeta, err = strconv.ParseFloat(p.EwmaBeta, 64); err != nil || !(c.EwmaBeta >= 0 && c.EwmaBeta <= 1) {

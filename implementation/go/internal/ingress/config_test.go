@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.7.0)
+// Source: abstraction/ingress/design.md (ingress v0.8.0)
 package ingress
 
 import "testing"
@@ -43,7 +43,7 @@ func TestValidateLbFilter(t *testing.T) {
 	if c, err := Validate(p); err != nil || c.LbFilter != FilterNone {
 		t.Fatalf("default: %+v %v", c, err)
 	}
-	for _, ok := range []string{FilterDeadlineMean, FilterDeadlineMeanPerWorker, FilterDeadlineMMK} {
+	for _, ok := range []string{FilterDeadlineMean, FilterDeadlineMeanPerWorker, FilterDeadlineMeanQueuePlusShare, FilterDeadlineMMK} {
 		p.LbFilter = ok
 		if c, err := Validate(p); err != nil || c.LbFilter != ok {
 			t.Fatalf("%s: %+v %v", ok, c, err)
