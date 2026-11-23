@@ -27,3 +27,4 @@
 | 0.21.0 | 2026-11-20T00:00:00Z | PROGRAM_PARAMS: Ingress `lb_filter` (DeadlineFilter) |
 | 0.22.0 | 2026-11-23T00:00:00Z | PROGRAM_PARAMS: server `reject_past_deadline` (PastDeadlineRejection) |
 | 0.23.0 | 2026-11-23T00:00:00Z | PROGRAM_PARAMS: Ingress `lb_retry_policy`, `lb_max_retries` (LbRetries) |
+| 0.24.0 | 2026-11-23T00:00:00Z | PROGRAM_PARAMS: Ingress `lb_retry_timeout_ms` (`timeout` RetryPolicy) |
