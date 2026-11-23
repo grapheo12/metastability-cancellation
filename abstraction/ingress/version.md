@@ -37,3 +37,4 @@
 | 0.9.2 | 2026-11-23T00:00:00Z | `forwards.csv` column `attempt` (last). Child bump: load_balancer 0.12.0 |
 | 0.9.3 | 2026-11-23T00:00:00Z | Child bump: frontend 0.6.0 (ForwardAttempt, LbRetryLoop) |
 | 0.10.0 | 2026-11-23T00:00:00Z | `lb_retry_policy` value `timeout`; parameter `lb_retry_timeout_ms`, validation. Child bump: retry_policy 0.2.0 |
+| 0.10.1 | 2026-11-23T00:00:00Z | Summary `filter_queued`, `filter_sent_from_queue`, `filter_queue_max`, `lb_retry_refused`; `filter_dropped` now means dropped past the deadline while waiting; `lb_filter` text. Child bump: load_balancer 0.13.0 |

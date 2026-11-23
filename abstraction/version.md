@@ -192,3 +192,4 @@
 | 0.39.4 | 2026-11-23T00:00:00Z | Child bump: benchmark_runner 0.9.4 (config 0.23.0) |
 | 0.40.0 | 2026-11-23T00:00:00Z | `lb_retry_policy = timeout`, `lb_retry_timeout_ms`. Child bump: ingress 0.10.0 (retry_policy 0.2.0) |
 | 0.40.1 | 2026-11-23T00:00:00Z | Child bump: benchmark_runner 0.9.5 (config 0.24.0) |
+| 0.40.2 | 2026-11-23T00:00:00Z | DeadlineFilter waits in the FilterWaitQueue instead of dropping at once (glossary). Child bump: ingress 0.10.1 (load_balancer 0.13.0) |

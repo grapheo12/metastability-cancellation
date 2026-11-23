@@ -84,13 +84,23 @@ every `ewma_exec_ns = EXEC_NO_SAMPLE`.
 The random stream is `rng_new(derive_seed(config.seed, STREAM_INGRESS_LB, 0))`.
 See [design.md#loadbalancer](design.md#loadbalancer).
 
-### `pick(lb, remaining_ns: i64 | none, attempt: u32) -> ForwardTicket | Dropped`
+### `pick(lb, remaining_ns: i64 | none, attempt: u32, record: boolean = true) -> ForwardTicket | Dropped`
 Applies the DeadlineFilter when `lb_filter` is not `none` and `remaining_ns` is given, then chooses a backend by the
-policy among the live (all if none is live) and eligible ones. If none is eligible it returns `Dropped`, counts it in
-`filter_dropped` and changes nothing else; no `finish` follows. Otherwise it increments the chosen backend's
-`outstanding` and `forwarded` and stamps the ticket with the current monotonic time; every such `pick` must be
-followed by exactly one `finish` with the same ticket. See [design.md#lbpolicy](design.md#lbpolicy),
+policy among the live (all if none is live) and eligible ones. If none is eligible it returns `Dropped` and changes
+nothing; the caller decides what follows (a first attempt waits in the FilterWaitQueue, a refused LbRetry is skipped).
+Otherwise it increments the chosen backend's `outstanding` and `forwarded` and stamps the ticket with the current
+monotonic time; every such `pick` must be followed by exactly one `finish` with the same ticket. `record = false`
+(a FilterWaitQueue re-check) writes no PickRecord. See [design.md#lbpolicy](design.md#lbpolicy),
 [design.md#deadlinefilter](design.md#deadlinefilter) and [design.md#forwardticket](design.md#forwardticket).
+
+### `admit(lb, deadline: u64 | none) -> Sent(ForwardTicket) | Wait(WaitEntry)`
+For a first attempt: sends at once if the FilterWaitQueue is empty and a backend passes; otherwise appends a
+WaitEntry (FIFO) whose `signal` fires when a later scan sends it (`sent(ticket)`) or drops it past its deadline
+(`dropped`). The caller marks it `gone` if its client resets. See [design.md#filterwaitqueue](design.md#filterwaitqueue).
+
+### `scan(lb) -> nothing`
+Every `FILTER_QUEUE_TICK_MS = 10` while `lb_filter` is not `none`: drops waiting requests past their deadline and
+sends those that now pass, oldest first. See [design.md#filterwaitqueue](design.md#filterwaitqueue).
 
 ### `finish(lb, ticket: ForwardTicket, outcome: ForwardOutcome, exec_ns: u64 | none, worker_count: u32 | none) -> nothing`
 Decrements `outstanding` and increments the outcome's counter. If `outcome == ok`, also folds the forward's latency
