@@ -194,6 +194,7 @@ it would among `L`. Everything but the per-backend test is shared by the strateg
 |---|---|---|
 | `deadline_mean` | `(n + 1) × e <= T` | mean wait as if the backend ran one request at a time: about `k` times too pessimistic |
 | `deadline_mean_per_worker` | `(n + 1) × e / k <= T` | mean wait with `k` workers draining the queue |
+| `deadline_mean_queue_plus_share` | `(n + 1/k) × e <= T` | each request ahead at a full service time, the request's own at `1/k` of one |
 | `deadline_mmk` | `Pr(t > T \| N = n) <= DEADLINE_FILTER_MISS` | M/M/k on-time probability `>= 0.99` (see [Model](#model)) |
 
 `n`, `k`, `e` and `T` are as defined in the [Model](#model): `outstanding`, `max(WorkerCount, 1)`, EwmaExecTime and
@@ -257,6 +258,7 @@ function deadline_filter(lb, L, remaining_ns):      # L in id order -> sublist o
         match lb.filter:                             # DeadlineStrategy
             deadline_mean:            keep = float(n + 1) * e <= T
             deadline_mean_per_worker: keep = float(n + 1) * e / float(k) <= T    # left to right, each step rounded
+            deadline_mean_queue_plus_share: keep = float(n) * e + e / float(k) <= T   # each product/quotient rounded, then the sum
             deadline_mmk:             keep = late_probability(n, k, e, T) <= DEADLINE_FILTER_MISS
         if keep: F.append(s)
     return F
@@ -323,21 +325,24 @@ digits:
 Other cases: `T <= 0` gives 1 (dropped); a backend without an EwmaExecTime sample is eligible; WorkerCount 0
 (unknown) is treated as `k = 1`; `lb_filter = none` or no RequestDeadline uses `L`.
 
-Worked example of the two mean strategies, `B = 2`, both live, `e = 140_000_000` ns for both, `outstanding = (10, 40)`,
-WorkerCount `(10, 10)`; the waits are `(n + 1) × e = (1_540_000_000, 5_740_000_000)` and, divided by `k`,
-`(154_000_000, 574_000_000)`, all exact in binary64:
+Worked example of the three mean strategies, `B = 2`, both live, `e = 140_000_000` ns for both,
+`outstanding = (10, 40)`, WorkerCount `(10, 10)`; the waits are `(n + 1) × e = (1_540_000_000, 5_740_000_000)`,
+divided by `k` `(154_000_000, 574_000_000)`, and `n × e + e / k = (1_414_000_000, 5_614_000_000)`, all exact in
+binary64:
 
-| `remaining_ns` | `deadline_mean` keeps | `deadline_mean_per_worker` keeps |
-|---|---|---|
-| 6_000_000_000 | [0, 1] | [0, 1] |
-| 3_000_000_000 | [0] | [0, 1] |
-| 1_540_000_000 | [0] (`<=`: exactly fits) | [0, 1] |
-| 1_000_000_000 | [] (`Dropped`) | [0, 1] |
-| 500_000_000 | [] | [0] |
-| 154_000_000 | [] | [0] (`<=`) |
-| 100_000_000 | [] | [] |
+| `remaining_ns` | `deadline_mean` keeps | `deadline_mean_per_worker` keeps | `deadline_mean_queue_plus_share` keeps |
+|---|---|---|---|
+| 6_000_000_000 | [0, 1] | [0, 1] | [0, 1] |
+| 3_000_000_000 | [0] | [0, 1] | [0] |
+| 1_540_000_000 | [0] (`<=`: exactly fits) | [0, 1] | [0] |
+| 1_414_000_000 | [] | [0, 1] | [0] (`<=`: exactly fits) |
+| 1_000_000_000 | [] (`Dropped`) | [0, 1] | [] |
+| 500_000_000 | [] | [0] | [] |
+| 154_000_000 | [] | [0] (`<=`) | [] |
+| 100_000_000 | [] | [] | [] |
 
 **Admit edges compared**, at `e = 200 ms`, `T = 5 s`: `deadline_mean` keeps `n <= 24` whatever `k` is;
+`deadline_mean_queue_plus_share` keeps `n <= 24` at `k = 10` (`n <= T/e - 1/k = 24.9`) and at `k = 1`;
 `deadline_mean_per_worker` keeps `n <= 249` at `k = 10` (`n <= 24` at `k = 1`); `deadline_mmk` keeps `n <= 202` at
 `k = 10` and `n <= 13` at `k = 1`, stricter than the per-worker mean because it bounds the tail, not the mean.
 

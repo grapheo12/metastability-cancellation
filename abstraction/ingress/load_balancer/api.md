@@ -7,7 +7,7 @@ From the Ingress parameters ([../api.md#program-parameters](../api.md#program-pa
 | Parameter | Type / unit / constraint | Default | Meaning |
 |---|---|---|---|
 | `lb_policy` | `round_robin` \| `least_outstanding` \| `power_of_two` \| `ewma` | `least_outstanding` | The LbPolicy |
-| `lb_filter` | `none` \| `deadline_mean` \| `deadline_mean_per_worker` \| `deadline_mmk` | `none` | The DeadlineFilter's DeadlineStrategy, or off ([design.md#deadlinefilter](design.md#deadlinefilter)) |
+| `lb_filter` | `none` \| `deadline_mean` \| `deadline_mean_per_worker` \| `deadline_mean_queue_plus_share` \| `deadline_mmk` | `none` | The DeadlineFilter's DeadlineStrategy, or off ([design.md#deadlinefilter](design.md#deadlinefilter)) |
 | `ewma_beta` | float, `0 <= ewma_beta <= 1` | `0.7` | Weight of the old value in each EwmaLatency update ([design.md#ewmalatency](design.md#ewmalatency)) |
 
 ## Constants

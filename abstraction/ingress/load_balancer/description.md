@@ -9,9 +9,9 @@ the **LbPolicy** named in `lb_policy`, and keeps the **BackendStats** of every b
 - `ewma`: two different random backends, then the one with the lower **EwmaScore**, which weighs its forwards in
   progress by its **EwmaLatency** (a moving average of its recent response times).
 
-With `lb_filter` set to a **DeadlineStrategy** (`deadline_mean`, `deadline_mean_per_worker` or `deadline_mmk`), the
+With `lb_filter` set to a **DeadlineStrategy** (`deadline_mean`, `deadline_mean_per_worker`, `deadline_mean_queue_plus_share` or `deadline_mmk`), the
 **DeadlineFilter** first narrows the candidates to the backends expected to finish the request before its
-RequestDeadline, by a mean wait (with or without dividing by the WorkerCount) or by an M/M/k on-time probability of at
+RequestDeadline, by a mean wait (with or without dividing by the WorkerCount, or counting only the request's own service at `1/k`) or by an M/M/k on-time probability of at
 least 0.99; if none is, the request is dropped instead of forwarded.
 
 It counts each backend's forwards in progress (`outstanding`) and how each forward ended, for the policies and for
