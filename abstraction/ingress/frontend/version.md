@@ -9,3 +9,4 @@
 | 0.3.0 | 2026-11-20T00:00:00Z | ForwardTask: on `ok`/`rejected`, read `exec_ns` from the relayed body (`parse_exec_report`) and pass it to `finish`; body still relayed unchanged |
 | 0.4.0 | 2026-11-20T00:00:00Z | DeadlineFilter: `handle_ping` passes `remaining_ns` (RequestDeadline minus the wall clock) to `pick`; on `Dropped` answers `503 {"id"}` without forwarding; state machine and table |
 | 0.5.0 | 2026-11-20T00:00:00Z | ForwardTask: for relayed `202`/`503`, reads the WorkerCount header (`parse_worker_count`) and passes it to `finish`; not relayed |
+| 0.6.0 | 2026-11-23T00:00:00Z | LB retries: ForwardTask runs ForwardAttempts (own pick with `attempt`, InFlightEntry replacement, clear+finish per attempt in its own activity) and an LbRetryLoop (newest answer counts; RetryPolicy on the newest 502 and every `LB_RETRY_TICK_MS = 10`; budget `lb_max_retries`; client reset cancels every running attempt); identical to before with `none` or budget 0; worked examples |

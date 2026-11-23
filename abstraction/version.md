@@ -188,3 +188,4 @@
 | 0.39.0 | 2026-11-23T00:00:00Z | Ingress parameters `lb_retry_policy`, `lb_max_retries`; glossary LbRetry, RetryPolicy. Child bump: ingress 0.9.0 (retry_policy 0.1.0) |
 | 0.39.1 | 2026-11-23T00:00:00Z | Child bump: ingress 0.9.1 (inflight_map 0.4.0) |
 | 0.39.2 | 2026-11-23T00:00:00Z | Child bump: ingress 0.9.2 (load_balancer 0.12.0) |
+| 0.39.3 | 2026-11-23T00:00:00Z | Child bump: ingress 0.9.3 (frontend 0.6.0) |
