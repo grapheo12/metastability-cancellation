@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.5.0)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.6.0)
 package ingress
 
 import (
@@ -52,7 +52,7 @@ func (ing *Ingress) handle(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(resp.body) // errors on a reset stream are ignored
 }
 
-// handlePing runs one ForwardTask.
+// handlePing runs one ForwardTask: attempt 0, then the LbRetryLoop.
 //
 // Design: abstraction/ingress/frontend/design.md#forwardtask
 func (ing *Ingress) handlePing(ctx context.Context, body []byte) fwdResponse {
@@ -66,41 +66,170 @@ func (ing *Ingress) handlePing(ctx context.Context, body []byte) fwdResponse {
 	}
 	ing.startOnce()
 
-	// Design: abstraction/ingress/frontend/design.md#forwardtask
-	// DeadlineFilter: the request's time left on this Ingress's wall clock.
-	// Design: abstraction/ingress/frontend/design.md#forwardtask
-	var remainingNs int64
-	deadline, hasDeadline := protocol.ParseDeadline(body)
-	if hasDeadline {
-		remainingNs = remaining(deadline, time.Now().UnixNano())
-	}
-	ticket, picked := ing.lb.PickWithin(remainingNs, hasDeadline) // ForwardTicket: given back to Finish to time the forward
-	if !picked {                                                  // no backend can make the deadline: 503 {"id"}, never forwarded
+	deadline, hasDeadline := protocol.ParseDeadline(body) // RequestDeadline, for the DeadlineFilter and the RetryState
+	task := &forwardTask{requestID: id, clientID: clientID, body: body, deadline: deadline, hasDeadline: hasDeadline,
+		results: make(chan attemptResult, 1+int(ing.cfg.LbMaxRetries))} // capacity covers every attempt: sends never block
+	if !ing.startAttempt(task, 0) { // no backend can make the deadline: 503 {"id"}, never forwarded
 		return fwdResponse{status: protocol.StatusRejected, body: protocol.BuildCancelBody(id)}
 	}
-	s := ticket.ServerID
-	entry := &InFlightEntry{RequestID: id, ServerID: s}
-	ing.inflight.Publish(entry) // keyed by the RequestId
-	resp, outcome := ing.forward(ctx, clientID, s, body)
-	ing.inflight.Clear(entry) // before relaying the answer
+	return ing.lbRetryLoop(ctx, task)
+}
+
+// forwardTask is one client /ping stream and its ForwardAttempts (oldest first).
+// Only the ForwardTask's own goroutine touches attempts and their running/outcome.
+//
+// Design: abstraction/ingress/frontend/design.md#forwardtask
+type forwardTask struct {
+	requestID   uint64
+	clientID    uint32
+	body        []byte
+	deadline    uint64
+	hasDeadline bool
+	attempts    []*forwardAttempt
+	results     chan attemptResult
+}
+
+// forwardAttempt is one upstream forward of a ForwardTask.
+//
+// Design: abstraction/ingress/frontend/design.md#forwardattempt
+type forwardAttempt struct {
+	k       uint32
+	ticket  ForwardTicket
+	cancel  context.CancelFunc // the attempt's cancel signal: resets its upstream stream
+	running bool
+	outcome ForwardOutcome
+}
+
+// attemptResult is what an attempt reports once it has cleared and finished.
+type attemptResult struct {
+	a       *forwardAttempt
+	resp    fwdResponse
+	outcome ForwardOutcome
+}
+
+// remainingNs is the request's time left on this Ingress's wall clock.
+//
+// Design: abstraction/ingress/frontend/design.md#forwardtask
+func (task *forwardTask) remainingNs() (int64, bool) {
+	if !task.hasDeadline {
+		return 0, false
+	}
+	return remaining(task.deadline, time.Now().UnixNano()), true
+}
+
+// startAttempt picks for attempt k, publishes its (replacing) InFlightEntry and
+// starts its activity; false if the DeadlineFilter dropped it.
+//
+// Design: abstraction/ingress/frontend/design.md#forwardattempt
+func (ing *Ingress) startAttempt(task *forwardTask, k uint32) bool {
+	rem, has := task.remainingNs()
+	ticket, picked := ing.lb.PickAttempt(rem, has, k) // ForwardTicket (Attempt = k): given back to Finish
+	if !picked {
+		return false
+	}
+	if k > 0 {
+		ing.lbRetries.Add(1) // summary lb_retries
+	}
+	actx, cancel := context.WithCancel(context.Background()) // not the client's: older attempts outlive the task
+	a := &forwardAttempt{k: k, ticket: ticket, cancel: cancel, running: true}
+	entry := &InFlightEntry{RequestID: task.requestID, ServerID: ticket.ServerID, Attempt: k}
+	ing.inflight.Publish(entry) // replaces the previous attempt's entry
+	task.attempts = append(task.attempts, a)
+	go ing.attemptActivity(actx, task, a, entry)
+	return true
+}
+
+// attemptActivity forwards, clears its own entry, finishes its own ticket and
+// reports; it runs to the end even after the task has answered the client.
+//
+// Design: abstraction/ingress/frontend/design.md#forwardattempt
+func (ing *Ingress) attemptActivity(ctx context.Context, task *forwardTask, a *forwardAttempt, entry *InFlightEntry) {
+	resp, outcome := ing.forward(ctx, task.clientID, a.ticket.ServerID, task.body)
+	a.cancel()                // release the context; the forward has ended
+	ing.inflight.Clear(entry) // identity: a no-op once a newer attempt replaced it
 	var execNs uint64
 	var hasExec bool
+	workers := uint32(0)
 	if outcome == OutcomeOK || outcome == OutcomeRejected {
 		// ExecReport of the relayed body (relayed unchanged); StartSlack unused here.
 		execNs, hasExec, _, _ = protocol.ParseExecReport(resp.body)
+		workers = resp.workers // WorkerCount, set by forward for relayed 202/503
 	}
-	workers := uint32(0) // WorkerCount: set by forward only for relayed 202/503
 	// Design: abstraction/ingress/load_balancer/design.md#forwardticket
-	if outcome == OutcomeOK || outcome == OutcomeRejected {
-		workers = resp.workers
+	ing.lb.Finish(a.ticket, outcome, execNs, hasExec, workers) // after Clear: an ok latency ends when the answer is in
+	task.results <- attemptResult{a: a, resp: resp, outcome: outcome}
+}
+
+// LbRetryTick is LB_RETRY_TICK_MS.
+//
+// API: abstraction/ingress/frontend/api.md#constants
+const LbRetryTick = 10 * time.Millisecond
+
+// lbRetryLoop waits for the newest attempt's answer, consulting the RetryPolicy
+// on its 502 and on every tick while budget remains; a client reset cancels
+// every running attempt.
+//
+// Design: abstraction/ingress/frontend/design.md#lbretryloop
+func (ing *Ingress) lbRetryLoop(ctx context.Context, task *forwardTask) fwdResponse {
+	var tick <-chan time.Time
+	if ing.cfg.LbRetryPolicy != RetryPolicyNone && ing.cfg.LbMaxRetries > 0 { // off: no ticker at all
+		t := time.NewTicker(LbRetryTick)
+		defer t.Stop()
+		tick = t.C
 	}
-	ing.lb.Finish(ticket, outcome, execNs, hasExec, workers) // after Clear: an ok latency ends when the answer is in
-	return resp
+	for {
+		newest := task.attempts[len(task.attempts)-1]
+		budget := uint32(len(task.attempts)-1) < ing.cfg.LbMaxRetries
+		select {
+		case <-ctx.Done(): // client reset
+			for _, a := range task.attempts {
+				if a.running {
+					a.cancel() // each ends reset and finishes itself
+				}
+			}
+			return fwdResponse{aborted: true}
+		case r := <-task.results:
+			r.a.running, r.a.outcome = false, r.outcome
+			if r.a != newest {
+				continue // an older attempt: answer ignored
+			}
+			if r.outcome != OutcomeBadGateway {
+				return r.resp // 202 / 503 / 400 relayed
+			}
+			if budget && ing.retryPolicy.Decide(ing.retryState(task), RetryEvent{Kind: EventAttemptEnded, Outcome: r.outcome}) == Retry {
+				if ing.startAttempt(task, uint32(len(task.attempts))) {
+					continue
+				}
+			}
+			return r.resp // 502 relayed
+		case <-tick:
+			if !budget || !newest.running {
+				continue
+			}
+			if ing.retryPolicy.Decide(ing.retryState(task), RetryEvent{Kind: EventTick}) == Retry {
+				ing.startAttempt(task, uint32(len(task.attempts))) // Dropped: keep waiting on the newest
+			}
+		}
+	}
+}
+
+// retryState builds the RetryState right before a decide.
+//
+// Design: abstraction/ingress/retry_policy/design.md#retrystate
+func (ing *Ingress) retryState(task *forwardTask) RetryState {
+	views := make([]AttemptView, len(task.attempts))
+	for i, a := range task.attempts {
+		views[i] = AttemptView{ServerID: a.ticket.ServerID, Start: a.ticket.Start, Running: a.running, Outcome: a.outcome}
+	}
+	rem, has := task.remainingNs()
+	return RetryState{RequestID: task.requestID, RetriesSoFar: uint32(len(task.attempts) - 1),
+		MaxRetries: ing.cfg.LbMaxRetries, Now: time.Now(), FirstStart: task.attempts[0].ticket.Start,
+		RemainingNs: rem, HasDeadline: has, Attempts: views, Backends: ing.lb.backendViews()}
 }
 
 // forward sends the body unchanged on the pair's upstream connection and
-// waits for the full answer or the client's reset. Cancelling ctx makes the
-// HTTP/2 transport reset the upstream stream with CANCEL.
+// waits for the full answer or the attempt's cancel signal (ctx). Cancelling
+// ctx makes the HTTP/2 transport reset the upstream stream with CANCEL.
 //
 // Design: abstraction/ingress/frontend/design.md#forwardtask
 func (ing *Ingress) forward(ctx context.Context, c, s uint32, body []byte) (fwdResponse, ForwardOutcome) {

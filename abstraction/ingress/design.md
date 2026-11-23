@@ -163,11 +163,11 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [Structure](#structure) | [ingress.go:53](../../implementation/go/internal/ingress/ingress.go#L53) |
+| [Structure](#structure) | [ingress.go:54](../../implementation/go/internal/ingress/ingress.go#L54) |
 | [Shared state](#shared-state) | [ingress.go:25](../../implementation/go/internal/ingress/ingress.go#L25) |
 | [Configuration validation](#configuration-validation) | [config.go:92](../../implementation/go/internal/ingress/config.go#L92), [config_test.go:9](../../implementation/go/internal/ingress/config_test.go#L9), [config_test.go:40](../../implementation/go/internal/ingress/config_test.go#L40), [retrypolicy_test.go:45](../../implementation/go/internal/ingress/retrypolicy_test.go#L45) |
-| [Concurrency model](#concurrency-model) | [ingress.go:84](../../implementation/go/internal/ingress/ingress.go#L84) |
-| [Time base](#time-base) | [frontend.go:150](../../implementation/go/internal/ingress/frontend.go#L150), [ingress.go:170](../../implementation/go/internal/ingress/ingress.go#L170) |
-| [Shutdown](#shutdown) | [heartbeat_test.go:114](../../implementation/go/internal/ingress/heartbeat_test.go#L114), [ingress.go:118](../../implementation/go/internal/ingress/ingress.go#L118), [ingress.go:224](../../implementation/go/internal/ingress/ingress.go#L224), [ingress.go:264](../../implementation/go/internal/ingress/ingress.go#L264), [ingress.go:300](../../implementation/go/internal/ingress/ingress.go#L300), [ingress_test.go:81](../../implementation/go/internal/ingress/ingress_test.go#L81), [outputs_test.go:15](../../implementation/go/internal/ingress/outputs_test.go#L15), [outputs_test.go:49](../../implementation/go/internal/ingress/outputs_test.go#L49) |
+| [Concurrency model](#concurrency-model) | [ingress.go:93](../../implementation/go/internal/ingress/ingress.go#L93) |
+| [Time base](#time-base) | [frontend.go:279](../../implementation/go/internal/ingress/frontend.go#L279), [ingress.go:179](../../implementation/go/internal/ingress/ingress.go#L179) |
+| [Shutdown](#shutdown) | [heartbeat_test.go:114](../../implementation/go/internal/ingress/heartbeat_test.go#L114), [ingress.go:127](../../implementation/go/internal/ingress/ingress.go#L127), [ingress.go:235](../../implementation/go/internal/ingress/ingress.go#L235), [ingress.go:275](../../implementation/go/internal/ingress/ingress.go#L275), [ingress.go:311](../../implementation/go/internal/ingress/ingress.go#L311), [ingress_test.go:81](../../implementation/go/internal/ingress/ingress_test.go#L81), [outputs_test.go:15](../../implementation/go/internal/ingress/outputs_test.go#L15), [outputs_test.go:49](../../implementation/go/internal/ingress/outputs_test.go#L49) |
 | [Why one upstream connection per client and backend](#why-one-upstream-connection-per-client-and-backend) | [upstream.go:29](../../implementation/go/internal/ingress/upstream.go#L29) |
 <!-- trace:end -->

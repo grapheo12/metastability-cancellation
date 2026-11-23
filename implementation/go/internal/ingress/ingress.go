@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.9.2)
+// Source: abstraction/ingress/design.md (ingress v0.9.3)
 package ingress
 
 import (
@@ -37,7 +37,8 @@ type Ingress struct {
 	runStart  time.Time
 	canceller *Canceller
 
-	lbRetries atomic.Uint64 // LbRetries started (summary lb_retries)
+	lbRetries   atomic.Uint64 // LbRetries started (summary lb_retries)
+	retryPolicy RetryPolicy   // from lb_retry_policy, built once
 
 	mu           sync.Mutex
 	conns        map[net.Conn]struct{}
@@ -69,6 +70,14 @@ func Listen(cfg Config) (*Ingress, error) {
 	ing.ln = ln
 	ing.monitor = StartMonitor(cfg, time.Now()) // dials every backend for GET /heartbeat; nil when off
 	ing.lb = NewLoadBalancer(cfg, ing.monitor)
+	name := cfg.LbRetryPolicy
+	if name == "" {
+		name = RetryPolicyNone // a Config built by hand, not by Validate
+	}
+	if ing.retryPolicy, err = NewRetryPolicy(name, cfg); err != nil {
+		_ = ln.Close()
+		return nil, err
+	}
 	fmt.Println("listening on " + cfg.ListenAddr)
 	return ing, nil
 }
@@ -183,6 +192,8 @@ type summaryConfig struct {
 	DurationS          float64  `json:"duration_s"`
 	InitialStallMs     uint64   `json:"initial_stall_ms"`
 	HeartbeatTimeoutMs uint64   `json:"heartbeat_timeout_ms"`
+	LbRetryPolicy      string   `json:"lb_retry_policy"`
+	LbMaxRetries       uint32   `json:"lb_max_retries"`
 	Seed               uint64   `json:"seed"`
 	OutputPath         string   `json:"output_path"`
 }
@@ -206,7 +217,7 @@ func (ing *Ingress) writeSummary(records []*CancelRecord, runEndS float64, runSt
 	c := ing.cfg
 	counts, rates, targeted := summarizeCancels(records, c)
 	s := Summary{
-		Config:  summaryConfig{c.ListenAddr, c.Backends, c.NumClients, c.LbPolicy, c.LbFilter, c.EwmaBeta, c.CancelRate, c.DurationS, c.InitialStallMs, c.HeartbeatTimeoutMs, c.Seed, c.OutputPath},
+		Config:  summaryConfig{c.ListenAddr, c.Backends, c.NumClients, c.LbPolicy, c.LbFilter, c.EwmaBeta, c.CancelRate, c.DurationS, c.InitialStallMs, c.HeartbeatTimeoutMs, c.LbRetryPolicy, c.LbMaxRetries, c.Seed, c.OutputPath},
 		RunEndS: runEndS, RunStartUnixNs: runStartUnixNs, Counts: counts, RatesPerS: rates, ClientsTargeted: targeted, FilterDropped: ing.lb.FilterDropped(), LbRetries: ing.lbRetries.Load(), Backends: ing.lb.Snapshot(),
 	}
 	b, err := json.MarshalIndent(s, "", "  ")

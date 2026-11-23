@@ -1,0 +1,267 @@
+// Source: abstraction/ingress/frontend/design.md (frontend v0.6.0)
+package ingress
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"golang.org/x/net/http2"
+
+	"testbed/internal/protocol"
+)
+
+// fakeBackend is a prior-knowledge h2c /ping server that answers 202 after
+// delay, or stops early if its stream is reset. It counts requests and resets.
+type fakeBackend struct {
+	ln     net.Listener
+	hits   atomic.Int64
+	resets atomic.Int64
+}
+
+func startFakeBackend(t *testing.T, delay time.Duration) *fakeBackend {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fb := &fakeBackend{ln: ln}
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		id, _ := protocol.ParseBody(b)
+		fb.hits.Add(1)
+		select {
+		case <-time.After(delay):
+			w.Header().Set(protocol.WorkerThreadsHeader, "1")
+			w.WriteHeader(protocol.StatusOK)
+			_, _ = w.Write(protocol.BuildBody(id, uint64(delay), nil, 128))
+		case <-r.Context().Done():
+			fb.resets.Add(1)
+		}
+	})
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go (&http2.Server{}).ServeConn(c, &http2.ServeConnOpts{Handler: h})
+		}
+	}()
+	t.Cleanup(func() { ln.Close() })
+	return fb
+}
+
+func (fb *fakeBackend) addr() string { return fb.ln.Addr().String() }
+
+// startRetryIngress is an Ingress with round_robin, no filter, and the given
+// LB retry policy and budget.
+func startRetryIngress(t *testing.T, backends []string, policy, maxRetries string) *Ingress {
+	t.Helper()
+	cfg, err := Validate(Params{ListenAddr: "127.0.0.1:0", Backends: joinComma(backends), NumClients: "4",
+		LbPolicy: PolicyRoundRobin, LbFilter: FilterNone, LbRetryPolicy: policy, LbMaxRetries: maxRetries,
+		EwmaBeta: "0.7", CancelRate: "0", DurationS: "5", Seed: "1", InitialStallMs: "0", HeartbeatTimeoutMs: "0",
+		OutputPath: filepath.Join(t.TempDir(), "ingress")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ing, err := Listen(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go ing.Serve()
+	return ing
+}
+
+// Test-only policies: retry on a failed newest attempt; hedge once the newest
+// attempt has run 50 ms; retry on every tick.
+func init() {
+	RegisterRetryPolicy("test_failover", func(Config) RetryPolicy {
+		return RetryPolicyFunc(func(s RetryState, e RetryEvent) RetryDecision {
+			if e.Kind == EventAttemptEnded {
+				return Retry
+			}
+			return Wait
+		})
+	})
+	RegisterRetryPolicy("test_hedge50", func(Config) RetryPolicy {
+		return RetryPolicyFunc(func(s RetryState, e RetryEvent) RetryDecision {
+			n := s.Attempts[len(s.Attempts)-1]
+			if e.Kind == EventTick && n.Running && s.Now.Sub(n.Start) >= 50*time.Millisecond {
+				return Retry
+			}
+			return Wait
+		})
+	})
+	RegisterRetryPolicy("test_always", func(Config) RetryPolicy {
+		return RetryPolicyFunc(func(RetryState, RetryEvent) RetryDecision { return Retry })
+	})
+}
+
+func forwardsAttempts(t *testing.T, ing *Ingress) []string {
+	t.Helper()
+	raw, _ := os.ReadFile(ing.cfg.OutputPath + ".forwards.csv")
+	rows := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")[1:]
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		f := strings.Split(r, ",")
+		out = append(out, f[1]+":"+f[2]+":"+f[7]) // server:outcome:attempt
+	}
+	return out
+}
+
+func lbRetriesOf(t *testing.T, ing *Ingress) uint64 {
+	t.Helper()
+	var s Summary
+	raw, _ := os.ReadFile(ing.cfg.OutputPath + ".summary.json")
+	if err := json.Unmarshal(raw, &s); err != nil {
+		t.Fatal(err)
+	}
+	return s.LbRetries
+}
+
+// Fail-over: attempt 0's backend is down (502); the policy retries on
+// AttemptEnded and round_robin sends attempt 1 to the healthy backend.
+//
+// Design: abstraction/ingress/frontend/design.md#lbretryloop
+func TestLbRetryFailover(t *testing.T) {
+	good := startFakeBackend(t, 10*time.Millisecond)
+	ing := startRetryIngress(t, []string{"127.0.0.1:1", good.addr()}, "test_failover", "1")
+	conn := dial(t, ing)
+	id := protocol.MakeRequestID(0, 1)
+	st, b, err := ping(t, context.Background(), conn, "POST", "/ping", protocol.BuildBody(id, 0, nil, 128))
+	if got, _ := protocol.ParseBody(b); err != nil || st != 202 || got != id {
+		t.Fatalf("want 202 from attempt 1: %d %v", st, err)
+	}
+	if err := ing.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	if got := forwardsAttempts(t, ing); len(got) != 2 || got[0] != "0:bad_gateway:0" || got[1] != "1:ok:1" {
+		t.Fatalf("forwards %v", got)
+	}
+	if lbRetriesOf(t, ing) != 1 {
+		t.Fatal("lb_retries must be 1")
+	}
+}
+
+// Hedge on tick: attempt 0 is slow; at about 50 ms attempt 1 goes to the fast
+// backend and its answer is relayed; attempt 0 is not reset, finishes later and
+// is logged with attempt 0; the InFlightMap shows attempt 1 meanwhile.
+//
+// Design: abstraction/ingress/frontend/design.md#lbretryloop
+// Design: abstraction/ingress/frontend/design.md#forwardattempt
+func TestLbRetryHedgeNewestAnswerCounts(t *testing.T) {
+	slow, fast := startFakeBackend(t, 400*time.Millisecond), startFakeBackend(t, 100*time.Millisecond)
+	ing := startRetryIngress(t, []string{slow.addr(), fast.addr()}, "test_hedge50", "1")
+	conn := dial(t, ing)
+	id := protocol.MakeRequestID(0, 2)
+	sawAttempt1 := make(chan bool, 1)
+	go func() {
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			for _, v := range ing.inflight.Snapshot() {
+				if v.Entry.RequestID == id && v.Entry.Attempt == 1 && v.Entry.ServerID == 1 {
+					sawAttempt1 <- true
+					return
+				}
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		sawAttempt1 <- false
+	}()
+	start := time.Now()
+	st, b, err := ping(t, context.Background(), conn, "POST", "/ping", protocol.BuildBody(id, 0, nil, 128))
+	elapsed := time.Since(start)
+	if ex, _, _, _ := protocol.ParseExecReport(b); err != nil || st != 202 || ex != uint64(100*time.Millisecond) {
+		t.Fatalf("want the fast backend's 202: %d %v exec %d", st, err, ex)
+	}
+	if elapsed < 140*time.Millisecond || elapsed > 380*time.Millisecond {
+		t.Fatalf("answer after %v: want about 50 + 100 ms", elapsed)
+	}
+	if !<-sawAttempt1 {
+		t.Fatal("InFlightMap must show attempt 1 @ server 1")
+	}
+	time.Sleep(400 * time.Millisecond) // attempt 0 finishes in the background
+	if err := ing.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	if slow.resets.Load() != 0 {
+		t.Fatal("the older attempt must not be reset")
+	}
+	if got := forwardsAttempts(t, ing); len(got) != 2 || got[0] != "1:ok:1" || got[1] != "0:ok:0" {
+		t.Fatalf("forwards %v", got)
+	}
+}
+
+// The budget is enforced by the Frontend: a policy that always says Retry gets
+// exactly lb_max_retries LbRetries; with lb_max_retries = 0, none.
+//
+// Design: abstraction/ingress/frontend/design.md#lbretryloop
+func TestLbRetryBudget(t *testing.T) {
+	for _, c := range []struct {
+		max  string
+		want uint64
+	}{{"2", 2}, {"0", 0}} {
+		a, b := startFakeBackend(t, 150*time.Millisecond), startFakeBackend(t, 150*time.Millisecond)
+		ing := startRetryIngress(t, []string{a.addr(), b.addr()}, "test_always", c.max)
+		conn := dial(t, ing)
+		if st, _, err := ping(t, context.Background(), conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(0, 3), 0, nil, 128)); err != nil || st != 202 {
+			t.Fatalf("max %s: %d %v", c.max, st, err)
+		}
+		time.Sleep(200 * time.Millisecond)
+		_ = ing.Shutdown()
+		if got := lbRetriesOf(t, ing); got != c.want || uint64(a.hits.Load()+b.hits.Load()) != c.want+1 {
+			t.Fatalf("max %s: lb_retries %d, hits %d", c.max, got, a.hits.Load()+b.hits.Load())
+		}
+	}
+}
+
+// A client reset resets every running attempt upstream.
+//
+// Design: abstraction/ingress/frontend/design.md#lbretryloop
+func TestLbRetryClientResetCancelsAll(t *testing.T) {
+	a, b := startFakeBackend(t, time.Hour), startFakeBackend(t, time.Hour)
+	ing := startRetryIngress(t, []string{a.addr(), b.addr()}, "test_hedge50", "1")
+	conn := dial(t, ing)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if _, _, err := ping(t, ctx, conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(0, 1), 0, nil, 128)); err == nil {
+		t.Fatal("expected the client's reset")
+	}
+	for i := 0; i < 200 && a.resets.Load()+b.resets.Load() < 2; i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if a.resets.Load() != 1 || b.resets.Load() != 1 {
+		t.Fatalf("resets %d / %d, want both attempts reset", a.resets.Load(), b.resets.Load())
+	}
+	_ = ing.Shutdown()
+	got := forwardsAttempts(t, ing)
+	if len(got) != 2 || !strings.Contains(got[0], ":reset:") || !strings.Contains(got[1], ":reset:") {
+		t.Fatalf("forwards %v: both attempts must end reset", got)
+	}
+}
+
+// With none (or a budget of 0) a ForwardTask is one attempt: a dead backend's
+// 502 is relayed, nothing is retried.
+//
+// Design: abstraction/ingress/frontend/design.md#lbretryloop
+func TestLbRetryNoneIsOneAttempt(t *testing.T) {
+	good := startFakeBackend(t, 10*time.Millisecond)
+	ing := startRetryIngress(t, []string{"127.0.0.1:1", good.addr()}, RetryPolicyNone, "3")
+	conn := dial(t, ing)
+	if st, _, _ := ping(t, context.Background(), conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(0, 1), 0, nil, 128)); st != 502 {
+		t.Fatalf("none: want 502, got %d", st)
+	}
+	_ = ing.Shutdown()
+	if lbRetriesOf(t, ing) != 0 || good.hits.Load() != 0 {
+		t.Fatal("none must not retry")
+	}
+}

@@ -137,7 +137,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 |---|---|
 | [RetryPolicy](#retrypolicy) | [retrypolicy.go:82](../../../implementation/go/internal/ingress/retrypolicy.go#L82) |
 | [RetryEvent](#retryevent) | [retrypolicy.go:26](../../../implementation/go/internal/ingress/retrypolicy.go#L26) |
-| [RetryState](#retrystate) | [retrypolicy.go:65](../../../implementation/go/internal/ingress/retrypolicy.go#L65), [retrypolicy.go:140](../../../implementation/go/internal/ingress/retrypolicy.go#L140) |
+| [RetryState](#retrystate) | [frontend.go:219](../../../implementation/go/internal/ingress/frontend.go#L219), [retrypolicy.go:65](../../../implementation/go/internal/ingress/retrypolicy.go#L65), [retrypolicy.go:140](../../../implementation/go/internal/ingress/retrypolicy.go#L140) |
 | [RetryPolicyRegistry](#retrypolicyregistry) | [retrypolicy.go:101](../../../implementation/go/internal/ingress/retrypolicy.go#L101), [retrypolicy.go:103](../../../implementation/go/internal/ingress/retrypolicy.go#L103), [retrypolicy.go:129](../../../implementation/go/internal/ingress/retrypolicy.go#L129), [retrypolicy_test.go:10](../../../implementation/go/internal/ingress/retrypolicy_test.go#L10) |
 | [Adding a RetryPolicy](#adding-a-retrypolicy) | [retrypolicy.go:112](../../../implementation/go/internal/ingress/retrypolicy.go#L112), [retrypolicy_test.go:28](../../../implementation/go/internal/ingress/retrypolicy_test.go#L28) |
 <!-- trace:end -->

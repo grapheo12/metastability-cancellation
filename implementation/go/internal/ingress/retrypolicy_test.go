@@ -26,17 +26,17 @@ func TestRetryPolicyRegistryNone(t *testing.T) {
 //
 // Design: abstraction/ingress/retry_policy/design.md#adding-a-retrypolicy
 func TestRegisterRetryPolicy(t *testing.T) {
-	RegisterRetryPolicy("test_always", func(Config) RetryPolicy {
+	RegisterRetryPolicy("test_register_only", func(Config) RetryPolicy {
 		return RetryPolicyFunc(func(RetryState, RetryEvent) RetryDecision { return Retry })
 	})
-	defer delete(retryPolicies, "test_always")
-	p, err := NewRetryPolicy("test_always", Config{})
+	defer delete(retryPolicies, "test_register_only")
+	p, err := NewRetryPolicy("test_register_only", Config{})
 	if err != nil || p.Decide(RetryState{}, RetryEvent{Kind: EventTick}) != Retry {
 		t.Fatal("registered policy")
 	}
 	q := DefaultParams()
-	q.Backends, q.NumClients, q.LbRetryPolicy, q.LbMaxRetries = "127.0.0.1:1", "1", "test_always", "2"
-	if c, err := Validate(q); err != nil || c.LbRetryPolicy != "test_always" || c.LbMaxRetries != 2 {
+	q.Backends, q.NumClients, q.LbRetryPolicy, q.LbMaxRetries = "127.0.0.1:1", "1", "test_register_only", "2"
+	if c, err := Validate(q); err != nil || c.LbRetryPolicy != "test_register_only" || c.LbMaxRetries != 2 {
 		t.Fatalf("%+v %v", c, err)
 	}
 }
