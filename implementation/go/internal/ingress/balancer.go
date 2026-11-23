@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.12.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.13.0)
 package ingress
 
 import (
@@ -123,8 +123,8 @@ type PickRecord struct {
 // Design: abstraction/ingress/load_balancer/design.md#loadbalancer
 type LoadBalancer struct {
 	policy   string
-	filter   string        // FilterNone or the DeadlineStrategy
-	dropped  atomic.Uint64 // filter_dropped: picks the DeadlineFilter dropped
+	filter   string          // FilterNone or the DeadlineStrategy
+	wq       filterWaitQueue // FilterWaitQueue (first attempts no backend passes)
 	beta     float64
 	backends []string
 	stats    []BackendStats
@@ -168,8 +168,8 @@ func (lb *LoadBalancer) Pick() ForwardTicket {
 }
 
 // PickWithin is pick(lb, remaining_ns): with hasDeadline, remainingNs is the
-// request's time left for the DeadlineFilter. ok is false when it dropped the
-// request: nothing but filter_dropped changed, and no Finish may follow.
+// request's time left for the DeadlineFilter. ok is false when no backend
+// passed: nothing changed, and no Finish may follow.
 //
 // Design: abstraction/ingress/load_balancer/design.md#loadbalancer
 // Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
@@ -183,11 +183,20 @@ func (lb *LoadBalancer) PickWithin(remainingNs int64, hasDeadline bool) (Forward
 // Design: abstraction/ingress/load_balancer/design.md#loadbalancer
 // Design: abstraction/ingress/load_balancer/design.md#forwardticket
 func (lb *LoadBalancer) PickAttempt(remainingNs int64, hasDeadline bool, attempt uint32) (ForwardTicket, bool) {
-	lb.recordPick() // PickLog: what choose is about to see
+	return lb.pick(remainingNs, hasDeadline, attempt, true)
+}
+
+// pick is pick(lb, remaining_ns, attempt, record): record = false for a
+// FilterWaitQueue re-check writes no PickRecord. A Dropped changes nothing.
+//
+// Design: abstraction/ingress/load_balancer/design.md#loadbalancer
+func (lb *LoadBalancer) pick(remainingNs int64, hasDeadline bool, attempt uint32, record bool) (ForwardTicket, bool) {
+	if record {
+		lb.recordPick() // PickLog: what choose is about to see
+	}
 	s, ok := lb.choose(remainingNs, hasDeadline)
 	if !ok {
-		lb.dropped.Add(1)
-		return ForwardTicket{}, false
+		return ForwardTicket{}, false // the caller decides: wait in the queue, or skip a refused retry
 	}
 	lb.stats[s].Outstanding.Add(1)
 	lb.stats[s].Forwarded.Add(1)
@@ -387,8 +396,13 @@ func (lb *LoadBalancer) choose(remainingNs int64, hasDeadline bool) (uint32, boo
 	return lb.policyChoice(live), true
 }
 
-// FilterDropped is the summary's filter_dropped.
-func (lb *LoadBalancer) FilterDropped() uint64 { return lb.dropped.Load() }
+// FilterDropped is the summary's filter_dropped: requests dropped past their
+// deadline while waiting in the FilterWaitQueue.
+func (lb *LoadBalancer) FilterDropped() uint64 {
+	lb.wq.mu.Lock()
+	defer lb.wq.mu.Unlock()
+	return lb.wq.dropped
+}
 
 // DeadlineFilterConfidence and DeadlineFilterMiss are DEADLINE_FILTER_CONFIDENCE
 // and DEADLINE_FILTER_MISS: a backend passes if Pr(late) <= DeadlineFilterMiss.

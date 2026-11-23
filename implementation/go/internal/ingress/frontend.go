@@ -125,6 +125,9 @@ func (ing *Ingress) startAttempt(task *forwardTask, k uint32) bool {
 	rem, has := task.remainingNs()
 	ticket, picked := ing.lb.PickAttempt(rem, has, k) // ForwardTicket (Attempt = k): given back to Finish
 	if !picked {
+		if k == 0 {
+			ing.lb.noteDropped() // until the Frontend waits in the FilterWaitQueue
+		}
 		return false
 	}
 	if k > 0 {

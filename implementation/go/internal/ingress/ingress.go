@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.10.0)
+// Source: abstraction/ingress/design.md (ingress v0.10.1)
 package ingress
 
 import (
@@ -37,8 +37,9 @@ type Ingress struct {
 	runStart  time.Time
 	canceller *Canceller
 
-	lbRetries   atomic.Uint64 // LbRetries started (summary lb_retries)
-	retryPolicy RetryPolicy   // from lb_retry_policy, built once
+	lbRetries      atomic.Uint64 // LbRetries started (summary lb_retries)
+	lbRetryRefused atomic.Uint64 // LbRetries the DeadlineFilter refused (summary lb_retry_refused)
+	retryPolicy    RetryPolicy   // from lb_retry_policy, built once
 
 	mu           sync.Mutex
 	conns        map[net.Conn]struct{}
@@ -70,6 +71,7 @@ func Listen(cfg Config) (*Ingress, error) {
 	ing.ln = ln
 	ing.monitor = StartMonitor(cfg, time.Now()) // dials every backend for GET /heartbeat; nil when off
 	ing.lb = NewLoadBalancer(cfg, ing.monitor)
+	ing.lb.startFilterQueue() // FilterWaitQueue scanner; not started with lb_filter = none
 	name := cfg.LbRetryPolicy
 	if name == "" {
 		name = RetryPolicyNone // a Config built by hand, not by Validate
@@ -133,6 +135,7 @@ func (ing *Ingress) Shutdown() error {
 	_ = ing.base.Shutdown(ctx) // GOAWAY on every client connection
 	cancel()
 
+	ing.lb.stopFilterQueue()
 	deadline := time.Now().Add(IngressDrainTimeoutMs * time.Millisecond)
 	for ing.lb.totalOutstanding() > 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
@@ -209,17 +212,22 @@ type Summary struct {
 	Counts          cancelCounts        `json:"counts"`
 	RatesPerS       cancelRates         `json:"rates_per_s"`
 	ClientsTargeted int                 `json:"clients_targeted"`
-	FilterDropped   uint64              `json:"filter_dropped"` // DeadlineFilter drops
-	LbRetries       uint64              `json:"lb_retries"`     // attempts beyond each ForwardTask's first
+	FilterDropped   uint64              `json:"filter_dropped"` // dropped past the deadline while waiting
+	FilterQueued    uint64              `json:"filter_queued"`
+	FilterSentFromQ uint64              `json:"filter_sent_from_queue"`
+	FilterQueueMax  uint64              `json:"filter_queue_max"`
+	LbRetryRefused  uint64              `json:"lb_retry_refused"`
+	LbRetries       uint64              `json:"lb_retries"` // attempts beyond each ForwardTask's first
 	Backends        []BackendStatsValue `json:"backends"`
 }
 
 func (ing *Ingress) writeSummary(records []*CancelRecord, runEndS float64, runStartUnixNs uint64) error {
 	c := ing.cfg
 	counts, rates, targeted := summarizeCancels(records, c)
+	fQueued, fSent, fDropped, fMax := ing.lb.filterQueueCounts()
 	s := Summary{
 		Config:  summaryConfig{c.ListenAddr, c.Backends, c.NumClients, c.LbPolicy, c.LbFilter, c.EwmaBeta, c.CancelRate, c.DurationS, c.InitialStallMs, c.HeartbeatTimeoutMs, c.LbRetryPolicy, c.LbMaxRetries, c.LbRetryTimeoutMs, c.Seed, c.OutputPath},
-		RunEndS: runEndS, RunStartUnixNs: runStartUnixNs, Counts: counts, RatesPerS: rates, ClientsTargeted: targeted, FilterDropped: ing.lb.FilterDropped(), LbRetries: ing.lbRetries.Load(), Backends: ing.lb.Snapshot(),
+		RunEndS: runEndS, RunStartUnixNs: runStartUnixNs, Counts: counts, RatesPerS: rates, ClientsTargeted: targeted, FilterDropped: fDropped, FilterQueued: fQueued, FilterSentFromQ: fSent, FilterQueueMax: fMax, LbRetryRefused: ing.lbRetryRefused.Load(), LbRetries: ing.lbRetries.Load(), Backends: ing.lb.Snapshot(),
 	}
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {

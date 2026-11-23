@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.12.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.13.0)
 package ingress
 
 import (
@@ -350,11 +350,11 @@ func TestDeadlineFilterWorkedExample(t *testing.T) {
 			t.Fatalf("%s: kept %v, want %v", c.name, got, c.want)
 		}
 	}
-	// Pick: a drop counts filter_dropped and changes no backend counter; n = 1 picks it without a draw.
+	// Pick: a Dropped changes nothing (the caller decides: wait or skip); n = 1 picks it without a draw.
 	lb := mk(220, 220, 10, 10, true)
-	if _, ok := lb.PickWithin(T, true); ok || lb.FilterDropped() != 1 ||
+	if _, ok := lb.PickWithin(T, true); ok || lb.FilterDropped() != 0 ||
 		lb.stats[0].Forwarded.Load() != 0 || lb.stats[0].Outstanding.Load() != 220 {
-		t.Fatal("drop must only count filter_dropped")
+		t.Fatal("a Dropped pick must change nothing")
 	}
 	lb = mk(202, 203, 10, 10, true)
 	before := *lb.rng
