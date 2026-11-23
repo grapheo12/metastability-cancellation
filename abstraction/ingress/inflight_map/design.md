@@ -48,6 +48,10 @@ function clear(map, entry):
   newer publication.
 - `remove_exact_entry` removes the entry named by `handle`, not whichever entry currently has the same key. A
   library may instead provide one atomic conditional-remove operation with the same behavior.
+- **LbRetries replace.** When the Frontend starts an LbRetry it publishes a new entry for the same RequestId with
+  the new attempt's `server_id` and `attempt + 1`; it replaces the previous one, so the LoadCanceller always targets
+  the newest attempt. Only the newest publication is cleared at the end (identity), so an older attempt's entry never
+  removes the newer one.
 - Entries are immutable after publication. The backing library or its adapter keeps an entry alive while any map
   handle or snapshot copy refers to it and reclaims it afterward.
 
@@ -59,6 +63,9 @@ function clear(map, entry):
 | `3.8 → B` | `publish(B' = 3.8 @ server 0)` (a reused id) | — | `3.8 → B'` |
 | `3.8 → B'` | `clear(B)` (B's forward ends late) | false | `3.8 → B'` |
 | `3.8 → B'` | `clear(B')` | true | empty |
+| `3.9 → C` (attempt 0 @ server 0) | `publish(C1 = 3.9, attempt 1 @ server 1)` (an LbRetry) | — | `3.9 → C1` |
+| `3.9 → C1` | `clear(C)` | false | `3.9 → C1` |
+| `3.9 → C1` | `clear(C1)` (the ForwardTask ends) | true | empty |
 
 ## Snapshot
 
