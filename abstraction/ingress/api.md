@@ -82,7 +82,7 @@ The LoadBalancer's ForwardLog ([load_balancer/api.md#forwardrecord](load_balance
 per finished forward. UTF-8, comma-separated, `\n` line endings, one header line:
 
 ```
-t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns
+t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns,attempt
 ```
 
 | Column | Type / unit | Meaning |
@@ -94,6 +94,7 @@ t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns
 | `ewma_latency_ns` | float, ns | The backend's EwmaLatency right after this forward |
 | `exec_ns` | u64, ns, or empty | The ExecutionTime the backend reported in the relayed body's ExecReport; empty unless `ok` or `rejected` with a valid one |
 | `ewma_exec_ns` | float, ns, or empty | The backend's EwmaExecTime right after this forward; empty before its first sample |
+| `attempt` | u32 | Which attempt of its ForwardTask this forward was: `0` for the first, `k` for the k-th LbRetry |
 
 Rows are sorted by `t_ns`; rows with equal `t_ns` keep their ForwardLog order. Integers are decimal. `ewma_latency_ns`
 and `ewma_exec_ns` are written in decimal without an exponent, as the shortest string that reads back as the same binary64 (for example
