@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.23.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.24.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -193,9 +193,10 @@ class ConfigTest(unittest.TestCase):
 
     # Design: abstraction/benchmark_runner/config/design.md#benchconfig
     def test_lb_retry_params_pass_through(self):
-        text = BASE.replace("cancel_rate = 100", 'cancel_rate = 100\nlb_retry_policy = "none"\nlb_max_retries = 2')
+        text = BASE.replace("cancel_rate = 100", 'cancel_rate = 100\nlb_retry_policy = "timeout"\nlb_max_retries = 2\nlb_retry_timeout_ms = 2000')
         p = cfg.expand_sweep(self.load(text))[0]
-        self.assertEqual((p.arg("ingress", "lb_retry_policy"), p.arg("ingress", "lb_max_retries")), ("none", 2))
+        self.assertEqual((p.arg("ingress", "lb_retry_policy"), p.arg("ingress", "lb_max_retries"),
+                          p.arg("ingress", "lb_retry_timeout_ms")), ("timeout", 2, 2000))
 
     # Design: abstraction/benchmark_runner/config/design.md#benchconfig
     def test_lb_filter_passes_through(self):
