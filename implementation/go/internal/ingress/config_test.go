@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.9.3)
+// Source: abstraction/ingress/design.md (ingress v0.10.0)
 package ingress
 
 import "testing"

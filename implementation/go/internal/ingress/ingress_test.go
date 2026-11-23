@@ -26,7 +26,7 @@ func startIngress(t *testing.T, backends []string, policy string, cancelRate flo
 func startIngressFiltered(t *testing.T, backends []string, policy, filter string, cancelRate float64) *Ingress {
 	t.Helper()
 	cfg, err := Validate(Params{ListenAddr: "127.0.0.1:0", Backends: joinComma(backends), NumClients: "4",
-		LbPolicy: policy, LbFilter: filter, LbRetryPolicy: RetryPolicyNone, LbMaxRetries: "0", EwmaBeta: "0.7", CancelRate: ftoa(cancelRate), DurationS: "5", Seed: "1", InitialStallMs: "0", HeartbeatTimeoutMs: "0",
+		LbPolicy: policy, LbFilter: filter, LbRetryPolicy: RetryPolicyNone, LbMaxRetries: "0", LbRetryTimeoutMs: "150", EwmaBeta: "0.7", CancelRate: ftoa(cancelRate), DurationS: "5", Seed: "1", InitialStallMs: "0", HeartbeatTimeoutMs: "0",
 		OutputPath: filepath.Join(t.TempDir(), "ingress")})
 	if err != nil {
 		t.Fatal(err)

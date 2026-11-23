@@ -2,7 +2,7 @@
 // proxy in front of several servers, with an in-process LoadCanceller that
 // picks victims from the InFlightMap.
 //
-// Source: abstraction/ingress/design.md (ingress v0.9.3)
+// Source: abstraction/ingress/design.md (ingress v0.10.0)
 package ingress
 
 import (
@@ -59,6 +59,9 @@ type Config struct {
 	// LbRetryPolicy names the RetryPolicy (registry); LbMaxRetries is the LbRetry budget per ForwardTask.
 	LbRetryPolicy string
 	LbMaxRetries  uint32
+	// LbRetryTimeoutMs is the timeout policy's delay; LbRetryTimeoutNs = round(ms * 1e6).
+	LbRetryTimeoutMs float64
+	LbRetryTimeoutNs int64
 }
 
 // Params holds the raw command-line values, named after the API parameters.
@@ -77,13 +80,14 @@ type Params struct {
 	HeartbeatTimeoutMs string
 	LbRetryPolicy      string
 	LbMaxRetries       string
+	LbRetryTimeoutMs   string
 }
 
 // DefaultParams returns the defaults from abstraction/ingress/api.md#program-parameters.
 func DefaultParams() Params {
 	return Params{ListenAddr: "0.0.0.0:9090", LbPolicy: PolicyLeastOutstanding, LbFilter: FilterNone, EwmaBeta: "0.7", CancelRate: "0", Seed: "0",
 		OutputPath: "ingress", InitialStallMs: "1000", HeartbeatTimeoutMs: "0",
-		LbRetryPolicy: RetryPolicyNone, LbMaxRetries: "0"}
+		LbRetryPolicy: RetryPolicyNone, LbMaxRetries: "0", LbRetryTimeoutMs: "150"}
 }
 
 // Validate turns Params into a Config or returns a one-line error.
@@ -163,6 +167,11 @@ func Validate(p Params) (Config, error) {
 		return c, errors.New("lb_max_retries must be an integer in 0 ..= 2^32-1")
 	}
 	c.LbMaxRetries = uint32(mr)
+	rt, err := strconv.ParseFloat(p.LbRetryTimeoutMs, 64)
+	if p.LbRetryTimeoutMs == "" || err != nil || !(rt > 0) || math.IsInf(rt, 0) || rt*1e6 > math.MaxInt64 {
+		return c, errors.New("lb_retry_timeout_ms must be a finite number > 0")
+	}
+	c.LbRetryTimeoutMs, c.LbRetryTimeoutNs = rt, int64(math.Round(rt*1e6))
 	c.OutputPath = p.OutputPath
 	return c, nil
 }

@@ -67,7 +67,7 @@ func (fb *fakeBackend) addr() string { return fb.ln.Addr().String() }
 func startRetryIngress(t *testing.T, backends []string, policy, maxRetries string) *Ingress {
 	t.Helper()
 	cfg, err := Validate(Params{ListenAddr: "127.0.0.1:0", Backends: joinComma(backends), NumClients: "4",
-		LbPolicy: PolicyRoundRobin, LbFilter: FilterNone, LbRetryPolicy: policy, LbMaxRetries: maxRetries,
+		LbPolicy: PolicyRoundRobin, LbFilter: FilterNone, LbRetryPolicy: policy, LbMaxRetries: maxRetries, LbRetryTimeoutMs: "50",
 		EwmaBeta: "0.7", CancelRate: "0", DurationS: "5", Seed: "1", InitialStallMs: "0", HeartbeatTimeoutMs: "0",
 		OutputPath: filepath.Join(t.TempDir(), "ingress")})
 	if err != nil {
@@ -263,5 +263,30 @@ func TestLbRetryNoneIsOneAttempt(t *testing.T) {
 	_ = ing.Shutdown()
 	if lbRetriesOf(t, ing) != 0 || good.hits.Load() != 0 {
 		t.Fatal("none must not retry")
+	}
+}
+
+// The timeout policy end to end (lb_retry_timeout_ms = 50): attempt 0 is slow,
+// attempt 1 starts 50-60 ms after attempt 0's pick and its answer is relayed.
+//
+// Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
+// Design: abstraction/ingress/frontend/design.md#lbretryloop
+func TestLbRetryTimeoutPolicy(t *testing.T) {
+	slow, fast := startFakeBackend(t, 500*time.Millisecond), startFakeBackend(t, 20*time.Millisecond)
+	ing := startRetryIngress(t, []string{slow.addr(), fast.addr()}, RetryPolicyTimeout, "1")
+	conn := dial(t, ing)
+	start := time.Now()
+	st, b, err := ping(t, context.Background(), conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(0, 1), 0, nil, 128))
+	elapsed := time.Since(start)
+	if ex, _, _, _ := protocol.ParseExecReport(b); err != nil || st != 202 || ex != uint64(20*time.Millisecond) {
+		t.Fatalf("want the fast backend's 202: %d %v", st, err)
+	}
+	if elapsed < 70*time.Millisecond || elapsed > 300*time.Millisecond {
+		t.Fatalf("answer after %v: want about 50-60 + 20 ms", elapsed)
+	}
+	time.Sleep(500 * time.Millisecond)
+	_ = ing.Shutdown()
+	if lbRetriesOf(t, ing) != 1 || slow.resets.Load() != 0 {
+		t.Fatalf("lb_retries %d, slow resets %d", lbRetriesOf(t, ing), slow.resets.Load())
 	}
 }

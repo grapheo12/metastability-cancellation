@@ -160,6 +160,7 @@ Implementation: `implementation/go` (module `testbed`, Go 1.21). Build and test 
 - `(*LoadBalancer).backendViews()` builds the BackendView list from `Outstanding`, `WorkerCount`, `execValue` and the
   monitor's `IsLive` (nil-safe: always live without a monitor).
 - Tests: `retrypolicy_test.go` (`TestRetryPolicyRegistryNone`, `TestRegisterRetryPolicy`, `TestValidateLbRetry`).
+- `timeout` lives in its own file, `internal/ingress/retrypolicy_timeout.go`, registered from `init` with `RegisterRetryPolicy` as the recipe describes; it compares `s.Now.Sub(newest.Start) >= time.Duration(cfg.LbRetryTimeoutNs)`. `TestTimeoutPolicyWorkedExample` checks the decisions; `TestLbRetryTimeoutPolicy` (in `lbretry_test.go`) runs it end to end with a 50 ms delay.
 
 ### Traceability
 
@@ -172,6 +173,6 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [RetryPolicy](#retrypolicy) | [retrypolicy.go:82](../../../implementation/go/internal/ingress/retrypolicy.go#L82) |
 | [RetryEvent](#retryevent) | [retrypolicy.go:26](../../../implementation/go/internal/ingress/retrypolicy.go#L26) |
 | [RetryState](#retrystate) | [frontend.go:219](../../../implementation/go/internal/ingress/frontend.go#L219), [retrypolicy.go:65](../../../implementation/go/internal/ingress/retrypolicy.go#L65), [retrypolicy.go:140](../../../implementation/go/internal/ingress/retrypolicy.go#L140) |
-| [RetryPolicyRegistry](#retrypolicyregistry) | [retrypolicy.go:101](../../../implementation/go/internal/ingress/retrypolicy.go#L101), [retrypolicy.go:103](../../../implementation/go/internal/ingress/retrypolicy.go#L103), [retrypolicy.go:129](../../../implementation/go/internal/ingress/retrypolicy.go#L129), [retrypolicy_test.go:10](../../../implementation/go/internal/ingress/retrypolicy_test.go#L10) |
-| [Adding a RetryPolicy](#adding-a-retrypolicy) | [retrypolicy.go:112](../../../implementation/go/internal/ingress/retrypolicy.go#L112), [retrypolicy_test.go:28](../../../implementation/go/internal/ingress/retrypolicy_test.go#L28) |
+| [RetryPolicyRegistry](#retrypolicyregistry) | [lbretry_test.go:274](../../../implementation/go/internal/ingress/lbretry_test.go#L274), [retrypolicy.go:101](../../../implementation/go/internal/ingress/retrypolicy.go#L101), [retrypolicy.go:103](../../../implementation/go/internal/ingress/retrypolicy.go#L103), [retrypolicy.go:129](../../../implementation/go/internal/ingress/retrypolicy.go#L129), [retrypolicy_test.go:13](../../../implementation/go/internal/ingress/retrypolicy_test.go#L13), [retrypolicy_test.go:65](../../../implementation/go/internal/ingress/retrypolicy_test.go#L65), [retrypolicy_timeout.go:14](../../../implementation/go/internal/ingress/retrypolicy_timeout.go#L14) |
+| [Adding a RetryPolicy](#adding-a-retrypolicy) | [retrypolicy.go:112](../../../implementation/go/internal/ingress/retrypolicy.go#L112), [retrypolicy_test.go:31](../../../implementation/go/internal/ingress/retrypolicy_test.go#L31) |
 <!-- trace:end -->

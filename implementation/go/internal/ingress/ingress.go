@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.9.3)
+// Source: abstraction/ingress/design.md (ingress v0.10.0)
 package ingress
 
 import (
@@ -194,6 +194,7 @@ type summaryConfig struct {
 	HeartbeatTimeoutMs uint64   `json:"heartbeat_timeout_ms"`
 	LbRetryPolicy      string   `json:"lb_retry_policy"`
 	LbMaxRetries       uint32   `json:"lb_max_retries"`
+	LbRetryTimeoutMs   float64  `json:"lb_retry_timeout_ms"`
 	Seed               uint64   `json:"seed"`
 	OutputPath         string   `json:"output_path"`
 }
@@ -217,7 +218,7 @@ func (ing *Ingress) writeSummary(records []*CancelRecord, runEndS float64, runSt
 	c := ing.cfg
 	counts, rates, targeted := summarizeCancels(records, c)
 	s := Summary{
-		Config:  summaryConfig{c.ListenAddr, c.Backends, c.NumClients, c.LbPolicy, c.LbFilter, c.EwmaBeta, c.CancelRate, c.DurationS, c.InitialStallMs, c.HeartbeatTimeoutMs, c.LbRetryPolicy, c.LbMaxRetries, c.Seed, c.OutputPath},
+		Config:  summaryConfig{c.ListenAddr, c.Backends, c.NumClients, c.LbPolicy, c.LbFilter, c.EwmaBeta, c.CancelRate, c.DurationS, c.InitialStallMs, c.HeartbeatTimeoutMs, c.LbRetryPolicy, c.LbMaxRetries, c.LbRetryTimeoutMs, c.Seed, c.OutputPath},
 		RunEndS: runEndS, RunStartUnixNs: runStartUnixNs, Counts: counts, RatesPerS: rates, ClientsTargeted: targeted, FilterDropped: ing.lb.FilterDropped(), LbRetries: ing.lbRetries.Load(), Backends: ing.lb.Snapshot(),
 	}
 	b, err := json.MarshalIndent(s, "", "  ")
