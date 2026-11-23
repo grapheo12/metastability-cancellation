@@ -1,6 +1,6 @@
 # Ingress — Description
 
-Subcomponents: In-Flight Map, Load Balancer, Upstream Pool, Load Canceller, Frontend, Heartbeat Monitor.
+Subcomponents: In-Flight Map, Load Balancer, Upstream Pool, Load Canceller, Frontend, Heartbeat Monitor, Retry Policy.
 
 The **Ingress** is a program that sits between the load generator's clients and several **server** instances
 (its **backends**). It exposes the same `POST /ping` as a server, so a client cannot tell the difference, but it
@@ -17,6 +17,8 @@ does no work itself:
   holds it. It no longer guesses ids.
 - With `heartbeat_timeout_ms` set, the **Heartbeat Monitor** reads every backend's Heartbeat, and the LoadBalancer
   sends new requests only to backends that are still live.
+- With `lb_max_retries > 0` and a `lb_retry_policy` other than `none`, the Frontend may start **LbRetries**: further
+  attempts of the same request, when the **RetryPolicy** says so. The newest attempt's answer is the one relayed.
 
 The Ingress exists so that experiments can put a load balancer and a well-informed canceller in front of more
 than one server, without changing the server or the load generator.

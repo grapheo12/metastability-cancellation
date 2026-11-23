@@ -16,6 +16,7 @@ flowchart LR
   HM[Heartbeat Monitor: reader per backend + checker] -->|"GET /heartbeat, own conn per backend"| S0
   HM --> S1
   LB -->|is_live| HM
+  FE -->|"decide (LbRetry)"| RP[Retry Policy]
 ```
 
 | Subcomponent | Responsibility | Spec |
@@ -26,6 +27,7 @@ flowchart LR
 | Load Canceller | CancelSchedule from the first `/ping`, InFlightVictimChoice, `/cancel` on its own connection per backend | [load_canceller/description.md](load_canceller/description.md) |
 | Frontend | Client connections, ForwardTask per `/ping`, reset propagation, StartOnce | [frontend/description.md](frontend/description.md) |
 | Heartbeat Monitor | HeartbeatReader per backend, BackendLiveness (`is_live`), LivenessLog; off when `heartbeat_timeout_ms = 0` | [heartbeat_monitor/description.md](heartbeat_monitor/description.md) |
+| Retry Policy | RetryPolicy `decide` for LbRetries, RetryPolicyRegistry; `none` never retries | [retry_policy/description.md](retry_policy/description.md) |
 
 ## Shared state
 
@@ -60,6 +62,8 @@ function validate(params):
     seed parses as u64                                      else error
     initial_stall_ms is an integer >= 0                     else error
     heartbeat_timeout_ms is an integer >= 0                 else error "heartbeat_timeout_ms must be an integer >= 0"
+    lb_retry_policy names a RetryPolicy (retry_policy_new)  else error             # default none
+    lb_max_retries is an integer in 0 ..= 2^32-1             else error             # default 0
     return IngressConfig(..., duration_ns = round(duration_s * 1e9) if cancel_rate > 0,
                          initial_stall_ns = initial_stall_ms * 1_000_000)
 ```
