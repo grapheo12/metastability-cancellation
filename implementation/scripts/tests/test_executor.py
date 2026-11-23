@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.12.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.13.0)
 import contextlib
 import io
 import json
@@ -142,14 +142,14 @@ class PointOutputsTest(unittest.TestCase):
     def test_counters_summed_over_instances(self):
         with tempfile.TemporaryDirectory() as remote, tempfile.TemporaryDirectory() as pdir:
             m = LocalMachine(remote)
-            for k, c in enumerate([(10, 1, 5), (7, 0, 4)]):
+            for k, c in enumerate([(10, 1, 5, 3), (7, 0, 4)]):  # instance 1: an older server without rejected_past_deadline
                 with open(os.path.join(remote, f"server_{k}.out"), "w") as f:
                     f.write("listening on 0.0.0.0:808%d\n" % k)
                     f.write(json.dumps(dict(zip(executor.COUNTER_KEYS, c)), separators=(",", ":")) + "\n")
             p = point(instances=2)
             executor.collect_outputs(p, m, m, remote, remote, pdir)
             with open(os.path.join(pdir, "server_counters.json")) as f:
-                self.assertEqual(json.load(f), dict(zip(executor.COUNTER_KEYS, (17, 1, 9))))
+                self.assertEqual(json.load(f), dict(zip(executor.COUNTER_KEYS, (17, 1, 9, 3))))  # absent key counts as 0
             self.assertTrue(os.path.exists(os.path.join(pdir, "server_counters_1.json")))
             self.assertEqual(executor.validate_outputs(p, pdir), "loadgen summary missing")
             for name in ("loadgen.summary.json", "ingress.summary.json"):
@@ -331,7 +331,7 @@ class ServerLifecycleTest(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 executor.collect_outputs(p, [a, b], a, [ra, rb], ra, pdir)
             with open(os.path.join(pdir, "server_counters.json")) as f:
-                self.assertEqual(json.load(f), dict(zip(executor.COUNTER_KEYS, (4, 1, 6))))
+                self.assertEqual(json.load(f), dict(zip(executor.COUNTER_KEYS, (4, 1, 6, 0))))
 
 
 if __name__ == "__main__":

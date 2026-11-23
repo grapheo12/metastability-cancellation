@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.12.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.13.0)
 """run_point: ServerLifecycle, IngressLifecycle, ClientRun and point outputs for one SweepPoint."""
 
 import json
@@ -297,7 +297,8 @@ def write_gc_events(point, k, pdir, regex):
                     f"{m.group('mark_ms')},{m.group('stw_end_ms')}\n")
 
 
-COUNTER_KEYS = ("cancelled_before_processing", "cancelled_during_processing", "completed_before_cancel")
+COUNTER_KEYS = ("cancelled_before_processing", "cancelled_during_processing", "completed_before_cancel",
+                "rejected_past_deadline")  # a key an older server does not print counts as 0
 
 
 # Design: abstraction/benchmark_runner/experiment_executor/design.md#point-outputs
