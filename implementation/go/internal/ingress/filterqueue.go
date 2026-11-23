@@ -166,10 +166,3 @@ func (lb *LoadBalancer) filterQueueCounts() (queued, sent, dropped, maxLen uint6
 	defer lb.wq.mu.Unlock()
 	return lb.wq.queued, lb.wq.sentFromQueue, lb.wq.dropped, lb.wq.maxLen
 }
-
-// noteDropped counts a direct drop (kept only until the Frontend waits in the queue).
-func (lb *LoadBalancer) noteDropped() {
-	lb.wq.mu.Lock()
-	lb.wq.dropped++
-	lb.wq.mu.Unlock()
-}

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.6.0)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.7.0)
 package ingress
 
 import (
@@ -69,9 +69,25 @@ func (ing *Ingress) handlePing(ctx context.Context, body []byte) fwdResponse {
 	deadline, hasDeadline := protocol.ParseDeadline(body) // RequestDeadline, for the DeadlineFilter and the RetryState
 	task := &forwardTask{requestID: id, clientID: clientID, body: body, deadline: deadline, hasDeadline: hasDeadline,
 		results: make(chan attemptResult, 1+int(ing.cfg.LbMaxRetries))} // capacity covers every attempt: sends never block
-	if !ing.startAttempt(task, 0) { // no backend can make the deadline: 503 {"id"}, never forwarded
-		return fwdResponse{status: protocol.StatusRejected, body: protocol.BuildCancelBody(id)}
+	// FilterWaitQueue: sent now, or wait until a scan sends or drops it.
+	// Design: abstraction/ingress/frontend/design.md#forwardtask
+	ticket, e := ing.lb.Admit(deadline, hasDeadline)
+	if e != nil {
+		select {
+		case <-ctx.Done(): // client reset while waiting
+			if ing.lb.Gone(e) {
+				return fwdResponse{aborted: true} // removed at the next scan; nothing written
+			}
+			<-e.signal // a scan sent or dropped it just now: handle that below (the loop sees the reset)
+		case <-e.signal:
+		}
+		t, sent := ing.lb.Result(e)
+		if !sent { // past its deadline while waiting: 503 {"id"}, never forwarded
+			return fwdResponse{status: protocol.StatusRejected, body: protocol.BuildCancelBody(id)}
+		}
+		ticket = t
 	}
+	ing.startAttempt(task, 0, &ticket) // attempt 0, already picked
 	return ing.lbRetryLoop(ctx, task)
 }
 
@@ -117,18 +133,23 @@ func (task *forwardTask) remainingNs() (int64, bool) {
 	return remaining(task.deadline, time.Now().UnixNano()), true
 }
 
-// startAttempt picks for attempt k, publishes its (replacing) InFlightEntry and
-// starts its activity; false if the DeadlineFilter dropped it.
+// startAttempt starts attempt k with the given ticket (attempt 0) or a new
+// pick (an LbRetry), publishes its (replacing) InFlightEntry and starts its
+// activity; false if the DeadlineFilter refused the retry.
 //
 // Design: abstraction/ingress/frontend/design.md#forwardattempt
-func (ing *Ingress) startAttempt(task *forwardTask, k uint32) bool {
-	rem, has := task.remainingNs()
-	ticket, picked := ing.lb.PickAttempt(rem, has, k) // ForwardTicket (Attempt = k): given back to Finish
-	if !picked {
-		if k == 0 {
-			ing.lb.noteDropped() // until the Frontend waits in the FilterWaitQueue
+func (ing *Ingress) startAttempt(task *forwardTask, k uint32, picked *ForwardTicket) bool {
+	var ticket ForwardTicket
+	if picked != nil { // attempt 0: already picked by Admit or a FilterWaitQueue scan
+		ticket = *picked
+	} else { // an LbRetry: pick now
+		rem, has := task.remainingNs()
+		t, ok := ing.lb.PickAttempt(rem, has, k) // ForwardTicket (Attempt = k): given back to Finish
+		if !ok {
+			ing.lbRetryRefused.Add(1) // summary lb_retry_refused; no attempt starts
+			return false
 		}
-		return false
+		ticket = t
 	}
 	if k > 0 {
 		ing.lbRetries.Add(1) // summary lb_retries
@@ -200,7 +221,7 @@ func (ing *Ingress) lbRetryLoop(ctx context.Context, task *forwardTask) fwdRespo
 				return r.resp // 202 / 503 / 400 relayed
 			}
 			if budget && ing.retryPolicy.Decide(ing.retryState(task), RetryEvent{Kind: EventAttemptEnded, Outcome: r.outcome}) == Retry {
-				if ing.startAttempt(task, uint32(len(task.attempts))) {
+				if ing.startAttempt(task, uint32(len(task.attempts)), nil) {
 					continue
 				}
 			}
@@ -210,7 +231,7 @@ func (ing *Ingress) lbRetryLoop(ctx context.Context, task *forwardTask) fwdRespo
 				continue
 			}
 			if ing.retryPolicy.Decide(ing.retryState(task), RetryEvent{Kind: EventTick}) == Retry {
-				ing.startAttempt(task, uint32(len(task.attempts))) // Dropped: keep waiting on the newest
+				ing.startAttempt(task, uint32(len(task.attempts)), nil) // refused: keep waiting on the newest
 			}
 		}
 	}

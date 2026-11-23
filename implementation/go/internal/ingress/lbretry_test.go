@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.6.0)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.7.0)
 package ingress
 
 import (
@@ -288,5 +288,100 @@ func TestLbRetryTimeoutPolicy(t *testing.T) {
 	_ = ing.Shutdown()
 	if lbRetriesOf(t, ing) != 1 || slow.resets.Load() != 0 {
 		t.Fatalf("lb_retries %d, slow resets %d", lbRetriesOf(t, ing), slow.resets.Load())
+	}
+}
+
+// startFilterIngress is an Ingress with deadline_mean and no LB retries.
+func startFilterIngress(t *testing.T, backends []string) *Ingress {
+	t.Helper()
+	cfg, err := Validate(Params{ListenAddr: "127.0.0.1:0", Backends: joinComma(backends), NumClients: "4",
+		LbPolicy: PolicyRoundRobin, LbFilter: FilterDeadlineMean, LbRetryPolicy: RetryPolicyNone, LbMaxRetries: "0",
+		LbRetryTimeoutMs: "150", EwmaBeta: "0.7", CancelRate: "0", DurationS: "5", Seed: "1", InitialStallMs: "0",
+		HeartbeatTimeoutMs: "0", OutputPath: filepath.Join(t.TempDir(), "ingress")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ing, err := Listen(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go ing.Serve()
+	return ing
+}
+
+func summaryOf(t *testing.T, ing *Ingress) Summary {
+	t.Helper()
+	var s Summary
+	raw, _ := os.ReadFile(ing.cfg.OutputPath + ".summary.json")
+	if err := json.Unmarshal(raw, &s); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// A request that does not fit waits, and is sent once the backend's load
+// drops (300 ms service, EwmaExecTime 300 ms): with two in flight it needs
+// 0.9 s > 0.75 s; once they finish it needs 0.3 s and is sent from the queue.
+//
+// Design: abstraction/ingress/frontend/design.md#forwardtask
+// Design: abstraction/ingress/load_balancer/design.md#filterwaitqueue
+func TestFilterWaitQueueEndToEnd(t *testing.T) {
+	fb := startFakeBackend(t, 300*time.Millisecond)
+	ing := startFilterIngress(t, []string{fb.addr()})
+	conn := dial(t, ing)
+	ctx := context.Background()
+	body := func(seq uint32, left time.Duration) []byte {
+		return protocol.BuildRequestBody(protocol.MakeRequestID(seq, 1), uint64(time.Now().Add(left).UnixNano()), 128)
+	}
+	if st, _, err := ping(t, ctx, conn, "POST", "/ping", body(0, 5*time.Second)); err != nil || st != 202 {
+		t.Fatalf("warm-up: %d %v", st, err) // EwmaExecTime = 300 ms from here
+	}
+	done := make(chan int, 2)
+	for seq := uint32(1); seq <= 2; seq++ {
+		go func(seq uint32) {
+			st, _, _ := ping(t, ctx, conn, "POST", "/ping", body(seq, 5*time.Second))
+			done <- st
+		}(seq)
+	}
+	time.Sleep(30 * time.Millisecond) // both in flight: n = 2
+	st, _, err := ping(t, ctx, conn, "POST", "/ping", body(3, 750*time.Millisecond))
+	if err != nil || st != 202 {
+		t.Fatalf("the waiting request must be sent once load drops: %d %v", st, err)
+	}
+	<-done
+	<-done
+	_ = ing.Shutdown()
+	s := summaryOf(t, ing)
+	if s.FilterQueued != 1 || s.FilterSentFromQ != 1 || s.FilterDropped != 0 || s.FilterQueueMax < 1 {
+		t.Fatalf("summary %+v", s)
+	}
+}
+
+// A client reset while waiting writes nothing and is never forwarded.
+//
+// Design: abstraction/ingress/frontend/design.md#forwardtask
+func TestFilterWaitQueueClientReset(t *testing.T) {
+	fb := startFakeBackend(t, 2*time.Second)
+	ing := startFilterIngress(t, []string{fb.addr()})
+	conn := dial(t, ing)
+	bg := context.Background()
+	if st, _, _ := ping(t, bg, conn, "POST", "/ping", protocol.BuildRequestBody(protocol.MakeRequestID(0, 1), uint64(time.Now().Add(10*time.Second).UnixNano()), 128)); st != 202 {
+		t.Fatal("warm-up") // EwmaExecTime = 2 s
+	}
+	go ping(t, bg, conn, "POST", "/ping", protocol.BuildRequestBody(protocol.MakeRequestID(1, 1), uint64(time.Now().Add(10*time.Second).UnixNano()), 128))
+	time.Sleep(30 * time.Millisecond) // n = 1: a 3 s request needs 4 s, so it waits
+	ctx, cancel := context.WithTimeout(bg, 100*time.Millisecond)
+	defer cancel()
+	if _, _, err := ping(t, ctx, conn, "POST", "/ping", protocol.BuildRequestBody(protocol.MakeRequestID(2, 1), uint64(time.Now().Add(3*time.Second).UnixNano()), 128)); err == nil {
+		t.Fatal("expected the client's reset")
+	}
+	time.Sleep(50 * time.Millisecond) // a scan removes the gone entry
+	if hits := fb.hits.Load(); hits != 2 {
+		t.Fatalf("the reset request must never be forwarded: %d hits", hits)
+	}
+	time.Sleep(2 * time.Second)
+	_ = ing.Shutdown()
+	if s := summaryOf(t, ing); s.FilterQueued != 1 || s.FilterSentFromQ != 0 || s.FilterDropped != 0 {
+		t.Fatalf("summary %+v", s)
 	}
 }
