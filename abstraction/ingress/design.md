@@ -27,7 +27,7 @@ flowchart LR
 | Load Canceller | CancelSchedule from the first `/ping`, InFlightVictimChoice, `/cancel` on its own connection per backend | [load_canceller/description.md](load_canceller/description.md) |
 | Frontend | Client connections, ForwardTask per `/ping`, reset propagation, StartOnce | [frontend/description.md](frontend/description.md) |
 | Heartbeat Monitor | HeartbeatReader per backend, BackendLiveness (`is_live`), LivenessLog; off when `heartbeat_timeout_ms = 0` | [heartbeat_monitor/description.md](heartbeat_monitor/description.md) |
-| Retry Policy | RetryPolicy `decide` for LbRetries, RetryPolicyRegistry; `none` never retries | [retry_policy/description.md](retry_policy/description.md) |
+| Retry Policy | RetryPolicy `decide` for LbRetries, RetryPolicyRegistry; `none` never retries, `timeout` mimics the client RetryTimer | [retry_policy/description.md](retry_policy/description.md) |
 
 ## Shared state
 
@@ -64,6 +64,7 @@ function validate(params):
     heartbeat_timeout_ms is an integer >= 0                 else error "heartbeat_timeout_ms must be an integer >= 0"
     lb_retry_policy names a RetryPolicy (retry_policy_new)  else error             # default none
     lb_max_retries is an integer in 0 ..= 2^32-1             else error             # default 0
+    lb_retry_timeout_ms > 0 and finite                       else error             # default 150; lb_retry_timeout_ns = round(ms * 1e6)
     return IngressConfig(..., duration_ns = round(duration_s * 1e9) if cancel_rate > 0,
                          initial_stall_ns = initial_stall_ms * 1_000_000)
 ```
