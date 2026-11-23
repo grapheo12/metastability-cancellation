@@ -15,3 +15,4 @@
 | 0.10.0 | 2026-11-20T00:00:00Z | Point outputs fetch `ingress.liveness.csv` (LivenessLog); its absence is not reported |
 | 0.11.0 | 2026-11-20T00:00:00Z | Load-generator timeout adds `drain_timeout_ms / 1000` when `slo_cancel = false` (DrainDeadline); worked example |
 | 0.12.0 | 2026-11-21T00:00:00Z | Point outputs fetch `ingress.picks.csv` (PickLog); its absence is not reported |
+| 0.13.0 | 2026-11-23T00:00:00Z | `server_counters.json` sums `rejected_past_deadline` too (COUNTER_KEYS); an absent key counts as 0; worked example |

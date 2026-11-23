@@ -303,10 +303,13 @@ function collect_outputs(point, config, servers, client, ingress_host, pdir):
         if config.server.gc_trace: write_gc_events(point, k, pdir, m.gc_trace_regex)       # GcEvents
         line = last line of pdir/server_<k>.out that starts with COUNTERS_PREFIX
         if line exists:
-            c = line parsed as JSON (the three CancelCounters keys)
+            c = line parsed as JSON (the CancelCounters keys)
             write pdir/server_counters_<k>.json = c; counters.append(c)
     if len(counters) == I:                                   # every instance reported
-        write pdir/server_counters.json = { key: sum of c[key] over counters, for each of the three keys }
+        write pdir/server_counters.json = { key: sum of c.get(key, 0) over counters, for each key of COUNTER_KEYS }
+
+COUNTER_KEYS = [cancelled_before_processing, cancelled_during_processing, completed_before_cancel,
+                rejected_past_deadline]          # a key an older server does not print counts as 0
 
 function validate_outputs(point, pdir):
     require pdir/loadgen.summary.json            else "loadgen summary missing"
@@ -321,10 +324,11 @@ never fails the point; the Result Plotter leaves that point out of the `queue_le
 `ingress.forwards.csv` and the forward timeline plots. Every fetch is best effort (`missing` is fine), so a failed point still keeps whatever
 evidence exists.
 
-| Instances | Counters (before, during, completed) | `server_counters.json` |
+| Instances | Counters (before, during, completed, rejected_past_deadline) | `server_counters.json` |
 |---|---|---|
-| 2 | (10, 1, 5) and (7, 0, 4) | (17, 1, 9) |
-| 2 | (10, 1, 5) and missing | not written; point fails |
+| 2 | (10, 1, 5, 3) and (7, 0, 4, 0) | (17, 1, 9, 3) |
+| 2 | (10, 1, 5, 3) and (7, 0, 4, absent: an older server) | (17, 1, 9, 3) |
+| 2 | (10, 1, 5, 3) and missing | not written; point fails |
 
 ## Design specific to Python
 
