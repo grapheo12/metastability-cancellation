@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.9.1)
+// Source: abstraction/ingress/design.md (ingress v0.9.2)
 package ingress
 
 import (
@@ -36,6 +36,8 @@ type Ingress struct {
 	startMu   sync.Mutex // guards runStart and canceller after started is set
 	runStart  time.Time
 	canceller *Canceller
+
+	lbRetries atomic.Uint64 // LbRetries started (summary lb_retries)
 
 	mu           sync.Mutex
 	conns        map[net.Conn]struct{}
@@ -196,6 +198,7 @@ type Summary struct {
 	RatesPerS       cancelRates         `json:"rates_per_s"`
 	ClientsTargeted int                 `json:"clients_targeted"`
 	FilterDropped   uint64              `json:"filter_dropped"` // DeadlineFilter drops
+	LbRetries       uint64              `json:"lb_retries"`     // attempts beyond each ForwardTask's first
 	Backends        []BackendStatsValue `json:"backends"`
 }
 
@@ -204,7 +207,7 @@ func (ing *Ingress) writeSummary(records []*CancelRecord, runEndS float64, runSt
 	counts, rates, targeted := summarizeCancels(records, c)
 	s := Summary{
 		Config:  summaryConfig{c.ListenAddr, c.Backends, c.NumClients, c.LbPolicy, c.LbFilter, c.EwmaBeta, c.CancelRate, c.DurationS, c.InitialStallMs, c.HeartbeatTimeoutMs, c.Seed, c.OutputPath},
-		RunEndS: runEndS, RunStartUnixNs: runStartUnixNs, Counts: counts, RatesPerS: rates, ClientsTargeted: targeted, FilterDropped: ing.lb.FilterDropped(), Backends: ing.lb.Snapshot(),
+		RunEndS: runEndS, RunStartUnixNs: runStartUnixNs, Counts: counts, RatesPerS: rates, ClientsTargeted: targeted, FilterDropped: ing.lb.FilterDropped(), LbRetries: ing.lbRetries.Load(), Backends: ing.lb.Snapshot(),
 	}
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
@@ -231,7 +234,7 @@ func writeForwardsCSV(path string, recs []ForwardRecord, runStart time.Time) err
 	}
 	sort.SliceStable(order, func(a, b int) bool { return tNs[order[a]] < tNs[order[b]] })
 	w := bufio.NewWriter(f)
-	w.WriteString("t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns\n")
+	w.WriteString("t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns,attempt\n")
 	for _, k := range order {
 		r := recs[k]
 		exec, ewmaExec := "", "" // empty when none
@@ -244,7 +247,7 @@ func writeForwardsCSV(path string, recs []ForwardRecord, runStart time.Time) err
 		w.WriteString(strconv.FormatInt(tNs[k], 10) + "," + strconv.FormatUint(uint64(r.ServerID), 10) + "," +
 			outcomeNames[r.Outcome] + "," + strconv.FormatUint(r.LatencyNs, 10) + "," +
 			strconv.FormatFloat(r.EwmaLatencyNs, 'f', -1, 64) + "," + // shortest round-trip, no exponent
-			exec + "," + ewmaExec + "\n")
+			exec + "," + ewmaExec + "," + strconv.FormatUint(uint64(r.Attempt), 10) + "\n")
 	}
 	if err := w.Flush(); err != nil {
 		f.Close()

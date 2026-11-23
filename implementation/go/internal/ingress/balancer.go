@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.11.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.12.0)
 package ingress
 
 import (
@@ -66,6 +66,7 @@ const EwmaInitialLatencyNs = 1_000_000
 type ForwardTicket struct {
 	ServerID uint32
 	Start    time.Time // carries the monotonic reading
+	Attempt  uint32    // LbRetries of the ForwardTask before this attempt (0: first)
 }
 
 // BackendStatsValue is a plain copy of one backend's counters for the summary.
@@ -102,6 +103,7 @@ type ForwardRecord struct {
 	HasExec       bool
 	EwmaExecNs    float64 // the backend's EwmaExecTime right after this finish; valid if HasEwmaExec
 	HasEwmaExec   bool
+	Attempt       uint32 // the ticket's attempt
 }
 
 // PickRecord is what the LoadBalancer saw of one backend at one pick.
@@ -172,6 +174,15 @@ func (lb *LoadBalancer) Pick() ForwardTicket {
 // Design: abstraction/ingress/load_balancer/design.md#loadbalancer
 // Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
 func (lb *LoadBalancer) PickWithin(remainingNs int64, hasDeadline bool) (ForwardTicket, bool) {
+	return lb.PickAttempt(remainingNs, hasDeadline, 0)
+}
+
+// PickAttempt is pick(lb, remaining_ns, attempt): PickWithin for attempt k of a
+// ForwardTask; the ticket carries k into the ForwardRecord.
+//
+// Design: abstraction/ingress/load_balancer/design.md#loadbalancer
+// Design: abstraction/ingress/load_balancer/design.md#forwardticket
+func (lb *LoadBalancer) PickAttempt(remainingNs int64, hasDeadline bool, attempt uint32) (ForwardTicket, bool) {
 	lb.recordPick() // PickLog: what choose is about to see
 	s, ok := lb.choose(remainingNs, hasDeadline)
 	if !ok {
@@ -180,7 +191,7 @@ func (lb *LoadBalancer) PickWithin(remainingNs int64, hasDeadline bool) (Forward
 	}
 	lb.stats[s].Outstanding.Add(1)
 	lb.stats[s].Forwarded.Add(1)
-	return ForwardTicket{ServerID: s, Start: time.Now()}, true
+	return ForwardTicket{ServerID: s, Start: time.Now(), Attempt: attempt}, true
 }
 
 // Finish ends a forward started by Pick: counters, then one clock read; an ok
@@ -231,7 +242,7 @@ func (lb *LoadBalancer) Finish(t ForwardTicket, outcome ForwardOutcome, execNs u
 	// Design: abstraction/ingress/load_balancer/design.md#forwardlog
 	lb.logMu.Lock()
 	lb.log = append(lb.log, ForwardRecord{End: end, ServerID: t.ServerID, Outcome: outcome, LatencyNs: latencyNs, EwmaLatencyNs: e,
-		ExecNs: execNs, HasExec: sample, EwmaExecNs: x, HasEwmaExec: hasX})
+		ExecNs: execNs, HasExec: sample, EwmaExecNs: x, HasEwmaExec: hasX, Attempt: t.Attempt})
 	lb.logMu.Unlock()
 }
 
