@@ -182,5 +182,5 @@
 | 0.36.0 | 2026-11-21T00:00:00Z | DeadlineStrategy switchable by `lb_filter` (glossary). Child bump: ingress 0.7.0 (load_balancer 0.10.0) |
 | 0.36.1 | 2026-11-23T00:00:00Z | Child bump: server 0.12.2 (cancel_tracker 0.5.0) |
 | 0.37.0 | 2026-11-23T00:00:00Z | Server parameter `reject_past_deadline`; glossary PastDeadlineRejection. Child bump: server 0.13.0 (ping_handler 0.12.0) |
-| 0.37.1 | 2026-11-23T00:00:00Z | Child bump: benchmark_runner 0.8.5 (config 0.22.0) |
-| 0.37.2 | 2026-11-23T00:00:00Z | Child bump: benchmark_runner 0.8.6 (experiment_executor 0.13.0) |
+| 0.37.1 | 2026-11-23T00:00:00Z | Child bump: benchmark_runner 0.9.2 (config 0.22.0) |
+| 0.37.2 | 2026-11-23T00:00:00Z | Child bump: benchmark_runner 0.9.3 (experiment_executor 0.13.0) |

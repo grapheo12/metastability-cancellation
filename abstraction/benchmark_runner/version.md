@@ -63,5 +63,5 @@
 | 0.8.4 | 2026-11-20T00:00:00Z | Child bump: config 0.21.0 (`lb_filter`) |
 | 0.9.0 | 2026-11-21T00:00:00Z | Output directory lists `ingress.picks.csv`. Child bump: experiment_executor 0.12.0 |
 | 0.9.1 | 2026-11-21T00:00:00Z | Output directory lists `expected_wait.html`. Child bump: result_plotter 0.18.0 |
-| 0.8.5 | 2026-11-23T00:00:00Z | Child bump: config 0.22.0 (`reject_past_deadline`) |
-| 0.8.6 | 2026-11-23T00:00:00Z | Child bump: experiment_executor 0.13.0 (sum `rejected_past_deadline`) |
+| 0.9.2 | 2026-11-23T00:00:00Z | Child bump: config 0.22.0 (`reject_past_deadline`) |
+| 0.9.3 | 2026-11-23T00:00:00Z | Child bump: experiment_executor 0.13.0 (sum `rejected_past_deadline`) |
