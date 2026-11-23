@@ -12,7 +12,7 @@ PROGRAM_PARAMS = {
                 "n_waiting_requests", "retry_timeout_ms", "max_retries", "initial_stall_ms",
                 "slo_cancel", "drain_timeout_ms"],
   "ingress":   ["lb_policy", "ewma_beta", "cancel_rate", "duration_s", "seed", "initial_stall_ms",
-                "heartbeat_timeout_ms", "lb_filter"],
+                "heartbeat_timeout_ms", "lb_filter", "lb_retry_policy", "lb_max_retries"],
 }
 PLACEMENT_KEYS = ["threads", "cpu_set"]                                  # ProcessPlacement
 RUNNER_KEYS = { "server":    ["listen_port", "instances", "gc_trace", "freeze_instance"] + PLACEMENT_KEYS,
