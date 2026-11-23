@@ -33,3 +33,4 @@
 | 0.11.1 | 2026-11-20T00:00:00Z | Child bump: connection_handler 0.4.0 (route `/heartbeat`) |
 | 0.12.0 | 2026-11-20T00:00:00Z | `response_bytes >= 115` (ExecReport); time base notes the StartSlack wall-clock read. Child bump: ping_handler 0.11.0 |
 | 0.12.1 | 2026-11-20T00:00:00Z | Child bump: connection_handler 0.5.0 (WorkerCount header) |
+| 0.12.2 | 2026-11-23T00:00:00Z | CancelCounters line gains `rejected_past_deadline` (last key). Child bump: cancel_tracker 0.5.0 |

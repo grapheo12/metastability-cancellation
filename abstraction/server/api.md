@@ -76,10 +76,11 @@ At shutdown the server prints exactly one line to standard output, after `listen
 ProcessStart line):
 
 ```
-{"cancelled_before_processing":<u64>,"cancelled_during_processing":<u64>,"completed_before_cancel":<u64>}
+{"cancelled_before_processing":<u64>,"cancelled_during_processing":<u64>,"completed_before_cancel":<u64>,"rejected_past_deadline":<u64>}
 ```
 
-The keys are in this order, there is no whitespace, and the values are decimal. They are defined in
+The keys are in this order, there is no whitespace, and the values are decimal. `rejected_past_deadline` is last, so
+readers that match the line by its first key keep working. They are defined in
 [cancel_tracker/design.md#cancelcounters](cancel_tracker/design.md#cancelcounters).
 
 ## QueueLengthLog output
