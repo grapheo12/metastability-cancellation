@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.12.1)
+// Source: abstraction/server/design.md (server v0.13.0)
 package server
 
 import (
@@ -99,7 +99,7 @@ func TestCancelBeforeProcessing(t *testing.T) {
 	if st, _ := client.do(t, "POST", "/other", nil); st != 404 {
 		t.Fatalf("/other: %d", st)
 	}
-	if b, d, c := s.Counters().Snapshot(); b != 1 || d != 0 || c != 0 {
+	if b, d, c, _ := s.Counters().Snapshot(); b != 1 || d != 0 || c != 0 {
 		t.Fatalf("counters %d %d %d", b, d, c)
 	}
 	s.Shutdown()
@@ -124,7 +124,7 @@ func TestCancelDuringProcessing(t *testing.T) {
 	if time.Since(start) > 5*time.Second {
 		t.Fatal("burn did not stop promptly")
 	}
-	if _, d, _ := s.Counters().Snapshot(); d != 1 {
+	if _, d, _, _ := s.Counters().Snapshot(); d != 1 {
 		t.Fatalf("cancelled_during_processing %d", d)
 	}
 	s.Shutdown()
@@ -251,7 +251,7 @@ func TestTwoWorkersServeInParallel(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("B was not stopped")
 	}
-	if _, d, _ := s.Counters().Snapshot(); d != 2 {
+	if _, d, _, _ := s.Counters().Snapshot(); d != 2 {
 		t.Fatalf("cancelled_during_processing %d, want 2", d)
 	}
 	s.Shutdown()
@@ -521,7 +521,7 @@ func TestInitialStallEndToEnd(t *testing.T) {
 	if st := <-resB; st != 503 {
 		t.Fatalf("B cancelled during the stall: %d, want 503", st)
 	}
-	if bp, _, _ := s.Counters().Snapshot(); bp != 1 {
+	if bp, _, _, _ := s.Counters().Snapshot(); bp != 1 {
 		t.Fatalf("cancelled_before_processing %d, want 1", bp)
 	}
 	s.Shutdown()

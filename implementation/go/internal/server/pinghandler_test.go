@@ -1,4 +1,4 @@
-// Source: abstraction/server/ping_handler/design.md (ping_handler v0.11.0)
+// Source: abstraction/server/ping_handler/design.md (ping_handler v0.12.0)
 package server
 
 import (
@@ -62,5 +62,83 @@ func TestExecReportInBody(t *testing.T) {
 			t.Fatalf("%s: start_slack_ns %d %v, want in [%d, %d] (%v)", c.name, sl, slOK, c.lo, c.hi, c.slackOK)
 		}
 		q.Close()
+	}
+}
+
+// The PastDeadlineRejection worked examples: popped past the deadline gives
+// 503 and counts; at or before it, or without one, runs; RST still wins; ignore
+// mode rejects too; reject_past_deadline = false never rejects.
+//
+// Design: abstraction/server/ping_handler/design.md#pastdeadlinerejection
+func TestPastDeadlineRejectionWorkedExamples(t *testing.T) {
+	now := uint64(time.Now().UnixNano())
+	cases := []struct {
+		name     string
+		mode     CancelMode
+		reject   bool
+		deadline uint64
+		rst      bool
+		status   int // 0: Aborted
+		counted  bool
+	}{
+		{"cooperative, 5 s left", CancelCooperative, true, now + 5_000_000_000, false, 202, false},
+		{"cooperative, 1 s late", CancelCooperative, true, now - 1_000_000_000, false, 503, true},
+		{"cooperative, late and reset: RST wins", CancelCooperative, true, now - 1_000_000_000, true, 0, false},
+		{"cooperative, no deadline", CancelCooperative, true, NoDeadline, false, 202, false},
+		{"ignore, 35 ms late", CancelIgnore, true, now - 35_000_000, false, 503, true},
+		{"ignore, 5 s left", CancelIgnore, true, now + 5_000_000_000, false, 202, false},
+		{"off: late runs", CancelCooperative, false, now - 1_000_000_000, false, 202, false},
+	}
+	for _, c := range cases {
+		q := NewWorkQueue(0, QueueFIFO, 0)
+		job := newPingJob(&StreamTask{}, protocol.MakeRequestID(0, 0), 0, 1_000, c.deadline) // 1 ms sleep
+		job.Task.Cancelled.Store(c.rst)
+		_ = q.Push(job)
+		job = q.Pop()
+		counters := &CancelCounters{}
+		cfg := Config{CancelMode: c.mode, ResponseBytes: 128, Workload: WorkloadSleep, RejectPastDeadline: c.reject}
+		r := runPing(job, cfg, NewCancelRegistry(16), counters, nil, q)
+		if (c.status == 0) != r.Aborted || (c.status != 0 && r.Status != c.status) {
+			t.Fatalf("%s: got %+v", c.name, r)
+		}
+		if got := counters.RejectedPastDeadline.Load(); (got == 1) != c.counted {
+			t.Fatalf("%s: rejected_past_deadline = %d", c.name, got)
+		}
+		if c.counted {
+			ex, exOK, sl, slOK := protocol.ParseExecReport(r.Body)
+			if !exOK || ex > 50_000_000 || !slOK || sl >= 0 || len(r.Body) != 128 {
+				t.Fatalf("%s: body %s", c.name, r.Body)
+			}
+		}
+		q.Close()
+	}
+	// Exactly at the deadline (slack 0) runs: the test is strict.
+	zero := int64(0)
+	if pastDeadline(Config{RejectPastDeadline: true}, execReport{startSlackNs: &zero}) {
+		t.Fatal("slack 0 must run")
+	}
+	minus := int64(-1)
+	if !pastDeadline(Config{RejectPastDeadline: true}, execReport{startSlackNs: &minus}) ||
+		pastDeadline(Config{RejectPastDeadline: false}, execReport{startSlackNs: &minus}) {
+		t.Fatal("slack -1 must be rejected only when enabled")
+	}
+}
+
+// Design: abstraction/server/design.md#configuration-validation
+func TestValidateRejectPastDeadline(t *testing.T) {
+	p := DefaultParams()
+	p.ResponseRate, p.ResponseBytes = "100", "128"
+	if c, err := Validate(p); err != nil || c.RejectPastDeadline {
+		t.Fatalf("default: %+v %v", c, err)
+	}
+	p.RejectPastDeadline = "true"
+	if c, err := Validate(p); err != nil || !c.RejectPastDeadline {
+		t.Fatalf("true: %v", err)
+	}
+	for _, bad := range []string{"", "True", "1", "yes"} {
+		p.RejectPastDeadline = bad
+		if _, err := Validate(p); err == nil {
+			t.Fatalf("reject_past_deadline %q must be rejected", bad)
+		}
 	}
 }

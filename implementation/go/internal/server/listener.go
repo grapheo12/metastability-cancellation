@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.12.1)
+// Source: abstraction/server/design.md (server v0.13.0)
 package server
 
 import (
@@ -174,9 +174,9 @@ func (s *Server) Shutdown() {
 	s.wg.Wait()
 
 	// API: abstraction/server/api.md#cancelcounters-output
-	before, during, completed := s.counters.Snapshot()
-	fmt.Printf("{\"cancelled_before_processing\":%d,\"cancelled_during_processing\":%d,\"completed_before_cancel\":%d}\n",
-		before, during, completed)
+	before, during, completed, pastDeadline := s.counters.Snapshot()
+	fmt.Printf("{\"cancelled_before_processing\":%d,\"cancelled_during_processing\":%d,\"completed_before_cancel\":%d,\"rejected_past_deadline\":%d}\n",
+		before, during, completed, pastDeadline)
 }
 
 // ProcessStartLine is the server's first stdout line: its wall-clock start in

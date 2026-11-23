@@ -1,7 +1,7 @@
 // Package server implements the HTTP/2 /ping + /cancel server. Each file maps
 // to one component of abstraction/server.
 //
-// Source: abstraction/server/design.md (server v0.12.1)
+// Source: abstraction/server/design.md (server v0.13.0)
 package server
 
 import (
@@ -54,6 +54,7 @@ type Config struct {
 	InitialStallMs        uint64 // StallGate; 0: no stall
 	FreezeAfterMs         uint64 // WorkerFreeze; 0: never (the parameter itself must be empty or >= 1)
 	QueueDiscipline       QueueDiscipline
+	RejectPastDeadline    bool // PastDeadlineRejection: 503 a /ping popped after its RequestDeadline
 	Workload              Workload
 	WindowSize            uint32 // MessageBuffer slots
 	NGCBinaryTreeSize     int    // nodes per MessageTree
@@ -75,6 +76,7 @@ type Params struct {
 	InitialStallMs        string
 	FreezeAfterMs         string // empty: never
 	QueueDiscipline       string
+	RejectPastDeadline    string
 	Workload              string
 	WindowSize            string
 	NGCBinaryTreeSize     string
@@ -93,6 +95,7 @@ func DefaultParams() Params {
 		HeartbeatIntervalMs:   "500",
 		InitialStallMs:        "1000",
 		QueueDiscipline:       "fifo",
+		RejectPastDeadline:    "false",
 		Workload:              "cpu_burn",
 		WindowSize:            "200000",
 		NGCBinaryTreeSize:     "15",
@@ -190,6 +193,14 @@ func Validate(p Params) (Config, error) {
 		c.QueueDiscipline = QueueEDF
 	default:
 		return c, errors.New("queue_discipline must be fifo or edf")
+	}
+	switch p.RejectPastDeadline { // exactly "true" or "false"
+	case "true":
+		c.RejectPastDeadline = true
+	case "false":
+		c.RejectPastDeadline = false
+	default:
+		return c, errors.New("reject_past_deadline must be true or false")
 	}
 	ws, err := strconv.ParseUint(p.WindowSize, 10, 32)
 	if err != nil || ws < 1 {

@@ -166,7 +166,7 @@ func TestCancelReachesBackend(t *testing.T) {
 	}
 	b0.Shutdown()
 	b1.Shutdown()
-	_, d0, _ := b0.Counters().Snapshot()
+	_, d0, _, _ := b0.Counters().Snapshot()
 	if d0 != 1 {
 		t.Fatalf("backend 0 cancelled_during_processing = %d", d0)
 	}

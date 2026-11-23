@@ -1,4 +1,4 @@
-// Source: abstraction/server/cancel_tracker/design.md (cancel_tracker v0.4.0)
+// Source: abstraction/server/cancel_tracker/design.md (cancel_tracker v0.5.0)
 package server
 
 import (

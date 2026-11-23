@@ -1,4 +1,4 @@
-// Source: abstraction/server/cancel_tracker/design.md (cancel_tracker v0.4.0)
+// Source: abstraction/server/cancel_tracker/design.md (cancel_tracker v0.5.0)
 package server
 
 import (
@@ -254,20 +254,22 @@ func (r *CancelRegistry) Finished(clientID uint32) (id uint64, ok bool) {
 	return v - 1, true
 }
 
-// CancelCounters are the three process-wide /cancel outcome counters.
+// CancelCounters are the process-wide per-request outcome counters.
 //
 // Design: abstraction/server/cancel_tracker/design.md#cancelcounters
 type CancelCounters struct {
 	CancelledBeforeProcessing atomic.Uint64
 	CancelledDuringProcessing atomic.Uint64
 	CompletedBeforeCancel     atomic.Uint64
+	RejectedPastDeadline      atomic.Uint64 // PastDeadlineRejection, incremented by runPing
 }
 
 // Snapshot reads the counters in the order of the CancelCounters table.
 //
 // Design: abstraction/server/cancel_tracker/design.md#cancelcounters
-func (c *CancelCounters) Snapshot() (before, during, completed uint64) {
-	return c.CancelledBeforeProcessing.Load(), c.CancelledDuringProcessing.Load(), c.CompletedBeforeCancel.Load()
+func (c *CancelCounters) Snapshot() (before, during, completed, pastDeadline uint64) {
+	return c.CancelledBeforeProcessing.Load(), c.CancelledDuringProcessing.Load(), c.CompletedBeforeCancel.Load(),
+		c.RejectedPastDeadline.Load()
 }
 
 // ConnectionCancelState is a connection's client binding. Only the

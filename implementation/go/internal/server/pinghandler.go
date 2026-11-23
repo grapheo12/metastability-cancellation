@@ -1,4 +1,4 @@
-// Source: abstraction/server/ping_handler/design.md (ping_handler v0.11.0)
+// Source: abstraction/server/ping_handler/design.md (ping_handler v0.12.0)
 package server
 
 import (
@@ -67,6 +67,11 @@ func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *Cance
 			finish(false)
 			return Response{Aborted: true} // RST wins
 		}
+		if pastDeadline(cfg, report) { // PastDeadlineRejection: after RST, before the /cancel match
+			counters.RejectedPastDeadline.Add(1)
+			finish(false)
+			return Response{Status: protocol.StatusRejected, Body: body()}
+		}
 		if idCheck() {
 			counters.CancelledBeforeProcessing.Add(1)
 			finish(false)
@@ -92,6 +97,12 @@ func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *Cance
 			return Response{Status: protocol.StatusRejected, Body: body()}
 		}
 	} else {
+		// Design: abstraction/server/ping_handler/design.md#pastdeadlinerejection
+		if pastDeadline(cfg, report) { // the only check in ignore mode, first after the pop
+			counters.RejectedPastDeadline.Add(1)
+			finish(false)
+			return Response{Status: protocol.StatusRejected, Body: body()}
+		}
 		// Design: abstraction/server/ping_handler/design.md#cancelcheckpoints
 		var freezeCheck func() bool // ignore mode: only a WorkerFreeze wait, never cancels
 		if cfg.FreezeAfterMs > 0 {
@@ -110,6 +121,14 @@ func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *Cance
 	finish(true) // completed: a later /cancel counts completed_before_cancel
 	// Design: abstraction/server/ping_handler/design.md#response-status
 	return Response{Status: protocol.StatusOK, Body: body()}
+}
+
+// pastDeadline is past_deadline: reject_past_deadline is on and the request was
+// popped after its RequestDeadline (StartSlack < 0; none never qualifies).
+//
+// Design: abstraction/server/ping_handler/design.md#pastdeadlinerejection
+func pastDeadline(cfg Config, r execReport) bool {
+	return cfg.RejectPastDeadline && r.startSlackNs != nil && *r.startSlackNs < 0
 }
 
 // execReport holds what run_ping stamps when it starts: the monotonic start
