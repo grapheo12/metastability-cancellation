@@ -185,3 +185,4 @@
 | 0.37.1 | 2026-11-23T00:00:00Z | Child bump: benchmark_runner 0.9.2 (config 0.22.0) |
 | 0.37.2 | 2026-11-23T00:00:00Z | Child bump: benchmark_runner 0.9.3 (experiment_executor 0.13.0) |
 | 0.38.0 | 2026-11-23T00:00:00Z | `lb_filter` value `deadline_mean_queue_plus_share` (glossary). Child bump: ingress 0.8.0 (load_balancer 0.11.0) |
+| 0.39.0 | 2026-11-23T00:00:00Z | Ingress parameters `lb_retry_policy`, `lb_max_retries`; glossary LbRetry, RetryPolicy. Child bump: ingress 0.9.0 (retry_policy 0.1.0) |

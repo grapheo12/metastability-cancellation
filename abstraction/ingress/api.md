@@ -18,6 +18,8 @@ or missing required parameters make the program exit non-zero with a one-line er
 | `duration_s` | float, s, `> 0` | required if `cancel_rate > 0`, else ignored | Length of the LoadCanceller's sending phase |
 | `initial_stall_ms` | integer, ms, `>= 0` | `1000` | The LoadCanceller schedules no cancel earlier than this after the Ingress's first `/ping`; sending still ends at `duration_s`. `0`: no stall ([load_canceller/design.md](load_canceller/design.md#cancelschedule)) |
 | `heartbeat_timeout_ms` | integer, ms, `>= 0` | `0` | Heartbeat Monitor: a backend whose last HeartbeatLine is this old gets no new requests. `0`: off, every backend is used ([heartbeat_monitor/design.md](heartbeat_monitor/design.md#backendliveness)) |
+| `lb_retry_policy` | `none` | `none` | RetryPolicy: when the Ingress retries a forward itself (an LbRetry), consulted when the newest attempt fails and on a tick ([retry_policy/design.md](retry_policy/design.md#retrypolicyregistry)) |
+| `lb_max_retries` | integer, `>= 0` | `0` | Most LbRetries per ForwardTask (one client stream). `0`: no LB retries whatever the policy ([retry_policy/design.md](retry_policy/design.md#retrypolicy)) |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for the LoadBalancer's and the LoadCanceller's random choices |
 | `output_path` | path prefix | `ingress` | Outputs go to `<output_path>.cancels.csv`, `<output_path>.forwards.csv`, `<output_path>.liveness.csv`, `<output_path>.picks.csv` and `<output_path>.summary.json` |
 
@@ -137,12 +139,13 @@ at shutdown ([design.md#shutdown](design.md#shutdown)).
   "rates_per_s": { "offered", "sent", "accepted" },
   "clients_targeted": integer,
   "filter_dropped": integer,
+  "lb_retries": integer,
   "backends": [ { "server_id", "addr", "forwarded", "ok", "rejected", "bad_request", "bad_gateway", "reset", "ewma_latency_ns", "ewma_exec_ns", "worker_count" }, ... ]
 }
 ```
 
 `counts`, `rates_per_s` and `clients_targeted` describe the LoadCanceller and keep the names they had when it was a
-separate program, so result tools can read them unchanged (all zero when it is disabled). `filter_dropped` is the number of `/ping`s the DeadlineFilter dropped (0 with `lb_filter = none`). `backends` is in
+separate program, so result tools can read them unchanged (all zero when it is disabled). `filter_dropped` is the number of `/ping`s the DeadlineFilter dropped (0 with `lb_filter = none`). `lb_retries` is the number of LbRetries started (attempts beyond each ForwardTask's first; 0 with `lb_retry_policy = none` or `lb_max_retries = 0`). `backends` is in
 `server_id` order and holds the final BackendStats; `ewma_exec_ns` is `null` for a backend with no ExecutionTime sample. `run_start_unix_ns` is the wall-clock time (Unix epoch, ns) of
 `run_start`, or `0` when no `/ping` was received ([design.md#time-base](design.md#time-base)). Written by [design.md#shutdown](design.md#shutdown).
 
@@ -173,3 +176,4 @@ separate program, so result tools can read them unchanged (all zero when it is d
 | Load Canceller | [load_canceller/api.md](load_canceller/api.md) |
 | Frontend | [frontend/api.md](frontend/api.md) |
 | Heartbeat Monitor | [heartbeat_monitor/api.md](heartbeat_monitor/api.md) |
+| Retry Policy | [retry_policy/api.md](retry_policy/api.md) |
