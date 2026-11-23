@@ -110,6 +110,7 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 - `active` is an append-only, copy-on-write list (an `atomic.Pointer` to a `[]uint32`) of the clients that have ever published. It is extended once, by the publish that makes a client's shard non-nil, so `snapshot` visits only those clients rather than all `num_clients` shards.
 - `snapshot` loads each active shard once (each is a consistent view of its client; across clients the view is weakly consistent, as the design allows), builds `[]Victim{ClientID, Entry}`, and sorts it by `Entry.RequestID`.
 - Tests: `inflight_test.go` checks the publish/clear table with two requests of one client and a reused id, a concurrent publish-versus-stale-clear race, the snapshot worked example (RequestId order), concurrent churn with 4 streams per client against snapshots, and the maximum key space.
+- `InFlightEntry.Attempt uint32` is the LbRetries started so far; an LbRetry publishes a new `*InFlightEntry` (a new identity) for the same key, so the older attempt's `Clear` fails the pointer comparison. `TestInFlightLbRetryReplaces` checks this.
 
 ### Traceability
 
@@ -119,7 +120,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [InFlightMap](#inflightmap) | [inflight.go:30](../../../implementation/go/internal/ingress/inflight.go#L30), [inflight.go:47](../../../implementation/go/internal/ingress/inflight.go#L47), [inflight_test.go:108](../../../implementation/go/internal/ingress/inflight_test.go#L108) |
-| [Publish and clear](#publish-and-clear) | [inflight.go:59](../../../implementation/go/internal/ingress/inflight.go#L59), [inflight.go:77](../../../implementation/go/internal/ingress/inflight.go#L77), [inflight_test.go:15](../../../implementation/go/internal/ingress/inflight_test.go#L15), [inflight_test.go:41](../../../implementation/go/internal/ingress/inflight_test.go#L41) |
-| [Snapshot](#snapshot) | [inflight.go:97](../../../implementation/go/internal/ingress/inflight.go#L97), [inflight_test.go:64](../../../implementation/go/internal/ingress/inflight_test.go#L64) |
+| [InFlightMap](#inflightmap) | [inflight.go:31](../../../implementation/go/internal/ingress/inflight.go#L31), [inflight.go:48](../../../implementation/go/internal/ingress/inflight.go#L48), [inflight_test.go:108](../../../implementation/go/internal/ingress/inflight_test.go#L108) |
+| [Publish and clear](#publish-and-clear) | [inflight.go:60](../../../implementation/go/internal/ingress/inflight.go#L60), [inflight.go:78](../../../implementation/go/internal/ingress/inflight.go#L78), [inflight_test.go:15](../../../implementation/go/internal/ingress/inflight_test.go#L15), [inflight_test.go:41](../../../implementation/go/internal/ingress/inflight_test.go#L41), [inflight_test.go:123](../../../implementation/go/internal/ingress/inflight_test.go#L123) |
+| [Snapshot](#snapshot) | [inflight.go:98](../../../implementation/go/internal/ingress/inflight.go#L98), [inflight_test.go:64](../../../implementation/go/internal/ingress/inflight_test.go#L64) |
 <!-- trace:end -->

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/inflight_map/design.md (inflight_map v0.3.0)
+// Source: abstraction/ingress/inflight_map/design.md (inflight_map v0.4.0)
 package ingress
 
 import (
@@ -114,5 +114,25 @@ func TestMaximumKeySpaceStartsEmpty(t *testing.T) {
 	m.Publish(e)
 	if s := m.Snapshot(); len(s) != 1 || s[0].ClientID != MaxClients-1 || s[0].Entry != e {
 		t.Fatalf("maximum valid key: %+v", s)
+	}
+}
+
+// An LbRetry publishes a replacing entry; the older attempt's clear is a no-op.
+//
+// Design: abstraction/ingress/inflight_map/design.md#publish-and-clear
+func TestInFlightLbRetryReplaces(t *testing.T) {
+	m := NewInFlightMap(4)
+	c := &InFlightEntry{RequestID: 3<<32 | 9, ServerID: 0, Attempt: 0}
+	c1 := &InFlightEntry{RequestID: 3<<32 | 9, ServerID: 1, Attempt: 1}
+	m.Publish(c)
+	m.Publish(c1)
+	if s := m.Snapshot(); len(s) != 1 || s[0].Entry != c1 || s[0].Entry.Attempt != 1 {
+		t.Fatalf("newest attempt must be published: %+v", s)
+	}
+	if m.Clear(c) {
+		t.Fatal("the older attempt's clear must be a no-op")
+	}
+	if !m.Clear(c1) || len(m.Snapshot()) != 0 {
+		t.Fatal("the newest attempt's clear empties the map")
 	}
 }

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/inflight_map/design.md (inflight_map v0.3.0)
+// Source: abstraction/ingress/inflight_map/design.md (inflight_map v0.4.0)
 package ingress
 
 import (
@@ -11,7 +11,8 @@ import (
 // API: abstraction/ingress/inflight_map/api.md#inflightentry
 type InFlightEntry struct {
 	RequestID uint64
-	ServerID  uint32
+	ServerID  uint32 // the newest attempt's backend
+	Attempt   uint32 // LbRetries started so far for the ForwardTask (0: first attempt)
 }
 
 // clientShard holds one client's in-flight entries, keyed by RequestId. It is
