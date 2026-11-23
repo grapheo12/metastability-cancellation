@@ -13,3 +13,4 @@
 | 0.9.0 | 2026-11-21T00:00:00Z | PickLog: every `pick` records, before `choose`, each backend's `outstanding`, EwmaExecTime and WorkerCount (PickRecord, `pick_log`); worked example |
 | 0.10.0 | 2026-11-21T00:00:00Z | DeadlineStrategy: `lb_filter` = `none` \| `deadline_mean` \| `deadline_mean_per_worker` \| `deadline_mmk` (replaces `deadline`); the per-backend test switches on it; worked example of the two mean strategies; admit edges compared |
 | 0.11.0 | 2026-11-23T00:00:00Z | DeadlineStrategy `deadline_mean_queue_plus_share`: `(n + 1/k) × e <= T` (requests ahead at a full service time, its own at `1/k`); worked example column; admit edge |
+| 0.12.0 | 2026-11-23T00:00:00Z | `pick(lb, remaining_ns, attempt)`: ForwardTicket and ForwardRecord carry `attempt` (LbRetries before this attempt) |

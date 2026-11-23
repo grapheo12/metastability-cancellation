@@ -187,3 +187,4 @@
 | 0.38.0 | 2026-11-23T00:00:00Z | `lb_filter` value `deadline_mean_queue_plus_share` (glossary). Child bump: ingress 0.8.0 (load_balancer 0.11.0) |
 | 0.39.0 | 2026-11-23T00:00:00Z | Ingress parameters `lb_retry_policy`, `lb_max_retries`; glossary LbRetry, RetryPolicy. Child bump: ingress 0.9.0 (retry_policy 0.1.0) |
 | 0.39.1 | 2026-11-23T00:00:00Z | Child bump: ingress 0.9.1 (inflight_map 0.4.0) |
+| 0.39.2 | 2026-11-23T00:00:00Z | Child bump: ingress 0.9.2 (load_balancer 0.12.0) |

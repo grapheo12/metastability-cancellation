@@ -38,6 +38,7 @@ name ([../api.md#backendstats](../api.md#backendstats)).
 |---|---|---|
 | `server_id` | u32 | The chosen backend |
 | `start_ns` | u64, ns | Monotonic time of the `pick` |
+| `attempt` | u32 | LbRetries of the ForwardTask before this attempt: `0` for its first ([../retry_policy/design.md](../retry_policy/design.md#retrypolicy)) |
 
 Returned by `pick`, given back unchanged to `finish`. See [design.md#forwardticket](design.md#forwardticket).
 
@@ -52,6 +53,7 @@ Returned by `pick`, given back unchanged to `finish`. See [design.md#forwardtick
 | `ewma_latency_ns` | float (binary64), ns | The backend's EwmaLatency right after this `finish` |
 | `exec_ns` | u64, ns, or none | The ExecutionTime the backend reported for this forward; none unless `ok` or `rejected` with a valid ExecReport |
 | `ewma_exec_ns` | float (binary64), ns, or none | The backend's EwmaExecTime right after this `finish`; none before its first sample |
+| `attempt` | u32 | The ticket's `attempt` |
 
 One per `finish`, kept in the **ForwardLog**. See [design.md#forwardlog](design.md#forwardlog).
 
@@ -82,7 +84,7 @@ every `ewma_exec_ns = EXEC_NO_SAMPLE`.
 The random stream is `rng_new(derive_seed(config.seed, STREAM_INGRESS_LB, 0))`.
 See [design.md#loadbalancer](design.md#loadbalancer).
 
-### `pick(lb, remaining_ns: i64 | none) -> ForwardTicket | Dropped`
+### `pick(lb, remaining_ns: i64 | none, attempt: u32) -> ForwardTicket | Dropped`
 Applies the DeadlineFilter when `lb_filter` is not `none` and `remaining_ns` is given, then chooses a backend by the
 policy among the live (all if none is live) and eligible ones. If none is eligible it returns `Dropped`, counts it in
 `filter_dropped` and changes nothing else; no `finish` follows. Otherwise it increments the chosen backend's

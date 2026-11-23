@@ -18,7 +18,8 @@ lb = { policy, filter: lb_filter, beta: ewma_beta, monitor: HeartbeatMonitor or 
        log: list of ForwardRecord (empty), log_lock: mutex,                     # ForwardLog
        picks: list of PickRecord (empty) }                                      # PickLog, also under log_lock
 
-function pick(lb, remaining_ns):                     # remaining_ns: i64 or none (the request's time to its deadline)
+function pick(lb, remaining_ns, attempt):            # remaining_ns: i64 or none (the request's time to its deadline);
+                                                     # attempt: LbRetries before this one (0 for the first)
     record_pick(lb)                                  # PickLog: what the choice below is about to see
     s = choose(lb, remaining_ns)                     # LbPolicy over the DeadlineFilter's set
     if s is Dropped:
@@ -26,7 +27,7 @@ function pick(lb, remaining_ns):                     # remaining_ns: i64 or none
         return Dropped                               # no counter of any backend changes; no finish follows
     lb.stats[s].outstanding.fetch_add(1)
     lb.stats[s].forwarded.fetch_add(1)
-    return ForwardTicket(server_id = s, start_ns = monotonic_now_ns())
+    return ForwardTicket(server_id = s, start_ns = monotonic_now_ns(), attempt = attempt)
 
 function finish(lb, ticket, outcome, exec_ns, worker_count):   # exec_ns, worker_count: from the answer, or none
     s = ticket.server_id
@@ -46,7 +47,7 @@ function finish(lb, ticket, outcome, exec_ns, worker_count):   # exec_ns, worker
         x = exec_value(lb, s)                        # unchanged; none before the first sample
     with lb.log_lock:
         lb.log.append(ForwardRecord(end_ns, s, outcome, latency_ns, e,
-                                    exec_ns if outcome in {ok, rejected} else none, x))   # ForwardLog
+                                    exec_ns if outcome in {ok, rejected} else none, x, ticket.attempt))   # ForwardLog
 ```
 
 `outstanding` is incremented in `pick`, not when the forward actually starts, so the next `pick` already sees the
@@ -56,6 +57,8 @@ load it is about to add. That narrows, but does not close, the race described be
 
 - `start_ns` is read in `pick` after the counters are incremented, so the latency covers the upstream connection,
   the backend's work and the response, and excludes the choice itself.
+- `attempt` is passed through untouched: `pick` stores it, the ForwardRecord copies it. Each LbRetry has its own
+  ticket, so every attempt is picked, counted in `outstanding` and finished on its own.
 - `finish` reads the clock once, after the counters. The latency is `now - start_ns` as unsigned 64-bit; the clock
   is monotonic, so it is never negative.
 - The ticket is a plain value: the LoadBalancer keeps no per-forward state, and a lost ticket only loses a sample.

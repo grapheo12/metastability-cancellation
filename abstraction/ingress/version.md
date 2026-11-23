@@ -34,3 +34,4 @@
 | 0.8.0 | 2026-11-23T00:00:00Z | `lb_filter` value `deadline_mean_queue_plus_share`. Child bump: load_balancer 0.11.0 |
 | 0.9.0 | 2026-11-23T00:00:00Z | New subcomponent Retry Policy 0.1.0; parameters `lb_retry_policy` (default `none`) and `lb_max_retries` (default 0), validation; summary `lb_retries` |
 | 0.9.1 | 2026-11-23T00:00:00Z | Child bump: inflight_map 0.4.0 (`attempt`) |
+| 0.9.2 | 2026-11-23T00:00:00Z | `forwards.csv` column `attempt` (last). Child bump: load_balancer 0.12.0 |
