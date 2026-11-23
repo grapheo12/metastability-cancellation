@@ -61,6 +61,9 @@ function run_ping(job, config, registry, counters, buf, queue):  # buf: MessageB
         freeze()
         if job.task.cancelled.load():
             finish(false); return Aborted                                # RST wins
+        if past_deadline(config, report):                                # PastDeadlineRejection
+            counters.rejected_past_deadline.fetch_add(1, relaxed)
+            finish(false); return Response(503, body())
         if id_check():
             counters.cancelled_before_processing.fetch_add(1, relaxed)
             finish(false); return Response(503, body())
@@ -79,6 +82,9 @@ function run_ping(job, config, registry, counters, buf, queue):  # buf: MessageB
             counters.cancelled_during_processing.fetch_add(1, relaxed)
             finish(false); return Response(503, body())
     else:  # ignore
+        if past_deadline(config, report):                                # PastDeadlineRejection: the only check in ignore mode
+            counters.rejected_past_deadline.fetch_add(1, relaxed)
+            finish(false); return Response(503, body())
         freeze_check = (() -> { freeze(); return false }) if config.freeze_after_ms is set else NONE
         if config.workload == cpu_burn:
             cpu_burner.burn(job.service_us, NONE, config.cancel_check_interval_us, freeze_check, CHECK_ITER)
@@ -141,6 +147,47 @@ Worked examples (`t0_wall_ns = 1794533185000000000`):
 |---|---|---|
 | `1000` | `200001000` | `200000000` (a 200 ms sleep) |
 | `5000` | `5000` | `0` (503 at CancelCheckPoint 1, same tick) |
+
+## PastDeadlineRejection
+
+With `reject_past_deadline = true`, a worker that pops a request whose RequestDeadline has already passed answers it
+`503` instead of running it. The test is made **once**, when the worker pops the request, using the StartSlack the
+[ExecReport](#execreport) stamped at that moment; a request that passes it is never checked against its deadline
+again and runs to completion (or until cooperative cancellation stops it, as before).
+
+```
+function past_deadline(config, report):              # boolean
+    return config.reject_past_deadline and report.start_slack_ns is not none and report.start_slack_ns < 0
+```
+
+- **Where.** In `cooperative` mode it runs at CancelCheckPoint 1, after the WorkerFreeze wait and the RST check and
+  before the `/cancel` match; in `ignore` mode it is the only check, first thing after the pop. So RST still wins over
+  it, and a request both late and cancelled by id counts as `rejected_past_deadline`, not as
+  `cancelled_before_processing`.
+- **Answer.** `503` with the usual PaddedJsonBody and ExecReport: `exec_ns` close to 0 and a negative
+  `start_slack_ns`. The client records it `rejected`, which counts against Availability. `finish(false)` publishes it
+  to CancelMatching as finished but not completed, as for any `503`.
+- **Counted** in `rejected_past_deadline` ([../cancel_tracker/design.md#cancelcounters](../cancel_tracker/design.md#cancelcounters)).
+- **Boundary.** Exactly at the deadline (`start_slack_ns = 0`) the request runs: the test is strict. A request without
+  a RequestDeadline (`start_slack_ns` none) always runs.
+- **Clocks.** StartSlack compares the client's deadline with the server's wall clock, so clock offset between the
+  machines moves the boundary by that much.
+- **Off** (`false`, the default): never rejects; behavior is unchanged.
+
+Worked examples, `reject_past_deadline = true`:
+
+| `cancel_mode` | `start_slack_ns` at the pop | RST flag | `/cancel` matched | Result |
+|---|---|---|---|---|
+| cooperative | 5_000_000_000 | no | no | runs |
+| cooperative | 0 | no | no | runs (strict `< 0`) |
+| cooperative | -1 | no | no | `503`, `rejected_past_deadline += 1` |
+| cooperative | -1 | yes | — | `Aborted` (RST wins) |
+| cooperative | -1 | no | yes | `503`, `rejected_past_deadline += 1` (checked first) |
+| cooperative | none (no RequestDeadline) | no | no | runs |
+| ignore | -35_000_000 | (not read) | (not read) | `503`, `rejected_past_deadline += 1` |
+| ignore | 1 | (not read) | (not read) | runs to completion, never checked again |
+
+With `reject_past_deadline = false` every row that is not `Aborted` or a `/cancel` match runs.
 
 ## MessageWork
 
@@ -206,7 +253,7 @@ In `cooperative` mode the worker running the request checks for cancellation at 
 
 | # | When | RST flag | `/cancel` (CancelMatching) |
 |---|---|---|---|
-| 1 | When a worker has popped the job, before the burn | checked first, then → `Aborted` | → `503`, `cancelled_before_processing += 1` |
+| 1 | When a worker has popped the job, before the burn | checked first, then → `Aborted` | after the [PastDeadlineRejection](#pastdeadlinerejection) test → `503`, `cancelled_before_processing += 1` |
 | 2 | During the burn (`cpu_burn`) | every `cancel_check_interval_us` → `Aborted` | every `CHECK_ITER` spin units → `503`, `cancelled_during_processing += 1` |
 | 2 | During the sleep (`sleep`) | after each wake-up that does not reach the deadline → `Aborted` | after each such wake-up, after the RST check → `503`, `cancelled_during_processing += 1` |
 | 2 | During MessageWork (`message_buffer`), before the buffer is written | after each message → `Aborted` | after each message → `503`, `cancelled_during_processing += 1` |
@@ -215,7 +262,7 @@ In `cooperative` mode the worker running the request checks for cancellation at 
 A request reset or cancelled while it waits in the WorkQueue is caught at check point 1 when its turn comes. It
 still occupies its place in the line until then, but costs no burn.
 
-In `ignore` mode no check point runs. The RST flag is never read and `handle_cancel` throws away
+In `ignore` mode no check point runs (only the [PastDeadlineRejection](#pastdeadlinerejection) test, when enabled, at the pop). The RST flag is never read and `handle_cancel` throws away
 every id, so `should_cancel` is never needed.
 
 **WorkerFreeze checks.** Every check of a running request first calls `worker_pool.freeze_wait(queue)`
@@ -269,5 +316,6 @@ Worked example for client 0 in `cooperative` mode, `/cancel` for id 1 registered
 |---|---|---|---|
 | `202` | `run_ping` | Burn or MessageWork completed | PaddedJsonBody of `response_bytes`, with the [ExecReport](#execreport) |
 | `503` | `run_ping` | `/cancel` matched at check point 1 or 2 | PaddedJsonBody of `response_bytes`, with the [ExecReport](#execreport) |
+| `503` | `run_ping` | [PastDeadlineRejection](#pastdeadlinerejection): popped after its RequestDeadline | PaddedJsonBody of `response_bytes`, with the [ExecReport](#execreport) |
 | `400` | `admit_ping` | Unparseable body or client id mismatch | empty |
 | none (`Aborted`) | `run_ping` | RST at check point 1 or 2 | — |

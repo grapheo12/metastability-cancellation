@@ -18,6 +18,7 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 | `heartbeat_interval_ms` | integer, ms, `>= 1` | `500` |
 | `freeze_after_ms` | integer, ms, `>= 1`, or empty | empty |
 | `queue_discipline` | `fifo` \| `edf` | `fifo` |
+| `reject_past_deadline` | `true` \| `false` | `false` |
 | `queue_log_path` | path, or empty | empty |
 | `queue_sample_interval_ms` | integer, ms, `>= 1` | `10` |
 | `window_size` | integer, `1 ..= 2^32-1` | `200000` |

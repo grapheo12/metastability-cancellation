@@ -52,6 +52,7 @@ function validate(params):
     heartbeat_interval_ms is an integer >= 1         else error "heartbeat_interval_ms must be an integer >= 1"
     freeze_after_ms is empty or an integer >= 1      else error "freeze_after_ms must be empty or an integer >= 1"
     queue_discipline in {fifo, edf}                  else error   # default fifo
+    reject_past_deadline in {true, false}            else error   # default false (exact strings)
     window_size is an integer in 1 ..= 2^32-1        else error   # these three are checked under every workload
     n_gc_binary_tree_size is an integer in 1 ..= 65536   else error
     n_messages_per_request is an integer >= 1        else error
