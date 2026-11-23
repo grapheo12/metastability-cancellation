@@ -26,3 +26,4 @@
 | 0.20.0 | 2026-11-20T00:00:00Z | PROGRAM_PARAMS: load_gen `slo_cancel` and `drain_timeout_ms` (DrainDeadline); passed through like any program parameter (booleans as `true`/`false`) |
 | 0.21.0 | 2026-11-20T00:00:00Z | PROGRAM_PARAMS: Ingress `lb_filter` (DeadlineFilter) |
 | 0.22.0 | 2026-11-23T00:00:00Z | PROGRAM_PARAMS: server `reject_past_deadline` (PastDeadlineRejection) |
+| 0.23.0 | 2026-11-23T00:00:00Z | PROGRAM_PARAMS: Ingress `lb_retry_policy`, `lb_max_retries` (LbRetries) |

@@ -189,3 +189,4 @@
 | 0.39.1 | 2026-11-23T00:00:00Z | Child bump: ingress 0.9.1 (inflight_map 0.4.0) |
 | 0.39.2 | 2026-11-23T00:00:00Z | Child bump: ingress 0.9.2 (load_balancer 0.12.0) |
 | 0.39.3 | 2026-11-23T00:00:00Z | Child bump: ingress 0.9.3 (frontend 0.6.0) |
+| 0.39.4 | 2026-11-23T00:00:00Z | Child bump: benchmark_runner 0.9.4 (config 0.23.0) |
