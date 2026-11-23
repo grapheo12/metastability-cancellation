@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.22.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.23.0)
 """BenchConfig loading and validation, SweepExpansion, argument formatting."""
 
 import datetime
@@ -22,7 +22,7 @@ PROGRAM_PARAMS = {
                  "n_waiting_requests", "retry_timeout_ms", "max_retries", "initial_stall_ms",
                  "slo_cancel", "drain_timeout_ms"],
     "ingress": ["lb_policy", "ewma_beta", "cancel_rate", "duration_s", "seed", "initial_stall_ms",
-                "heartbeat_timeout_ms", "lb_filter"],
+                "heartbeat_timeout_ms", "lb_filter", "lb_retry_policy", "lb_max_retries"],
 }
 # Design: abstraction/benchmark_runner/config/design.md#processplacement
 PLACEMENT_KEYS = ["threads", "cpu_set"]
