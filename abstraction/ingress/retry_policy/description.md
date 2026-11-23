@@ -12,8 +12,8 @@ load-generator client's own RetryTimers:
   touching the Frontend ([design.md#adding-a-retrypolicy](design.md#adding-a-retrypolicy)).
 
 The policy only says *whether* to retry now. *How many* retries a request may have is the Ingress parameter
-`lb_max_retries`, enforced by the Frontend, and *where* a retry goes is the Load Balancer's normal `pick`. The only
-policy shipped is `none`, which never retries; with it, or with `lb_max_retries = 0`, the Ingress behaves exactly as
+`lb_max_retries`, enforced by the Frontend, and *where* a retry goes is the Load Balancer's normal `pick`. The policies
+shipped are `none`, which never retries, and `timeout`, which mimics the client's RetryTimer; with it, or with `lb_max_retries = 0`, the Ingress behaves exactly as
 it did before LB retries existed.
 
 Parent: [../design.md](../design.md). API: [api.md](api.md). Design: [design.md](design.md).

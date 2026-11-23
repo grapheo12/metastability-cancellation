@@ -18,8 +18,9 @@ or missing required parameters make the program exit non-zero with a one-line er
 | `duration_s` | float, s, `> 0` | required if `cancel_rate > 0`, else ignored | Length of the LoadCanceller's sending phase |
 | `initial_stall_ms` | integer, ms, `>= 0` | `1000` | The LoadCanceller schedules no cancel earlier than this after the Ingress's first `/ping`; sending still ends at `duration_s`. `0`: no stall ([load_canceller/design.md](load_canceller/design.md#cancelschedule)) |
 | `heartbeat_timeout_ms` | integer, ms, `>= 0` | `0` | Heartbeat Monitor: a backend whose last HeartbeatLine is this old gets no new requests. `0`: off, every backend is used ([heartbeat_monitor/design.md](heartbeat_monitor/design.md#backendliveness)) |
-| `lb_retry_policy` | `none` | `none` | RetryPolicy: when the Ingress retries a forward itself (an LbRetry), consulted when the newest attempt fails and on a tick ([retry_policy/design.md](retry_policy/design.md#retrypolicyregistry)) |
+| `lb_retry_policy` | `none` \| `timeout` | `none` | RetryPolicy: when the Ingress retries a forward itself (an LbRetry), consulted when the newest attempt fails and on a tick ([retry_policy/design.md](retry_policy/design.md#retrypolicyregistry)) |
 | `lb_max_retries` | integer, `>= 0` | `0` | Most LbRetries per ForwardTask (one client stream). `0`: no LB retries whatever the policy ([retry_policy/design.md](retry_policy/design.md#retrypolicy)) |
+| `lb_retry_timeout_ms` | float, ms, `> 0` | `150` | `timeout` RetryPolicy: start an LbRetry once the newest attempt has run this long without an answer ([retry_policy/design.md](retry_policy/design.md#retrypolicyregistry)) |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for the LoadBalancer's and the LoadCanceller's random choices |
 | `output_path` | path prefix | `ingress` | Outputs go to `<output_path>.cancels.csv`, `<output_path>.forwards.csv`, `<output_path>.liveness.csv`, `<output_path>.picks.csv` and `<output_path>.summary.json` |
 

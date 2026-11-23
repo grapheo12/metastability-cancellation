@@ -6,8 +6,9 @@ From the Ingress parameters ([../api.md#program-parameters](../api.md#program-pa
 
 | Parameter | Type / unit / constraint | Default | Meaning |
 |---|---|---|---|
-| `lb_retry_policy` | a name in the RetryPolicyRegistry: `none` | `none` | The RetryPolicy the Frontend consults ([design.md#retrypolicyregistry](design.md#retrypolicyregistry)) |
+| `lb_retry_policy` | a name in the RetryPolicyRegistry: `none` \| `timeout` | `none` | The RetryPolicy the Frontend consults ([design.md#retrypolicyregistry](design.md#retrypolicyregistry)) |
 | `lb_max_retries` | integer, `>= 0` | `0` | Most LbRetries per ForwardTask (one client stream). `0`: no LB retries whatever the policy |
+| `lb_retry_timeout_ms` | float, ms, `> 0` | `150` | The `timeout` policy's delay: retry once the newest attempt has run this long ([design.md#retrypolicyregistry](design.md#retrypolicyregistry)); validated always, used only by `timeout` |
 
 ## Types
 

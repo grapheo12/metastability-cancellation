@@ -36,3 +36,4 @@
 | 0.9.1 | 2026-11-23T00:00:00Z | Child bump: inflight_map 0.4.0 (`attempt`) |
 | 0.9.2 | 2026-11-23T00:00:00Z | `forwards.csv` column `attempt` (last). Child bump: load_balancer 0.12.0 |
 | 0.9.3 | 2026-11-23T00:00:00Z | Child bump: frontend 0.6.0 (ForwardAttempt, LbRetryLoop) |
+| 0.10.0 | 2026-11-23T00:00:00Z | `lb_retry_policy` value `timeout`; parameter `lb_retry_timeout_ms`, validation. Child bump: retry_policy 0.2.0 |

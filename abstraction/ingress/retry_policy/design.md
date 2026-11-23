@@ -55,7 +55,7 @@ a copy: changing it changes nothing in the Ingress.
 ## RetryPolicyRegistry
 
 ```
-RETRY_POLICIES = { "none": none_policy }             # name -> constructor(config) -> RetryPolicy
+RETRY_POLICIES = { "none": none_policy, "timeout": timeout_policy }   # name -> constructor(config) -> RetryPolicy
 
 function retry_policy_new(name, config):
     if name not in RETRY_POLICIES: return ConfigError("lb_retry_policy must be one of " + names)
@@ -80,6 +80,40 @@ Worked example, `none`, `lb_max_retries = 3`:
 |---|---|---|---|
 | `Tick` | 0 | `Wait` | (no tick timer runs with `none`) |
 | `AttemptEnded(bad_gateway)` | 0 | `Wait` | relays `502` |
+
+### timeout
+
+Mimics the load-generator client's RetryTimer
+([../../load_generator/client/design.md#retrytimer](../../load_generator/client/design.md#retrytimer)): if the
+newest attempt has not answered `lb_retry_timeout_ms` after its `pick`, start the next one.
+
+```
+function timeout_policy(config):
+    d = round(config.lb_retry_timeout_ms * 1_000_000)          # ns, from the Ingress parameter (default 150)
+    decide_fn = (params, state, event) ->
+        newest = state.attempts[last]
+        Retry if event is Tick and newest.running and state.now_ns - newest.start_ns >= params.d
+        else Wait
+    return RetryPolicy(decide_fn, params = { d })
+```
+
+- **Like the client.** The newest attempt's answer counts and older attempts keep running (the Frontend's rule); a
+  retry goes through the Load Balancer's `pick`, as a client RequestCopy does through the Ingress.
+- **Errors are not retried.** On `AttemptEnded` (a `502`) it answers `Wait`, so the `502` is relayed: the client's
+  RetryTimer does not retry an error either.
+- **Granularity.** It is consulted on `LB_RETRY_TICK_MS = 10` ticks, so a retry starts between `d` and
+  `d + LB_RETRY_TICK_MS` after the newest attempt's `pick`; the client's timer fires at exactly `RETRY`.
+- **Clock origin.** `d` counts from the Load Balancer's `pick` of the attempt, not from the client's send, so it
+  excludes the client-to-Ingress hop.
+
+Worked example, `lb_retry_timeout_ms = 2000`, `lb_max_retries = 1` (times in ms from attempt 0's `pick`):
+
+| Case | Events | Decisions | Result |
+|---|---|---|---|
+| Answered in time | ticks 10 ..= 790; attempt 0 answers at 800 | `Wait` at every tick | attempt 0's answer, no LbRetry |
+| Slow | ticks 10 ..= 1990 `Wait`; tick at 2000 | `Retry` at 2000 (`2000 - 0 >= 2000`) | attempt 1 starts; budget used up, no more decisions; attempt 1's answer is relayed |
+| Upstream failure | attempt 0 `502` at 30 | `AttemptEnded`: `Wait` | `502` relayed |
+| Budget 0 | any | never consulted | one attempt |
 
 ## Adding a RetryPolicy
 
