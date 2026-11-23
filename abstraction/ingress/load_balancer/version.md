@@ -14,3 +14,4 @@
 | 0.10.0 | 2026-11-21T00:00:00Z | DeadlineStrategy: `lb_filter` = `none` \| `deadline_mean` \| `deadline_mean_per_worker` \| `deadline_mmk` (replaces `deadline`); the per-backend test switches on it; worked example of the two mean strategies; admit edges compared |
 | 0.11.0 | 2026-11-23T00:00:00Z | DeadlineStrategy `deadline_mean_queue_plus_share`: `(n + 1/k) × e <= T` (requests ahead at a full service time, its own at `1/k`); worked example column; admit edge |
 | 0.12.0 | 2026-11-23T00:00:00Z | `pick(lb, remaining_ns, attempt)`: ForwardTicket and ForwardRecord carry `attempt` (LbRetries before this attempt) |
+| 0.13.0 | 2026-11-23T00:00:00Z | FilterWaitQueue: a first attempt no backend passes waits (FIFO) instead of being dropped; `scan` every `FILTER_QUEUE_TICK_MS = 10` sends those that now pass (oldest first) and drops those past their deadline; `admit`; `pick(…, record)` no longer counts `filter_dropped`; worked example and state machine |

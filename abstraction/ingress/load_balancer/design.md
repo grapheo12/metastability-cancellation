@@ -18,13 +18,13 @@ lb = { policy, filter: lb_filter, beta: ewma_beta, monitor: HeartbeatMonitor or 
        log: list of ForwardRecord (empty), log_lock: mutex,                     # ForwardLog
        picks: list of PickRecord (empty) }                                      # PickLog, also under log_lock
 
-function pick(lb, remaining_ns, attempt):            # remaining_ns: i64 or none (the request's time to its deadline);
-                                                     # attempt: LbRetries before this one (0 for the first)
-    record_pick(lb)                                  # PickLog: what the choice below is about to see
+function pick(lb, remaining_ns, attempt, record = true):   # remaining_ns: i64 or none (the request's time to its deadline);
+                                                     # attempt: LbRetries before this one (0 for the first);
+                                                     # record: false for a FilterWaitQueue re-check
+    if record: record_pick(lb)                       # PickLog: what the choice below is about to see
     s = choose(lb, remaining_ns)                     # LbPolicy over the DeadlineFilter's set
     if s is Dropped:
-        lb.filter_dropped.fetch_add(1)
-        return Dropped                               # no counter of any backend changes; no finish follows
+        return Dropped                               # no counter changes; no finish follows (callers count)
     lb.stats[s].outstanding.fetch_add(1)
     lb.stats[s].forwarded.fetch_add(1)
     return ForwardTicket(server_id = s, start_ns = monotonic_now_ns(), attempt = attempt)
@@ -298,9 +298,10 @@ function log_poisson_upper(m, y):                    # ln(1 - Q(m, y)), m >= 1, 
   computing it as `1 - Q` there loses everything (e.g. `n = 1000`, `k = 2`, `e = 10 ms`, `T = 5 s` needs
   `1 - Q(999, 500) ≈ e^{-196}`, multiplied by `2^999`). Each product inside a sum is rounded on its own (no fused
   multiply-add). Implementations must agree with the worked example to a relative `1e-12`.
-- **Drop.** When no backend of `L` passes, `pick` returns `Dropped` and counts it in `filter_dropped`. No backend is
-  contacted and no BackendStats counter, ForwardRecord or `finish` follows. A request whose deadline has already
-  passed (`remaining_ns <= 0`) passes nowhere and is always dropped.
+- **No backend passes.** When no backend of `L` passes, `pick` returns `Dropped`; no backend is contacted and no
+  BackendStats counter, ForwardRecord or `finish` follows. For a first attempt the request then **waits** in the
+  [FilterWaitQueue](#filterwaitqueue), which re-checks it every 10 ms and drops it only once its RequestDeadline has
+  passed. A request whose deadline has already passed (`remaining_ns <= 0`) passes nowhere.
 - **Off.** With `lb_filter = none`, or a request without a RequestDeadline (`remaining_ns` none), `L` is used as
   before: same choices and same random draws.
 - **Races.** `outstanding`, WorkerCount and EwmaExecTime are read without a lock and may change during the scan, as
@@ -348,6 +349,82 @@ binary64:
 `deadline_mean_queue_plus_share` keeps `n <= 24` at `k = 10` (`n <= T/e - 1/k = 24.9`) and at `k = 1`;
 `deadline_mean_per_worker` keeps `n <= 249` at `k = 10` (`n <= 24` at `k = 1`); `deadline_mmk` keeps `n <= 202` at
 `k = 10` and `n <= 13` at `k = 1`, stricter than the per-worker mean because it bounds the tail, not the mean.
+
+## FilterWaitQueue
+
+A first attempt that no backend passes under the DeadlineFilter waits here instead of being dropped. Every
+`FILTER_QUEUE_TICK_MS` the queue re-checks its requests with the same `pick` (LiveSet, DeadlineFilter, LbPolicy) and
+sends those that now fit; a request still waiting once its RequestDeadline has passed is dropped.
+
+```
+FILTER_QUEUE_TICK_MS = 10
+
+wq = { waiting: FIFO of WaitEntry, lock: mutex,
+       queued: u64, sent_from_queue: u64, dropped: u64, max_len: u64 }      # summary counters
+WaitEntry = { deadline: u64 (Unix ns), state: waiting | sent(ticket) | dropped | gone, signal: one-shot }
+
+function admit(lb, deadline):                        # attempt 0; deadline: RequestDeadline or none
+    -> Sent(ticket) | Wait(entry)
+    if lb.filter == none or deadline is none:
+        return Sent(pick(lb, none, 0))               # never filtered, so never Dropped
+    with wq.lock:
+        if wq.waiting is empty:
+            t = pick(lb, deadline - wall_clock_unix_ns(), 0)
+            if t is not Dropped: return Sent(t)
+        e = WaitEntry(deadline, state = waiting)     # FIFO: behind every request already waiting
+        wq.waiting.push_back(e); wq.queued += 1
+        return Wait(e)
+
+procedure scan(lb):                                  # every FILTER_QUEUE_TICK_MS while lb.filter != none
+    with wq.lock:
+        wq.max_len = max(wq.max_len, len(wq.waiting))
+        for e in wq.waiting, oldest first:
+            if e.state == gone: remove e; continue                    # its client reset the stream
+            remaining = e.deadline - wall_clock_unix_ns()             # exact signed, saturated to i64
+            if remaining <= 0:                                        # past its SLO
+                e.state = dropped; wq.dropped += 1; remove e; e.signal.set(); continue
+            t = pick(lb, remaining, 0, record = false)                # a failed re-check writes no PickRecord
+            if t is not Dropped:
+                e.state = sent(t); wq.sent_from_queue += 1; remove e; e.signal.set()
+            # else: stays in place; younger entries are still tried
+```
+
+- **FIFO admission.** A newcomer joins behind a non-empty queue even if a backend would pass it now, so it never
+  overtakes a waiting request at admission. Inside a scan every entry is tried, oldest first; a younger entry (more
+  time left) may be sent while an older one still does not fit.
+- **Load is seen at once.** A request sent from the queue increments its backend's `outstanding` in `pick` before the
+  next entry is tried, so later entries see it.
+- **Waiting counts.** The time spent waiting is part of the client's latency and shrinks `remaining_ns`; the LbRetry
+  `timeout` counts from the attempt's `pick`, after the wait.
+- **Counters (summary).** `filter_queued`: requests that waited; `filter_sent_from_queue`: those later sent;
+  `filter_dropped`: those dropped past their deadline; `filter_queue_max`: the longest queue a scan saw. `pick` itself
+  counts nothing.
+- **Off.** With `lb_filter = none`, or a request without a RequestDeadline, nothing waits and no scanner runs.
+- **Concurrency.** `wq.lock` is held for one admission or one whole scan. `admit` holding it for its `pick` keeps
+  newcomers from overtaking a scan in progress.
+
+```mermaid
+stateDiagram-v2
+  [*] --> Sent: admit, queue empty and pick passes
+  [*] --> Waiting: admit, queue non-empty or nothing passes
+  Waiting --> Waiting: scan, nothing passes yet
+  Waiting --> Sent: scan, pick passes
+  Waiting --> Dropped: scan, deadline passed (filter_dropped += 1)
+  Waiting --> Gone: client reset (removed at the next scan)
+```
+
+Worked example, `deadline_mean`, one backend, `e = 200 ms`, `outstanding = 24` throughout except as stated, so
+`(n + 1) × e = 5 s`; times in ms, every request has a 5 s SLO:
+
+| Time | Event | Queue after | Result |
+|---|---|---|---|
+| 0 | A arrives, 5000 left: `5000 <= 5000` passes | [] | A sent |
+| 1 | B arrives (n = 25), 4999 left: `5200 > 4999` | [B] | B waits |
+| 2 | C arrives with 5000 left; queue non-empty | [B, C] | C waits (FIFO), not tried |
+| 10 | scan: n = 25, B (4990 left) and C (4992 left) fail | [B, C] | — |
+| 300 | two forwards finish, n = 23; scan: B `4800 <= 4701`? no; C `4800 <= 4702`? no | [B, C] | both wait |
+| 600 | n = 21; scan: B `4400 <= 4401` yes, sent (n = 22); C `4600 <= 4402` no | [C] | B sent; C still waits |
+| 5002 | C still not sent; remaining 0 | [] | C dropped past its SLO, `503` |
 
 ## PickLog
 

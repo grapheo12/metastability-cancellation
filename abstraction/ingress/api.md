@@ -12,7 +12,7 @@ or missing required parameters make the program exit non-zero with a one-line er
 | `backends` | comma-separated list of `host:port`, at least 1, at most `MAX_BACKENDS` | required | The server instances. A backend's `server_id` is its 0-based position in this list |
 | `num_clients` (`N`) | integer, `1 ..= MAX_CLIENTS` | required | Number of load-generator clients. Client ids must be `< N`. Bounds the InFlightMap key space |
 | `lb_policy` | `round_robin` \| `least_outstanding` \| `power_of_two` \| `ewma` | `least_outstanding` | The LoadBalancer policy |
-| `lb_filter` | `none` \| `deadline_mean` \| `deadline_mean_per_worker` \| `deadline_mean_queue_plus_share` \| `deadline_mmk` | `none` | DeadlineFilter strategy: send a request only to backends where `(outstanding + 1) × EwmaExecTime` (`deadline_mean`), that divided by the WorkerCount (`deadline_mean_per_worker`), or `(outstanding + 1/WorkerCount) × EwmaExecTime` (`deadline_mean_queue_plus_share`) fits in its time left, or where as an M/M/k queue it finishes in time with probability `>= 0.99` (`deadline_mmk`); drop it with `503` if none does. `none`: off ([load_balancer/design.md](load_balancer/design.md#deadlinefilter)) |
+| `lb_filter` | `none` \| `deadline_mean` \| `deadline_mean_per_worker` \| `deadline_mean_queue_plus_share` \| `deadline_mmk` | `none` | DeadlineFilter strategy: send a request only to backends where `(outstanding + 1) × EwmaExecTime` (`deadline_mean`), that divided by the WorkerCount (`deadline_mean_per_worker`), or `(outstanding + 1/WorkerCount) × EwmaExecTime` (`deadline_mean_queue_plus_share`) fits in its time left, or where as an M/M/k queue it finishes in time with probability `>= 0.99` (`deadline_mmk`); otherwise it waits in the FilterWaitQueue, re-checked every 10 ms, and is dropped with `503` once its RequestDeadline has passed. `none`: off ([load_balancer/design.md](load_balancer/design.md#deadlinefilter)) |
 | `ewma_beta` | float, `0 <= ewma_beta <= 1` | `0.7` | Weight of the old value in each EwmaLatency update; used by `lb_policy = ewma`, validated always ([load_balancer/design.md](load_balancer/design.md#ewmalatency)) |
 | `cancel_rate` | float, cancels/s, `>= 0` | `0` | Rate of the LoadCanceller's Poisson process. `0` disables the LoadCanceller |
 | `duration_s` | float, s, `> 0` | required if `cancel_rate > 0`, else ignored | Length of the LoadCanceller's sending phase |
@@ -141,13 +141,17 @@ at shutdown ([design.md#shutdown](design.md#shutdown)).
   "rates_per_s": { "offered", "sent", "accepted" },
   "clients_targeted": integer,
   "filter_dropped": integer,
+  "filter_queued": integer,
+  "filter_sent_from_queue": integer,
+  "filter_queue_max": integer,
+  "lb_retry_refused": integer,
   "lb_retries": integer,
   "backends": [ { "server_id", "addr", "forwarded", "ok", "rejected", "bad_request", "bad_gateway", "reset", "ewma_latency_ns", "ewma_exec_ns", "worker_count" }, ... ]
 }
 ```
 
 `counts`, `rates_per_s` and `clients_targeted` describe the LoadCanceller and keep the names they had when it was a
-separate program, so result tools can read them unchanged (all zero when it is disabled). `filter_dropped` is the number of `/ping`s the DeadlineFilter dropped (0 with `lb_filter = none`). `lb_retries` is the number of LbRetries started (attempts beyond each ForwardTask's first; 0 with `lb_retry_policy = none` or `lb_max_retries = 0`). `backends` is in
+separate program, so result tools can read them unchanged (all zero when it is disabled). `filter_queued` counts the `/ping`s that waited in the FilterWaitQueue because no backend passed the DeadlineFilter, `filter_sent_from_queue` those later sent from it, `filter_dropped` those dropped once their RequestDeadline passed while waiting, and `filter_queue_max` the longest queue a scan saw ([load_balancer/design.md](load_balancer/design.md#filterwaitqueue)); all 0 with `lb_filter = none`. `lb_retry_refused` counts LbRetries the DeadlineFilter refused (no attempt started). `lb_retries` is the number of LbRetries started (attempts beyond each ForwardTask's first; 0 with `lb_retry_policy = none` or `lb_max_retries = 0`). `backends` is in
 `server_id` order and holds the final BackendStats; `ewma_exec_ns` is `null` for a backend with no ExecutionTime sample. `run_start_unix_ns` is the wall-clock time (Unix epoch, ns) of
 `run_start`, or `0` when no `/ping` was received ([design.md#time-base](design.md#time-base)). Written by [design.md#shutdown](design.md#shutdown).
 
