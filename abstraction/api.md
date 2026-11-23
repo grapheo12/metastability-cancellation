@@ -63,7 +63,7 @@ The minimum body sizes, 76 bytes for a request and 42 for a response, come from
 | `backends` | comma-separated list of `host:port`, at least 1, at most `MAX_BACKENDS` | required | The server instances. A backend's `server_id` is its 0-based position in this list |
 | `num_clients` (`N`) | integer, `1 ..= MAX_CLIENTS` | required | Number of load-generator clients. Client ids must be `< N`. Bounds the InFlightMap key space |
 | `lb_policy` | `round_robin` \| `least_outstanding` \| `power_of_two` \| `ewma` | `least_outstanding` | The LoadBalancer policy |
-| `lb_filter` | `none` \| `deadline_mean` \| `deadline_mean_per_worker` \| `deadline_mmk` | `none` | DeadlineFilter: send a request only to backends expected to reach it before its RequestDeadline; drop it (`503`) if none is ([ingress/load_balancer/design.md](ingress/load_balancer/design.md#deadlinefilter)) |
+| `lb_filter` | `none` \| `deadline_mean` \| `deadline_mean_per_worker` \| `deadline_mean_queue_plus_share` \| `deadline_mmk` | `none` | DeadlineFilter: send a request only to backends expected to reach it before its RequestDeadline; drop it (`503`) if none is ([ingress/load_balancer/design.md](ingress/load_balancer/design.md#deadlinefilter)) |
 | `ewma_beta` | float, `0 <= ewma_beta <= 1` | `0.7` | Weight of the old value in each EwmaLatency update; used by `lb_policy = ewma`, validated always ([ingress/load_balancer/design.md](ingress/load_balancer/design.md#ewmalatency)) |
 | `cancel_rate` | float, cancels/s, `>= 0` | `0` | Rate of the LoadCanceller's Poisson process. `0` disables the LoadCanceller |
 | `duration_s` | float, s, `> 0` | required if `cancel_rate > 0`, else ignored | Length of the LoadCanceller's sending phase |
