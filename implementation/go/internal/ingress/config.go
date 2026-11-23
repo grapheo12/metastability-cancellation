@@ -2,7 +2,7 @@
 // proxy in front of several servers, with an in-process LoadCanceller that
 // picks victims from the InFlightMap.
 //
-// Source: abstraction/ingress/design.md (ingress v0.8.0)
+// Source: abstraction/ingress/design.md (ingress v0.9.0)
 package ingress
 
 import (
@@ -56,6 +56,9 @@ type Config struct {
 	InitialStallNs int64
 	// HeartbeatTimeoutMs: BackendLiveness timeout; 0: no Heartbeat Monitor.
 	HeartbeatTimeoutMs uint64
+	// LbRetryPolicy names the RetryPolicy (registry); LbMaxRetries is the LbRetry budget per ForwardTask.
+	LbRetryPolicy string
+	LbMaxRetries  uint32
 }
 
 // Params holds the raw command-line values, named after the API parameters.
@@ -72,12 +75,15 @@ type Params struct {
 	OutputPath         string
 	InitialStallMs     string
 	HeartbeatTimeoutMs string
+	LbRetryPolicy      string
+	LbMaxRetries       string
 }
 
 // DefaultParams returns the defaults from abstraction/ingress/api.md#program-parameters.
 func DefaultParams() Params {
 	return Params{ListenAddr: "0.0.0.0:9090", LbPolicy: PolicyLeastOutstanding, LbFilter: FilterNone, EwmaBeta: "0.7", CancelRate: "0", Seed: "0",
-		OutputPath: "ingress", InitialStallMs: "1000", HeartbeatTimeoutMs: "0"}
+		OutputPath: "ingress", InitialStallMs: "1000", HeartbeatTimeoutMs: "0",
+		LbRetryPolicy: RetryPolicyNone, LbMaxRetries: "0"}
 }
 
 // Validate turns Params into a Config or returns a one-line error.
@@ -148,6 +154,15 @@ func Validate(p Params) (Config, error) {
 		return c, errors.New("heartbeat_timeout_ms must be an integer >= 0")
 	}
 	c.HeartbeatTimeoutMs = ht
+	if _, ok := retryPolicies[p.LbRetryPolicy]; !ok {
+		return c, errors.New("lb_retry_policy must be one of " + retryPolicyNames())
+	}
+	c.LbRetryPolicy = p.LbRetryPolicy
+	mr, err := strconv.ParseUint(p.LbMaxRetries, 10, 32)
+	if err != nil {
+		return c, errors.New("lb_max_retries must be an integer in 0 ..= 2^32-1")
+	}
+	c.LbMaxRetries = uint32(mr)
 	c.OutputPath = p.OutputPath
 	return c, nil
 }

@@ -106,3 +106,38 @@ function hedge_after_policy(config):
         else Retry if event is AttemptEnded
         else Wait, params = d)
 ```
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21). Build and test with `CGO_ENABLED=0 go build ./...` /
+`CGO_ENABLED=0 go test ./...`.
+
+### Go choices
+
+- File `internal/ingress/retrypolicy.go` (package `ingress`, next to the Frontend that consults it).
+- `RetryPolicy` is an interface with one method, `Decide(RetryState, RetryEvent) RetryDecision`; `RetryPolicyFunc`
+  adapts a plain function, so a policy is usually one function literal.
+- The RetryPolicyRegistry is the package map `retryPolicies` (name -> `func(Config) RetryPolicy`), holding only
+  `none`. `RegisterRetryPolicy(name, ctor)` adds one; call it before configuring an Ingress (an `init` function in a
+  new file is the intended place, so adding a policy touches no existing file except the allowed-values text).
+  `NewRetryPolicy(name, cfg)` is `retry_policy_new`; Ingress validation checks the name against the same map.
+- Times in RetryState and AttemptView are `time.Time` values (they carry Go's monotonic reading) instead of ns
+  integers; `RemainingNs`/`HasDeadline` and `EwmaExecNs`/`HasEwmaExec` stand for "or none".
+- `(*LoadBalancer).backendViews()` builds the BackendView list from `Outstanding`, `WorkerCount`, `execValue` and the
+  monitor's `IsLive` (nil-safe: always live without a monitor).
+- Tests: `retrypolicy_test.go` (`TestRetryPolicyRegistryNone`, `TestRegisterRetryPolicy`, `TestValidateLbRetry`).
+
+### Traceability
+
+Generated from the `// Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [RetryPolicy](#retrypolicy) | [retrypolicy.go:82](../../../implementation/go/internal/ingress/retrypolicy.go#L82) |
+| [RetryEvent](#retryevent) | [retrypolicy.go:26](../../../implementation/go/internal/ingress/retrypolicy.go#L26) |
+| [RetryState](#retrystate) | [retrypolicy.go:65](../../../implementation/go/internal/ingress/retrypolicy.go#L65), [retrypolicy.go:140](../../../implementation/go/internal/ingress/retrypolicy.go#L140) |
+| [RetryPolicyRegistry](#retrypolicyregistry) | [retrypolicy.go:101](../../../implementation/go/internal/ingress/retrypolicy.go#L101), [retrypolicy.go:103](../../../implementation/go/internal/ingress/retrypolicy.go#L103), [retrypolicy.go:129](../../../implementation/go/internal/ingress/retrypolicy.go#L129), [retrypolicy_test.go:10](../../../implementation/go/internal/ingress/retrypolicy_test.go#L10) |
+| [Adding a RetryPolicy](#adding-a-retrypolicy) | [retrypolicy.go:112](../../../implementation/go/internal/ingress/retrypolicy.go#L112), [retrypolicy_test.go:28](../../../implementation/go/internal/ingress/retrypolicy_test.go#L28) |
+<!-- trace:end -->

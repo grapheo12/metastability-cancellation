@@ -117,7 +117,7 @@ func TestHeartbeatMonitorDropsFrozenBackend(t *testing.T) {
 	defer b0.Shutdown()
 	out := filepath.Join(t.TempDir(), "ingress")
 	cfg, err := Validate(Params{ListenAddr: "127.0.0.1:0", Backends: b0.Addr().String() + "," + b1.Addr().String(),
-		NumClients: "4", LbPolicy: PolicyRoundRobin, LbFilter: FilterNone, EwmaBeta: "0.7", CancelRate: "0", DurationS: "5", Seed: "1",
+		NumClients: "4", LbPolicy: PolicyRoundRobin, LbFilter: FilterNone, LbRetryPolicy: RetryPolicyNone, LbMaxRetries: "0", EwmaBeta: "0.7", CancelRate: "0", DurationS: "5", Seed: "1",
 		InitialStallMs: "0", HeartbeatTimeoutMs: "300", OutputPath: out})
 	if err != nil {
 		t.Fatal(err)

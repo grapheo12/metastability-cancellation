@@ -280,6 +280,8 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 |---|---|
 | [Client connections](#client-connections) | [frontend.go:30](../../../implementation/go/internal/ingress/frontend.go#L30), [ingress.go:82](../../../implementation/go/internal/ingress/ingress.go#L82) |
 | [ForwardTask](#forwardtask) | [balancer_test.go:387](../../../implementation/go/internal/ingress/balancer_test.go#L387), [frontend.go:58](../../../implementation/go/internal/ingress/frontend.go#L58), [frontend.go:72](../../../implementation/go/internal/ingress/frontend.go#L72), [frontend.go:106](../../../implementation/go/internal/ingress/frontend.go#L106), [frontend.go:165](../../../implementation/go/internal/ingress/frontend.go#L165), [ingress_test.go:81](../../../implementation/go/internal/ingress/ingress_test.go#L81), [ingress_test.go:122](../../../implementation/go/internal/ingress/ingress_test.go#L122), [ingress_test.go:222](../../../implementation/go/internal/ingress/ingress_test.go#L222), [ingress_test.go:257](../../../implementation/go/internal/ingress/ingress_test.go#L257) |
+| [ForwardAttempt](#forwardattempt) |  |
+| [LbRetryLoop](#lbretryloop) |  |
 | [StartOnce](#startonce) | [frontend.go:150](../../../implementation/go/internal/ingress/frontend.go#L150), [ingress_test.go:145](../../../implementation/go/internal/ingress/ingress_test.go#L145) |
 | [State machine (per ForwardTask)](#state-machine-per-forwardtask) | [ingress_test.go:179](../../../implementation/go/internal/ingress/ingress_test.go#L179) |
 <!-- trace:end -->
