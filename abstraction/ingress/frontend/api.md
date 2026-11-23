@@ -34,6 +34,7 @@ start-once state. The answer is the newest attempt's ([design.md#lbretryloop](de
 | `POST /ping`, body does not parse, or `client_id >= num_clients` | `400`, empty body; no backend is contacted |
 | other method on `/ping` | `405`, empty body |
 | any other path (including `/cancel`) | `404`, empty body |
+| `POST /ping` whose deadline no backend can meet now | it waits in the FilterWaitQueue; the backend's answer once one fits, or `503` + `{"id":"<dec>"}` once its RequestDeadline has passed |
 | client resets the stream while it is being forwarded | nothing written; every running attempt's upstream stream is reset |
 | with LbRetries on, the RetryPolicy starts another attempt | the newest attempt's answer, as in the rows above; older attempts' answers are never written |
 
@@ -41,7 +42,7 @@ start-once state. The answer is the newest attempt's ([design.md#lbretryloop](de
 
 - [../../protocol/api.md](../../protocol/api.md): `parse_body`, `parse_deadline`, `parse_exec_report`, `parse_worker_count`, `build_cancel_body`, `split_request_id`, status constants
 - [../inflight_map/api.md](../inflight_map/api.md): `publish`, `clear`
-- [../load_balancer/api.md](../load_balancer/api.md): `pick`, `finish`, `ForwardTicket`, `ForwardOutcome`
+- [../load_balancer/api.md](../load_balancer/api.md): `admit`, `pick`, `finish`, `ForwardTicket`, `ForwardOutcome`
 - [../retry_policy/api.md](../retry_policy/api.md): `decide`, `RetryState`, `RetryEvent`
 - [../upstream_pool/api.md](../upstream_pool/api.md): `get`, `discard`
 - [../load_canceller/api.md](../load_canceller/api.md): `canceller_start`

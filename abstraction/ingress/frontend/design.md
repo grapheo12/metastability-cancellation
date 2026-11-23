@@ -46,8 +46,15 @@ function handle_ping(stream, ctx):
              deadline: protocol.parse_deadline(stream.body),      # RequestDeadline, none if missing or malformed
              attempts: [],                                        # ForwardAttempts, oldest first
              results: FIFO of (attempt, response, outcome), capacity 1 + config.lb_max_retries }
-    if start_attempt(ctx, task, 0) is Dropped:                    # attempt 0; DeadlineFilter left no backend
-        return Response(503, protocol.build_cancel_body(id))      # {"id":"<dec>"}: never forwarded
+    admission = load_balancer.admit(ctx.lb, task.deadline)        # FilterWaitQueue: send now, or wait
+    if admission is Wait(entry):
+        wait for the first of:
+            stream.reset (client reset):  entry.state = gone; return Aborted     # removed at the next scan
+            entry.signal:                 if entry.state == dropped:            # past its deadline while waiting
+                                              return Response(503, protocol.build_cancel_body(id))   # {"id":"<dec>"}
+                                          ticket = entry.state.ticket           # sent from the queue
+    else: ticket = admission.ticket
+    start_attempt(ctx, task, 0, ticket)                           # attempt 0, already picked
     return lb_retry_loop(ctx, task, stream)                       # LbRetryLoop: relays the newest attempt's answer
 
 function remaining_ns(task):                                      # the request's time left, for the DeadlineFilter
@@ -85,14 +92,16 @@ function forward(ctx, c, s, body, cancel):                        # cancel: set 
   which keeps the EwmaExecTime ([../load_balancer/design.md#ewmaexectime](../load_balancer/design.md#ewmaexectime)).
   The body is relayed byte for byte all the same. `parse_exec_report` never fails; a body without an ExecReport
   just gives none.
-- **DeadlineFilter.** The Frontend reads the RequestDeadline from the body it is about to forward and gives `pick`
-  the time left, `deadline - now`, on the Ingress's wall clock
+- **DeadlineFilter.** The Frontend reads the RequestDeadline from the body it is about to forward and gives `admit`
+  (and every LbRetry's `pick`) the time left, `deadline - now`, on the Ingress's wall clock
   ([../load_balancer/design.md#deadlinefilter](../load_balancer/design.md#deadlinefilter)). It is read just before
   `pick`, so it is the time left when the backend is chosen. The RequestDeadline is the client's wall clock; any
-  offset between the client's and the Ingress's clocks shifts `remaining_ns` by that much. When `pick` drops the
-  request, the Frontend answers `503` with the body `{"id":"<dec>"}` (the CancelBody form, which the client's
-  `parse_body` accepts), so the client records it `rejected`. A drop publishes nothing in the InFlightMap and calls
-  no `finish`: the LoadCanceller never sees it.
+  offset between the client's and the Ingress's clocks shifts `remaining_ns` by that much. When no backend passes,
+  the request waits in the FilterWaitQueue ([../load_balancer/design.md#filterwaitqueue](../load_balancer/design.md#filterwaitqueue))
+  with nothing published in the InFlightMap. If the queue drops it once its deadline has passed, the Frontend answers
+  `503` with the body `{"id":"<dec>"}` (the CancelBody form, which the client's `parse_body` accepts), so the client
+  records it `rejected`; no `finish` follows and the LoadCanceller never sees it. A client reset while waiting marks
+  the entry `gone` and writes nothing.
 - **Clear before relay.** Each attempt clears its entry as soon as its upstream answer is in
   ([ForwardAttempt](#forwardattempt)), before the response is written to the client, so the Load Canceller never picks a request that the Ingress has already finished with.
   The `clear` checks identity ([../inflight_map/design.md#publish-and-clear](../inflight_map/design.md#publish-and-clear)).
@@ -110,9 +119,12 @@ One upstream forward of a ForwardTask. Attempt 0 is the forward every `/ping` ge
 **LbRetry**, started only by the [LbRetryLoop](#lbretryloop).
 
 ```
-function start_attempt(ctx, task, k):                             # -> ForwardAttempt | Dropped
-    ticket = load_balancer.pick(ctx.lb, remaining_ns(task), k)    # ForwardTicket (carries attempt = k), or Dropped
-    if ticket is Dropped: return Dropped
+function start_attempt(ctx, task, k, ticket = none):              # -> ForwardAttempt | Dropped
+    if ticket is none:                                            # an LbRetry (k > 0): pick now
+        ticket = load_balancer.pick(ctx.lb, remaining_ns(task), k)    # ForwardTicket (attempt = k), or Dropped
+        if ticket is Dropped:
+            ctx.lb_retry_refused.fetch_add(1)                     # summary lb_retry_refused; no attempt starts
+            return Dropped
     if k > 0: ctx.lb_retries.fetch_add(1)                         # summary lb_retries
     a = { k, ticket, server_id: ticket.server_id, start_ns: ticket.start_ns,
           running: true, outcome: none, cancel: new one-shot signal }
@@ -227,7 +239,10 @@ stateDiagram-v2
   [*] --> Checked: body parses, client_id < N
   [*] --> Done400: parse error or client_id >= N
   Checked --> Picked: pick, publish
-  Checked --> Dropped503: pick returns Dropped (DeadlineFilter)
+  Checked --> FilterQueued: admit returns Wait (FilterWaitQueue)
+  FilterQueued --> Picked: a scan sends it (publish)
+  FilterQueued --> Dropped503: a scan drops it past its deadline
+  FilterQueued --> Aborted: client reset (entry gone)
   Picked --> Waiting: upstream stream opened
   Picked --> Done502: dial failed
   Waiting --> Relayed: upstream 202/503/400
@@ -249,7 +264,8 @@ stateDiagram-v2
 | backend down | published, then cleared | `bad_gateway` | `502` (or, with an LbRetry, the next attempt's answer) |
 | LbRetry started (RetryPolicy) | replaced by the newest attempt's entry | one `finish` per attempt, each with its `attempt` | the newest attempt's answer |
 | body unparseable | never published | (no pick) | `400` |
-| DeadlineFilter leaves no backend | never published | (no `finish`; `filter_dropped += 1`) | `503` + `{"id":"<dec>"}` |
+| DeadlineFilter leaves no backend, one fits later | published once sent from the queue | as for a direct send | the answer, later |
+| DeadlineFilter leaves no backend until the deadline passes | never published | (no `finish`; `filter_dropped += 1`) | `503` + `{"id":"<dec>"}` |
 
 ## Design specific to Go
 
