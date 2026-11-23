@@ -252,7 +252,8 @@ finishing still keep `unfinished`, `recent` and the watermark up to date.
 ## CancelCounters
 
 ```
-counters: { cancelled_before_processing, cancelled_during_processing, completed_before_cancel }
+counters: { cancelled_before_processing, cancelled_during_processing, completed_before_cancel,
+            rejected_past_deadline }
           all atomic u64, starting at 0, incremented with fetch_add(1, relaxed)
 ```
 
@@ -261,6 +262,9 @@ counters: { cancelled_before_processing, cancelled_during_processing, completed_
 - `completed_before_cancel` is incremented inside `should_cancel` (via `resolve`) and inside
   `registry_publish_finished`, once per `/cancel` id whose request finished with `202` before a CancelCheckPoint
   saw it ([CancelMatching](#cancelmatching)).
+- `rejected_past_deadline` is incremented by the Ping Handler when a worker pops a request whose RequestDeadline has
+  already passed and the server rejects it instead of running it. It is not a cancellation; it lives here so that
+  every per-request outcome counter is in one record and one shutdown line.
 
 Requests stopped by RST are never counted. `counters_snapshot` reads each value with an acquire
 load after every worker has returned, so the values are final.

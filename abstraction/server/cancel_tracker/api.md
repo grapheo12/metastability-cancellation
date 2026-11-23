@@ -45,6 +45,7 @@ See [design.md#clientcancelstate](design.md#clientcancelstate).
 | `cancelled_before_processing` | atomic u64 | Requests stopped by `/cancel` at the CancelCheckPoint before their burn |
 | `cancelled_during_processing` | atomic u64 | Requests stopped by `/cancel` at a CancelCheckPoint during their burn |
 | `completed_before_cancel` | atomic u64 | `/cancel` ids found at a CancelCheckPoint to target a request that had already completed |
+| `rejected_past_deadline` | atomic u64 | Requests a worker popped after their RequestDeadline and answered `503` without running them (PastDeadlineRejection, [../ping_handler/design.md](../ping_handler/design.md#cancelcheckpoints)) |
 
 See [design.md#cancelcounters](design.md#cancelcounters).
 
@@ -105,8 +106,8 @@ FinishedWatermark, or `400` / `503` with an empty body. Never takes a client's l
 ### `counters_new() -> CancelCounters`
 All fields start at 0. See [design.md#cancelcounters](design.md#cancelcounters).
 
-### `counters_snapshot(counters) -> (u64, u64, u64)`
-Reads the three values in the order of the CancelCounters table. Used for the shutdown line. See
+### `counters_snapshot(counters) -> (u64, u64, u64, u64)`
+Reads the four values in the order of the CancelCounters table. Used for the shutdown line. See
 [design.md#cancelcounters](design.md#cancelcounters).
 
 ## Uses
