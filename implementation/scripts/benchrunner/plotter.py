@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.19.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.20.0)
 """PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot, QueueLengthPlot and ForwardTimelinePlots,
 drawn as interactive HTML FigurePages with plotly."""
 
@@ -627,6 +627,17 @@ def availability_lines(output_dir, done, swept_keys):
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
+UNAVAILABILITY_FLOOR = 0.0001
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
+def unavailability_y(a):
+    """1 - a, raised to UNAVAILABILITY_FLOOR so a window without failures sits on the log axis's floor."""
+    u = 1 - a
+    return u if u >= UNAVAILABILITY_FLOOR else UNAVAILABILITY_FLOOR
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
 def draw_availability(output_dir, done, swept_keys):
     path = os.path.join(output_dir, "plots", "availability.html")
     lines = availability_lines(output_dir, done, swept_keys)
@@ -634,16 +645,19 @@ def draw_availability(output_dir, done, swept_keys):
         if os.path.exists(path):
             os.remove(path)
         return
-    fig = new_figure([f"availability per {AVAILABILITY_WINDOW_MS} ms (ok within slo_ms of send / finished)"])
+    fig = new_figure([f"unavailability per {AVAILABILITY_WINDOW_MS} ms (1 - ok within slo_ms of send / finished)"])
     for label, s, _, color in lines:
-        add_line(fig, 1, (p[0] for p in s), (p[1] for p in s), label, "lines+markers", True,
+        add_line(fig, 1, (p[0] for p in s), (unavailability_y(p[1]) for p in s), label, "lines+markers", True,
                  color=palette_color(color))
+        fig.data[-1].customdata = [p[1] for p in s]
+        fig.data[-1].hovertemplate = "%{x:.1f} s: availability %{customdata:.5f}<extra>" + str(label) + "</extra>"
     fig.update_traces(marker=dict(size=3), line=dict(width=1))
     for label, _, gc, color in lines:
         if gc:
-            add_gc_overlay(fig, 1, gc, label, palette_color(color), [0, 1])
+            add_gc_overlay(fig, 1, gc, label, palette_color(color), [UNAVAILABILITY_FLOOR, 1])
     fig.update_xaxes(title_text="time since the load generator's run start (s)")
-    fig.update_yaxes(title_text="availability", range=[0, 1.02])
+    fig.update_yaxes(title_text="unavailability (1 - availability)", type="log",
+                     range=[-4.05, 0.05])  # log10 of [UNAVAILABILITY_FLOOR, 1], with a margin
     fig.update_layout(title_text="availability", showlegend=len(lines) > 1)
     save_page(fig, path)
 
