@@ -22,3 +22,4 @@
 | 0.18.0 | 2026-11-21T00:00:00Z | ExpectedWaitPlot (`expected_wait.html`): per backend subplot, `(outstanding + 1) × EwmaExecTime` from the PickLog, mean per 200 ms, one line per point, dashed SLO line; worked example |
 | 0.19.0 | 2026-11-24T00:00:00Z | AvailabilityPlot: `AVAILABILITY_WINDOW_MS` 200 → 1000 (1 s windows, centred at 0.5, 1.5, … s); rationale and worked example updated |
 | 0.20.0 | 2026-11-24T00:00:00Z | AvailabilityPlot: y is unavailability (1 − availability) on a log axis from `UNAVAILABILITY_FLOOR = 10^-4` to 1 (windows without failures drawn at the floor); `unavailability_y`; worked example column |
+| 0.21.0 | 2026-11-24T00:00:00Z | AvailabilityPlot back to linear availability, 0 to 1 (reverts 0.20.0's log unavailability axis) |

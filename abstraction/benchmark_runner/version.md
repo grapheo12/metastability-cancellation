@@ -71,3 +71,4 @@
 | 0.10.0 | 2026-11-24T00:00:00Z | Child bump: result_plotter 0.19.0 (1 s availability windows) |
 | 0.10.1 | 2026-11-24T00:00:00Z | Child bump: config 0.26.0 (`lb_retry_late_factor`) |
 | 0.11.0 | 2026-11-24T00:00:00Z | Child bump: result_plotter 0.20.0 (log unavailability axis) |
+| 0.12.0 | 2026-11-24T00:00:00Z | Child bump: result_plotter 0.21.0 (linear availability axis again) |
