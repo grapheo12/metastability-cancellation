@@ -201,3 +201,4 @@
 | 0.41.3 | 2026-11-24T00:00:00Z | Glossary ExcludedBackend. Child bump: ingress 0.11.2 (load_balancer 0.15.0) |
 | 0.41.4 | 2026-11-24T00:00:00Z | Glossary RetryPolicy, AnxiousRetry, AnxiousTracker, RetryObservation. Child bump: ingress 0.11.3 (retry_policy 0.4.0) |
 | 0.41.5 | 2026-11-24T00:00:00Z | Child bump: ingress 0.12.0 (frontend 0.9.0) |
+| 0.42.0 | 2026-11-24T00:00:00Z | Glossary Availability: 1 s window. Child bump: benchmark_runner 0.10.0 (result_plotter 0.19.0) |

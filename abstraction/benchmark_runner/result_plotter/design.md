@@ -61,7 +61,7 @@ function plot(output_dir):
 | `throughput_latency_normalized` | `lg_goodput / (1 - cx_offered_fraction)` | `e2e_p50_us`, `e2e_p99_us`, `e2e_p999_us` | log |
 | `server_counters_normalized` | `x_key` | `srv_cancelled_before_processing / cx_sent`, `srv_cancelled_during_processing / cx_sent`, `srv_completed_before_cancel / cx_sent` | linear, 0 to 1 |
 | `queue_length` | `time` (s since server start) | one plot: `queue_len` summed over instances, one line per done point ([QueueLengthPlot](#queuelengthplot)) | linear, from 0 |
-| `availability` | `loadgen_time` (s since the load generator's `run_start`) | one plot: Availability per `AVAILABILITY_WINDOW_MS` (200 ms) window, one line per done point ([AvailabilityPlot](#availabilityplot)) | linear, 0 to 1 |
+| `availability` | `loadgen_time` (s since the load generator's `run_start`) | one plot: Availability per `AVAILABILITY_WINDOW_MS` (1000 ms) window, one line per done point ([AvailabilityPlot](#availabilityplot)) | linear, 0 to 1 |
 | `forward_latency`, `ewma_latency` (one figure each per backend when a point has `B > 1`) | `forward_time` (s since the Ingress's `run_start`) | median and p99 per `FORWARD_BIN_MS` bin, one line per done point ([ForwardTimelinePlots](#forwardtimelineplots)) | log |
 
 A fraction is empty when its denominator (`lg_scheduled` or `cx_sent`) is empty or `0`.
@@ -380,7 +380,7 @@ finished in time, over time, from the load generator's Requests CSV
 ([../../load_generator/metrics/api.md#requests-csv](../../load_generator/metrics/api.md#requests-csv)).
 
 **Availability** at time `t` is the number of requests that finished under the SLO divided by the number of
-requests that finished, among the requests whose `end_ns` lies in the `AVAILABILITY_WINDOW_MS = 200` ms window
+requests that finished, among the requests whose `end_ns` lies in the `AVAILABILITY_WINDOW_MS = 1000` ms window
 centred on `t`:
 
 - **Finished:** the row has an `end_ns` (`ok`, `rejected`, `cancelled`, `dropped`, `error`); `not_sent` rows are
@@ -404,10 +404,10 @@ function read_requests(path):                      # -> list of (end_ns, send_ns
         rows.append((end_ns, send_ns, outcome == "ok"))
     return rows
 
-AVAILABILITY_WINDOW_MS = 200
+AVAILABILITY_WINDOW_MS = 1000
 
 function availability_series(rows, slo_ns):        # -> list of (x_s, availability), windows in increasing order
-    W = AVAILABILITY_WINDOW_MS * 1_000_000          # 200 ms
+    W = AVAILABILITY_WINDOW_MS * 1_000_000          # 1 s
     windows = group rows by end_ns div W            # window b is [b W, (b+1) W), centred on (b + 1/2) W
     return [ ((b + 0.5) * AVAILABILITY_WINDOW_MS / 1000,
               count of r in windows[b] with r.ok and r.end_ns - r.send_ns <= slo_ns) / len(windows[b]))
@@ -432,32 +432,33 @@ function draw_availability(output_dir, done, swept_keys):
     save as output_dir/plots/availability.html, full page width (see FigurePage)
 ```
 
-- **Window and x.** The window centred on `t` is `[t - 100 ms, t + 100 ms)`. Evaluating it at the centres
-  `t = 100, 300, 500, … ms` gives disjoint windows. They are 10 times as wide as the 20 ms bins of the
-  ForwardTimelinePlots, so each window holds enough requests for a stable ratio (about 800 at 4000 req/s) while
-  GC cycles of a second or more still span several windows.
+- **Window and x.** The window centred on `t` is `[t - 500 ms, t + 500 ms)`. Evaluating it at the centres
+  `t = 0.5, 1.5, 2.5, … s` gives disjoint windows. One second holds enough requests for a stable ratio even at the
+  tens of req/s of the CPU-burn runs (40 to 60 per window at 40 to 60 req/s), where 200 ms windows held only 8 to
+  12 and the line jumped in steps of about 10%. Effects of a few seconds (a WorkerFreeze, a retry wave) still span
+  several windows; shorter ones, such as single GC cycles, are smoothed.
 - **Integer test.** `slo_ns = round(slo_ms × 1_000_000)` once per point; the per-row comparison is in integers.
 - **Color.** The color index is the point's position among the done points with a Requests CSV, as in the
   ForwardTimelinePlots.
 
 Worked example, `slo_ms = 50` (`slo_ns = 50_000_000`):
 
-| `end_ns` | `send_ns` | outcome | Window (`end_ns div 200_000_000`) | Under SLO | Why |
+| `end_ns` | `send_ns` | outcome | Window (`end_ns div 1_000_000_000`) | Under SLO | Why |
 |---|---|---|---|---|---|
 | 10_000_000 | 0 | ok | 0 | yes | 10 ms |
-| 80_000_000 | 0 | ok | 0 | no | 80 ms > 50 ms |
-| 190_000_000 | 140_000_000 | cancelled | 0 | no | not ok |
-| 250_000_000 | 210_000_000 | ok | 1 | yes | 40 ms |
-| 300_000_000 | 250_000_000 | ok | 1 | yes | exactly 50 ms: `<=` |
+| 480_000_000 | 400_000_000 | ok | 0 | no | 80 ms > 50 ms |
+| 999_999_999 | 900_000_000 | cancelled | 0 | no | not ok (last ns of window 0) |
+| 1_000_000_000 | 960_000_000 | ok | 1 | yes | 40 ms; first ns of window 1 |
+| 1_500_000_000 | 1_450_000_000 | ok | 1 | yes | exactly 50 ms: `<=` |
 | (empty) | (empty) | not_sent | — | — | not finished |
-| 700_000_000 | 660_000_000 | rejected | 3 | no | not ok |
+| 3_700_000_000 | 3_660_000_000 | rejected | 3 | no | not ok |
 
 | Window | x (s) | Availability | Check |
 |---|---|---|---|
-| 0 | 0.1 | 1/3 | one of three |
-| 1 | 0.3 | 1 | two of two |
+| 0 | 0.5 | 1/3 | one of three |
+| 1 | 1.5 | 1 | two of two |
 | 2 | — | skipped | no row ends in it |
-| 3 | 0.7 | 0 | zero of one |
+| 3 | 3.5 | 0 | zero of one |
 
 | Situation | Result |
 |---|---|

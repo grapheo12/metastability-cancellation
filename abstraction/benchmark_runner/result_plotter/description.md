@@ -16,7 +16,7 @@ Leaf component. It reads every point directory of a run and produces:
   LoadBalancer over time (from its ForwardLog), as the median and p99 of 20 ms bins, one line per done SweepPoint,
   and one pair of figures per backend when there is more than one. With GcEvents, the latency figures also mark
   every garbage-collection cycle of the server (the **GcOverlay**).
-- the **AvailabilityPlot**: per 200 ms window, the share of the client's finished requests that finished under the
+- the **AvailabilityPlot**: per 1 s window, the share of the client's finished requests that finished under the
   SLO (the **Availability**), one line per done SweepPoint, with the GcOverlay.
 - the **StartSlackHistogram**: per done SweepPoint, the distribution of the requests' StartSlack (time left before
   the RequestDeadline when a worker picked the request up), as fractions per 100 ms bin; for a run with a
