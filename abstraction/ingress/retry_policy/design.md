@@ -7,7 +7,7 @@ A RetryPolicy is a pure decision function. The Frontend's LbRetryLoop
 counts anything itself.
 
 ```
-function decide(policy, state, event):               # -> Retry | Wait
+function decide(policy, state, event):               # -> Retry | RetryElsewhere | Wait
     return policy.decide_fn(policy.params, state, event)
 ```
 
@@ -18,8 +18,11 @@ function decide(policy, state, event):               # -> Retry | Wait
   the ForwardTask's activity, which also relays answers) and must not change any shared state; two ForwardTasks may
   call the same policy at the same time.
 - **Retry means "one more attempt now".** The new attempt goes wherever the Load Balancer's normal `pick` sends it
-  (LiveSet, DeadlineFilter, LbPolicy); a policy cannot choose the backend. If that `pick` is `Dropped`, no attempt
-  starts and the request keeps waiting on its current newest attempt.
+  (LiveSet, DeadlineFilter, LbPolicy); a policy cannot choose the backend. **RetryElsewhere** is the same, except
+  that the pick excludes the newest attempt's backend (ExcludedBackend,
+  [../load_balancer/design.md#lbpolicy](../load_balancer/design.md#lbpolicy)). If that `pick` is `Dropped`, no
+  attempt starts, the request keeps waiting on its current newest attempt, and an observing policy is told
+  (`RetryRefused`).
 - **Determinism.** `decide` may depend on time (`now_ns`, `remaining_ns`) and on the BackendView, so policies that use
   them are no more reproducible than the run's timing.
 
@@ -41,11 +44,14 @@ Such a policy implements two optional operations; a policy without them (`none`,
 |---|---|---|---|
 | `AttemptSent(seq, server_id, queue_at_send)` | `start_attempt` | right after its `pick` succeeded, before the forward starts; for attempt 0 and every LbRetry | the ForwardTicket's TicketSeq, backend and QueueAtSend ([../load_balancer/design.md#forwardticket](../load_balancer/design.md#forwardticket)) |
 | `AttemptFinished(seq, server_id)` | `attempt_activity` | right after `finish`, for every outcome (`reset` and `bad_gateway` included) | the ticket's TicketSeq and backend |
+| `RetryRefused(seq)` | LbRetryLoop | a `Retry` or `RetryElsewhere` whose `pick` was `Dropped` | the newest attempt's TicketSeq |
 | `EwmaChanged(exec[0..B-1], anti[0..B-1])` | `attempt_activity` | right after `AttemptFinished`, only when `finish` returned `sampled` | every backend's EwmaExecTime and EwmaAntiServiceTime (`exec_value`, `anti_value`; none before a sample), read in `server_id` order |
 
 ```
 procedure observe(policy, observation):     # optional; a no-op for a policy without it
 procedure stop(policy):                     # optional; called once at Ingress Shutdown, after the listener closed
+procedure attach(policy, is_live):          # optional; called once at Ingress start, before any request:
+                                            # is_live(s) is the Heartbeat Monitor's BackendLiveness (always true without one)
 ```
 
 - **Order.** Observations from one attempt arrive in the order above (sent, then finished, then EWMAs), because one
@@ -154,11 +160,12 @@ Ingress through [RetryObservations](#retryobservation) and, every `ANXIOUS_TICK_
 
 ```
 function anxious_policy(config):
-    p = { alpha: config.lb_retry_anxiety_ratio, B: len(config.backends),
+    p = { alpha: config.lb_retry_anxiety_ratio, B: len(config.backends), is_live: none,     # set by attach
           inbox: bounded FIFO channel of ANXIOUS_BUFFER observations, stopped: atomic boolean = false,
           anxious: atomic reference to an immutable set of u64 = {} }          # TicketSeqs, published by the tracker
     spawn anxious_tracker(p)                                                   # its own coroutine or thread
-    return RetryPolicy(decide_fn = anxious_decide, observe_fn = anxious_observe, stop_fn = anxious_stop, params = p)
+    return RetryPolicy(decide_fn = anxious_decide, observe_fn = anxious_observe, stop_fn = anxious_stop,
+                       attach_fn = (p, is_live) -> p.is_live = is_live, params = p)
 
 procedure anxious_observe(p, obs):
     if p.stopped.load(): return
@@ -169,7 +176,7 @@ procedure anxious_stop(p):
 
 function anxious_decide(p, state, event):
     newest = state.attempts[last]
-    Retry if event is Tick and newest.running and newest.ticket_seq in p.anxious.load()
+    RetryElsewhere if event is Tick and newest.running and newest.ticket_seq in p.anxious.load()
     else Wait                                                              # AttemptEnded: the 502 is relayed
 
 procedure anxious_tracker(p):
@@ -177,28 +184,37 @@ procedure anxious_tracker(p):
     count   = array[B] of u64 = 0                                          # entries per backend
     exec    = array[B] of (binary64 or none) = none                        # EwmaExecTime, as last observed
     anti    = array[B] of (binary64 or none) = none                        # EwmaAntiServiceTime, as last observed
+    live    = array[B] of boolean = true                                   # BackendLiveness, as last read
+    dirty   = false                                                        # a stat changed since the last evaluation
     every ANXIOUS_TICK_MS, and on each observation, until p.stopped:
         on AttemptSent(seq, s, q):
-            entries[seq] = { s, q }; count[s] += 1
+            entries[seq] = { s, q }; count[s] += 1; dirty = true
         on AttemptFinished(seq, s):
             if seq in entries: remove entries[seq]; count[s] -= 1
             for each e in entries with e.server_id == s:
                 e.queue = e.queue - 1 if e.queue > 0 else 0                # one fewer request ahead of it
+            dirty = true
         on EwmaChanged(x, a):
-            exec = x; anti = a
+            exec = x; anti = a; dirty = true
+        on RetryRefused(seq):                                              # not a stat change: no evaluation
+            p.anxious.store(p.anxious.load() without seq)                  # asked no more until the next evaluation
         on the tick:
-            p.anxious.store(anxious_set(p, entries, count, exec, anti))
+            now_live = [ p.is_live(s) if p.is_live is not none else true for s in 0 ..= B-1 ]
+            if now_live != live: live = now_live; dirty = true
+            if dirty:                                                      # AnxiousEvaluation
+                p.anxious.store(anxious_set(p, entries, count, exec, anti, live))
+                dirty = false
 
-function anxious_set(p, entries, count, exec, anti):                       # binary64, each step rounded, no fused ops
-    total = sum(count)
+function anxious_set(p, entries, count, exec, anti, live):                 # binary64, each step rounded, no fused ops
     out = {}
-    if p.B < 2: return out
     for each (seq, e) in entries:
         b = e.server_id
+        L = [ c for c in 0 ..= B-1 if c != b and live[c] ]                 # where a RetryElsewhere can go
+        if L is empty: continue
         if exec[b] is none or anti[b] is none or exec[b] == 0: continue
         current = float(e.queue + 1) * exec[b]                             # CurrentExpFinish
-        others  = total - count[b]                                         # in flight on every other backend
-        retry   = (float(others) / float(p.B - 1) + 1) * anti[b]           # RetryExpFinish
+        others  = sum(count[c] for c in L)                                 # in flight on the live other backends
+        retry   = (float(others) / float(len(L)) + 1) * anti[b]            # RetryExpFinish
         if (current - retry) / current >= p.alpha: out.add(seq)
     return out
 ```
@@ -207,9 +223,15 @@ function anxious_set(p, entries, count, exec, anti):                       # bin
   on the same backend that finishes after it was sent (whatever its outcome), never below 0. `count[b]` is the number
   of attempts the tracker knows to be in flight on `b`, older attempts of an LbRetry included: they still occupy the
   backend.
-- **Which retry estimate.** `others / (B - 1)` is the average number in flight on one of the other backends, plus
-  one for the retry itself, at the service time a request sees away from `b` (EwmaAntiServiceTime). The retry still
-  goes wherever `pick` sends it (LiveSet, DeadlineFilter, LbPolicy); it may be refused, as for every policy.
+- **Which retry estimate.** `others / len(L)` is the average number in flight on one of the **live** backends other
+  than `b`, plus one for the retry itself, at the service time a request sees away from `b` (EwmaAntiServiceTime).
+  A dead backend is no target: its stuck attempts and stale numbers would make moving look cheap. The decision is
+  `RetryElsewhere`, so the retry never lands on `b` again; among the others it goes wherever `pick` sends it, and it
+  may be refused (DeadlineFilter, or no live other backend at pick time).
+- **AnxiousEvaluation only after a change.** The set is recomputed at a tick only if an `AttemptSent`,
+  `AttemptFinished` or `EwmaChanged` arrived, or the liveness read at the tick differs from the last one, since the
+  previous evaluation; otherwise the tick does nothing. A `RetryRefused(seq)` removes `seq` from the published set
+  without an evaluation, so a ForwardTask whose retry was refused is not asked again until the stats change.
 - **Not the newest.** The set holds every anxious attempt, but `decide` only retries a ForwardTask whose **newest**
   attempt is in it, while budget remains. Once an LbRetry starts, its own `AttemptSent` adds it; the older attempt
   stays in `entries` until it finishes.
@@ -220,7 +242,7 @@ function anxious_set(p, entries, count, exec, anti):                       # bin
     estimate is a heuristic and the race is accepted.
   - `decide` reads the set published at the last tick, so it is up to `ANXIOUS_TICK_MS` old, and a TicketSeq whose
     attempt has since finished is harmless (`decide` checks `newest.running`).
-- **Edge cases.** `B = 1`, a backend with no EwmaExecTime or EwmaAntiServiceTime yet, or an EwmaExecTime of 0: never
+- **Edge cases.** No live backend other than `b` (including `B = 1`), a backend with no EwmaExecTime or EwmaAntiServiceTime yet, or an EwmaExecTime of 0: never
   anxious. `alpha = 0` retries as soon as moving is expected to be no slower. `alpha > 1` never retries (the ratio
   is at most 1).
 - **A request first in line on a stopped backend** (`queue = 0`, no finishes) is anxious only if
@@ -236,6 +258,20 @@ Worked example, `alpha = 0.3`, times in ms:
 | Three backends | 3 | (0, 4) | 100 | 100 | [5, 3, 1] | `5 × 100 = 500` | `(4/2 + 1) × 100 = 300` | `200/500 = 0.4` | yes |
 | No sample | 2 | (1, 9) | none | 80 | [1, 10] | — | — | — | no |
 | One backend | 1 | (0, 9) | 80 | none | [10] | — | — | — | no |
+| Other backend dead | 2 | (0, 4) | 80 | 80 | [6, 2], backend 1 not live | — | — | — | no (`L` empty) |
+| Three, one dead | 3 | (0, 4) | 100 | 100 | [5, 3, 1], backend 2 not live | `5 × 100 = 500` | `(3/1 + 1) × 100 = 400` | `100/500 = 0.2` | no |
+
+In every row above, the other backends are live unless the row says otherwise.
+
+When the set is recomputed (ticks at 10, 20, 30, … ms):
+
+| Between ticks | At the tick | Evaluation | Published set |
+|---|---|---|---|
+| `AttemptSent(7, 0, 4)` | liveness unchanged | yes | recomputed: `{7}` if anxious |
+| nothing | liveness unchanged | no | unchanged |
+| `RetryRefused(7)` | liveness unchanged | no | `7` removed at once, not added back |
+| nothing | backend 1 turns not live | yes | recomputed (7 may return) |
+| `AttemptFinished(3, 1)` | — | yes | recomputed |
 
 Queue bookkeeping, backend 0 holding TicketSeqs 9 (`queue 1`), 10 (`queue 2`), 11 (`queue 3`):
 
