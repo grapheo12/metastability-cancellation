@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.11.0)
+// Source: abstraction/ingress/design.md (ingress v0.11.1)
 package ingress
 
 import (
@@ -146,6 +146,10 @@ func (ing *Ingress) Shutdown() error {
 	var records []*CancelRecord
 	if canceller != nil {
 		records = canceller.Stop()
+	}
+	// Design: abstraction/ingress/design.md#shutdown
+	if ing.retryPolicy != nil {
+		stopPolicy(ing.retryPolicy) // ends an observing policy's own goroutine; later observations are discarded
 	}
 	ing.pool.CloseAll()
 	ing.mu.Lock()

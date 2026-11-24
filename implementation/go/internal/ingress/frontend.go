@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.7.0)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.8.0)
 package ingress
 
 import (
@@ -154,6 +154,9 @@ func (ing *Ingress) startAttempt(task *forwardTask, k uint32, picked *ForwardTic
 	if k > 0 {
 		ing.lbRetries.Add(1) // summary lb_retries
 	}
+	// Design: abstraction/ingress/frontend/design.md#forwardattempt
+	observePolicy(ing.retryPolicy, RetryObservation{Kind: ObsAttemptSent, Seq: ticket.Seq, ServerID: ticket.ServerID,
+		QueueAtSend: ticket.QueueAtSend})
 	actx, cancel := context.WithCancel(context.Background()) // not the client's: older attempts outlive the task
 	a := &forwardAttempt{k: k, ticket: ticket, cancel: cancel, running: true}
 	entry := &InFlightEntry{RequestID: task.requestID, ServerID: ticket.ServerID, Attempt: k}
@@ -180,8 +183,30 @@ func (ing *Ingress) attemptActivity(ctx context.Context, task *forwardTask, a *f
 		workers = resp.workers // WorkerCount, set by forward for relayed 202/503
 	}
 	// Design: abstraction/ingress/load_balancer/design.md#forwardticket
-	ing.lb.Finish(a.ticket, outcome, execNs, hasExec, workers) // after Clear: an ok latency ends when the answer is in
+	sampled := ing.lb.Finish(a.ticket, outcome, execNs, hasExec, workers) // after Clear: an ok latency ends when the answer is in
+	// Design: abstraction/ingress/frontend/design.md#forwardattempt
+	observePolicy(ing.retryPolicy, RetryObservation{Kind: ObsAttemptFinished, Seq: a.ticket.Seq, ServerID: a.ticket.ServerID})
+	if sampled {
+		if _, ok := ing.retryPolicy.(RetryObserver); ok { // build the EWMA lists only for an observing policy
+			ing.observeEwmas()
+		}
+	}
 	task.results <- attemptResult{a: a, resp: resp, outcome: outcome}
+}
+
+// observeEwmas sends EwmaChanged with every backend's EwmaExecTime and
+// EwmaAntiServiceTime, read in server_id order.
+//
+// Design: abstraction/ingress/frontend/design.md#forwardattempt
+func (ing *Ingress) observeEwmas() {
+	n := len(ing.cfg.Backends)
+	o := RetryObservation{Kind: ObsEwmaChanged, Exec: make([]float64, n), Anti: make([]float64, n),
+		HasExec: make([]bool, n), HasAnti: make([]bool, n)}
+	for s := 0; s < n; s++ {
+		o.Exec[s], o.HasExec[s] = ing.lb.execValue(uint32(s))
+		o.Anti[s], o.HasAnti[s] = ing.lb.antiValue(uint32(s))
+	}
+	observePolicy(ing.retryPolicy, o)
 }
 
 // LbRetryTick is LB_RETRY_TICK_MS.
@@ -243,7 +268,8 @@ func (ing *Ingress) lbRetryLoop(ctx context.Context, task *forwardTask) fwdRespo
 func (ing *Ingress) retryState(task *forwardTask) RetryState {
 	views := make([]AttemptView, len(task.attempts))
 	for i, a := range task.attempts {
-		views[i] = AttemptView{ServerID: a.ticket.ServerID, Start: a.ticket.Start, Running: a.running, Outcome: a.outcome}
+		views[i] = AttemptView{ServerID: a.ticket.ServerID, Start: a.ticket.Start, Running: a.running, Outcome: a.outcome,
+			TicketSeq: a.ticket.Seq}
 	}
 	rem, has := task.remainingNs()
 	return RetryState{RequestID: task.requestID, RetriesSoFar: uint32(len(task.attempts) - 1),

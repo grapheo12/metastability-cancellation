@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.7.0)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.8.0)
 package ingress
 
 import (
@@ -383,5 +383,38 @@ func TestFilterWaitQueueClientReset(t *testing.T) {
 	_ = ing.Shutdown()
 	if s := summaryOf(t, ing); s.FilterQueued != 1 || s.FilterSentFromQ != 0 || s.FilterDropped != 0 {
 		t.Fatalf("summary %+v", s)
+	}
+}
+
+// anxious end to end: once both backends have an EwmaExecTime (one ping to
+// each), a ping on the slow backend (exec 300 ms; anti 20 ms) is anxious at
+// once and is retried on the fast one within a few ticks.
+//
+// Design: abstraction/ingress/frontend/design.md#forwardattempt
+func TestLbRetryAnxiousPolicy(t *testing.T) {
+	slow, fast := startFakeBackend(t, 300*time.Millisecond), startFakeBackend(t, 20*time.Millisecond)
+	ing := startRetryIngress(t, []string{slow.addr(), fast.addr()}, RetryPolicyAnxious, "1")
+	conn := dial(t, ing)
+	for i := uint32(1); i <= 2; i++ { // round robin: slow, then fast; no EWMA yet for the first
+		if st, _, err := ping(t, context.Background(), conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(0, i), 0, nil, 128)); err != nil || st != 202 {
+			t.Fatalf("warm-up %d: %d %v", i, st, err)
+		}
+	}
+	if n := ing.lbRetries.Load(); n != 0 {
+		t.Fatalf("warm-up retried %d times", n)
+	}
+	start := time.Now()
+	st, b, err := ping(t, context.Background(), conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(0, 3), 0, nil, 128))
+	elapsed := time.Since(start)
+	if ex, _, _, _ := protocol.ParseExecReport(b); err != nil || st != 202 || ex != uint64(20*time.Millisecond) {
+		t.Fatalf("want the fast backend's 202: %d %v", st, err)
+	}
+	if elapsed > 200*time.Millisecond {
+		t.Fatalf("answer after %v: want a retry within a few 10 ms ticks + 20 ms", elapsed)
+	}
+	time.Sleep(400 * time.Millisecond)
+	_ = ing.Shutdown()
+	if lbRetriesOf(t, ing) != 1 || slow.hits.Load() != 2 || fast.hits.Load() != 2 {
+		t.Fatalf("lb_retries %d, slow hits %d, fast hits %d", lbRetriesOf(t, ing), slow.hits.Load(), fast.hits.Load())
 	}
 }
