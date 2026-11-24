@@ -69,3 +69,4 @@
 | 0.9.5 | 2026-11-23T00:00:00Z | Child bump: config 0.24.0 (`lb_retry_timeout_ms`) |
 | 0.9.6 | 2026-11-23T00:00:00Z | Child bump: config 0.25.0 (`lb_retry_anxiety_ratio`) |
 | 0.10.0 | 2026-11-24T00:00:00Z | Child bump: result_plotter 0.19.0 (1 s availability windows) |
+| 0.10.1 | 2026-11-24T00:00:00Z | Child bump: config 0.26.0 (`lb_retry_late_factor`) |

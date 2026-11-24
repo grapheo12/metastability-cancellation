@@ -29,3 +29,4 @@
 | 0.23.0 | 2026-11-23T00:00:00Z | PROGRAM_PARAMS: Ingress `lb_retry_policy`, `lb_max_retries` (LbRetries) |
 | 0.24.0 | 2026-11-23T00:00:00Z | PROGRAM_PARAMS: Ingress `lb_retry_timeout_ms` (`timeout` RetryPolicy) |
 | 0.25.0 | 2026-11-23T00:00:00Z | PROGRAM_PARAMS: Ingress `lb_retry_anxiety_ratio` (`anxious` RetryPolicy) |
+| 0.26.0 | 2026-11-24T00:00:00Z | PROGRAM_PARAMS: Ingress `lb_retry_late_factor` (`anxious` ExpectedLate factor) |
