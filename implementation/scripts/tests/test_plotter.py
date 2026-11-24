@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.21.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.22.0)
 import csv
 import json
 import os
@@ -403,7 +403,7 @@ class AvailabilityPlotTest(unittest.TestCase):
             write_requests(os.path.join(out, "points", "point_0000"), AVAIL_EXAMPLE, slo_ms=50)
             rows = plotter.read_requests(os.path.join(out, "points", "point_0000", "loadgen.requests.csv"))
             self.assertEqual(len(rows), 6)  # not_sent ignored
-            self.assertEqual(plotter.availability_series(rows, 50_000_000), [(0.5, 1 / 3), (1.5, 1.0), (3.5, 0.0)])
+            self.assertEqual(plotter.availability_series(rows, 50_000_000), [(0.5, 2 / 4), (1.5, 1.0), (3.5, 0.0)])
             table, keys = plotter.build_table(out)
             (label, s, gc, color), = plotter.availability_lines(out, table, keys)
             self.assertEqual((label, gc, color), ("load_gen.global_rate=500", None, 0))   # no run_start: no overlay

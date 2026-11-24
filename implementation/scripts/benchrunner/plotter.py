@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.21.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.22.0)
 """PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot, QueueLengthPlot and ForwardTimelinePlots,
 drawn as interactive HTML FigurePages with plotly."""
 
@@ -595,11 +595,11 @@ AVAILABILITY_WINDOW_MS = 1000
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
 def availability_series(rows, slo_ns):
-    """[(window centre s, available / finished)] for the non-empty 1 s windows of end_ns, in order."""
+    """[(window centre s, available / finished)] for the non-empty 1 s windows of send_ns, in order."""
     w = AVAILABILITY_WINDOW_MS * 1_000_000
     windows = {}
     for end, send, ok in rows:
-        n = windows.setdefault(end // w, [0, 0])
+        n = windows.setdefault(send // w, [0, 0])  # grouped by send time
         n[1] += 1
         if ok and end - send <= slo_ns:
             n[0] += 1
@@ -634,7 +634,7 @@ def draw_availability(output_dir, done, swept_keys):
         if os.path.exists(path):
             os.remove(path)
         return
-    fig = new_figure([f"availability per {AVAILABILITY_WINDOW_MS} ms (ok within slo_ms of send / finished)"])
+    fig = new_figure([f"availability per {AVAILABILITY_WINDOW_MS} ms of send time (ok within slo_ms of send / finished)"])
     for label, s, _, color in lines:
         add_line(fig, 1, (p[0] for p in s), (p[1] for p in s), label, "lines+markers", True,
                  color=palette_color(color))
