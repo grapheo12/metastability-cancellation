@@ -138,6 +138,8 @@ downloads each point's results and plots all points together.
 | **PickLog** | The LoadBalancer's record, at every pick, of each backend's `outstanding`, EwmaExecTime and WorkerCount (`ingress.picks.csv`) | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#picklog) |
 | **EwmaScore** | `(outstanding + 1) × EwmaLatency` of a backend; the `ewma` LbPolicy picks the lower of a random pair | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#ewmascore) |
 | **ForwardTicket** | `(server_id, start_ns)` returned by the LoadBalancer's `pick` and given back to `finish`, to time the forward | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#forwardticket) |
+| **EstimatedFinish** | At a pick, `(queue_at_send + 1) × EwmaExecTime` of the chosen backend: how long the LoadBalancer expects the forward to take; carried to `forwards.csv` as `estimate_ns` | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#estimatedfinish) |
+| **EstimateError** | Of an `ok` forward, `(latency_ns − EstimatedFinish) / latency_ns`; 0 is exact, negative means it took less than estimated | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#estimatedfinish) |
 | **ForwardRecord** | `(end_ns, server_id, outcome, latency_ns, ewma_latency_ns)` of one finished forward | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#forwardlog) |
 | **ForwardLog** | The LoadBalancer's list of every ForwardRecord, written as `<output_path>.forwards.csv` | [ingress/load_balancer/design.md](ingress/load_balancer/design.md#forwardlog) |
 | **UpstreamPool** | One h2c connection per (client, backend), dialed once | [ingress/upstream_pool/design.md](ingress/upstream_pool/design.md#upstreampool) |
