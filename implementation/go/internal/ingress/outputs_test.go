@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.13.0)
+// Source: abstraction/ingress/design.md (ingress v0.13.1)
 package ingress
 
 import (
@@ -16,7 +16,8 @@ func TestWriteForwardsCSV(t *testing.T) {
 	run := time.Now()
 	recs := []ForwardRecord{
 		{End: run.Add(5 * time.Millisecond), ServerID: 1, Outcome: OutcomeRejected, LatencyNs: 300_000, EwmaLatencyNs: 1_300_000,
-			ExecNs: 1_000_000, HasExec: true, EwmaExecNs: 1_700_000, HasEwmaExec: true, Attempt: 1},
+			ExecNs: 1_000_000, HasExec: true, EwmaExecNs: 1_700_000, HasEwmaExec: true, Attempt: 1,
+			EstimateNs: 3_400_000, HasEstimate: true},
 		{End: run.Add(time.Millisecond), ServerID: 0, Outcome: OutcomeOK, LatencyNs: 2_000_000, EwmaLatencyNs: 1_300_000},
 		{End: run.Add(5 * time.Millisecond), ServerID: 0, Outcome: OutcomeReset, LatencyNs: 7, EwmaLatencyNs: 850_000.5,
 			EwmaExecNs: 133999999.99999999, HasEwmaExec: true},
@@ -26,17 +27,17 @@ func TestWriteForwardsCSV(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(path)
-	want := "t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns,attempt\n" +
-		"1000000,0,ok,2000000,1300000,,,0\n" + // no ExecReport, no EwmaExecTime yet: empty
-		"5000000,1,rejected,300000,1300000,1000000,1700000,1\n" + // equal t_ns: log order kept
-		"5000000,0,reset,7,850000.5,,133999999.99999999,0\n"
+	want := "t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns,attempt,estimate_ns\n" +
+		"1000000,0,ok,2000000,1300000,,,0,\n" + // no ExecReport, no EwmaExecTime, no estimate yet: empty
+		"5000000,1,rejected,300000,1300000,1000000,1700000,1,3400000\n" + // equal t_ns: log order kept
+		"5000000,0,reset,7,850000.5,,133999999.99999999,0,\n"
 	if string(got) != want {
 		t.Fatalf("got\n%s\nwant\n%s", got, want)
 	}
 	if err := writeForwardsCSV(path, nil, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := os.ReadFile(path); string(got) != "t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns,attempt\n" {
+	if got, _ := os.ReadFile(path); string(got) != "t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns,attempt,estimate_ns\n" {
 		t.Fatalf("empty: %q", got)
 	}
 }

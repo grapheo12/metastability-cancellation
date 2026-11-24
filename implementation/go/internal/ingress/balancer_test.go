@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.15.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.16.0)
 package ingress
 
 import (
@@ -571,5 +571,32 @@ func TestPickExcluding(t *testing.T) {
 	m.live[0].Store(false) // all silent: fallback to [0, 1], minus 0
 	if tk, ok := two.PickExcluding(0, false, 1, 0); !ok || tk.ServerID != 1 {
 		t.Fatalf("all-silent fallback minus exclude: %+v %v", tk, ok)
+	}
+}
+
+// EstimatedFinish: (QueueAtSend + 1) * EwmaExecTime at the pick, none before a
+// sample; Finish copies it into the ForwardRecord.
+//
+// Design: abstraction/ingress/load_balancer/design.md#estimatedfinish
+func TestEstimatedFinish(t *testing.T) {
+	lb := newLB(PolicyRoundRobin, 1)
+	tk := lb.Pick()
+	if tk.HasEstimate {
+		t.Fatalf("no EwmaExecTime yet: %+v", tk)
+	}
+	lb.Finish(tk, OutcomeOK, 400_000_000, true, 0) // EwmaExecTime = 400 ms
+	a, b, c := lb.Pick(), lb.Pick(), lb.Pick()
+	for i, w := range []struct {
+		tk   ForwardTicket
+		want float64
+	}{{a, 400_000_000}, {b, 800_000_000}, {c, 1_200_000_000}} {
+		if !w.tk.HasEstimate || w.tk.EstimateNs != w.want {
+			t.Fatalf("pick %d: %+v, want %v", i, w.tk, w.want)
+		}
+	}
+	lb.Finish(c, OutcomeOK, 0, false, 0)
+	log := lb.ForwardLog()
+	if r := log[len(log)-1]; !r.HasEstimate || r.EstimateNs != 1_200_000_000 || log[0].HasEstimate {
+		t.Fatalf("ForwardRecord estimate: %+v / first %+v", r, log[0])
 	}
 }

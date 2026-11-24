@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.15.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.16.0)
 package ingress
 
 import (
@@ -76,6 +76,9 @@ type ForwardTicket struct {
 	Seq uint64
 	// QueueAtSend is the backend's outstanding just before this pick's increment.
 	QueueAtSend uint64
+	// EstimateNs is the EstimatedFinish (QueueAtSend + 1) * EwmaExecTime at the pick; valid if HasEstimate.
+	EstimateNs  float64
+	HasEstimate bool
 }
 
 // BackendStatsValue is a plain copy of one backend's counters for the summary.
@@ -114,7 +117,9 @@ type ForwardRecord struct {
 	HasExec       bool
 	EwmaExecNs    float64 // the backend's EwmaExecTime right after this finish; valid if HasEwmaExec
 	HasEwmaExec   bool
-	Attempt       uint32 // the ticket's attempt
+	Attempt       uint32  // the ticket's attempt
+	EstimateNs    float64 // the ticket's EstimatedFinish; valid if HasEstimate
+	HasEstimate   bool
 }
 
 // PickRecord is what the LoadBalancer saw of one backend at one pick.
@@ -230,7 +235,9 @@ func (lb *LoadBalancer) pick(remainingNs int64, hasDeadline bool, attempt uint32
 	}
 	// Design: abstraction/ingress/load_balancer/design.md#forwardticket
 	q := lb.seq.Add(1) - 1 // TicketSeq: 0, 1, 2, ... in pick order
-	return ForwardTicket{ServerID: s, Start: time.Now(), Attempt: attempt, Seq: q, QueueAtSend: uint64(n)}, true
+	est, hasEst := lb.estimatedFinish(s, uint64(n))
+	return ForwardTicket{ServerID: s, Start: time.Now(), Attempt: attempt, Seq: q, QueueAtSend: uint64(n),
+		EstimateNs: est, HasEstimate: hasEst}, true
 }
 
 // Finish ends a forward started by Pick: counters, then one clock read; an ok
@@ -287,7 +294,8 @@ func (lb *LoadBalancer) Finish(t ForwardTicket, outcome ForwardOutcome, execNs u
 	// Design: abstraction/ingress/load_balancer/design.md#forwardlog
 	lb.logMu.Lock()
 	lb.log = append(lb.log, ForwardRecord{End: end, ServerID: t.ServerID, Outcome: outcome, LatencyNs: latencyNs, EwmaLatencyNs: e,
-		ExecNs: execNs, HasExec: sample, EwmaExecNs: x, HasEwmaExec: hasX, Attempt: t.Attempt})
+		ExecNs: execNs, HasExec: sample, EwmaExecNs: x, HasEwmaExec: hasX, Attempt: t.Attempt,
+		EstimateNs: t.EstimateNs, HasEstimate: t.HasEstimate})
 	lb.logMu.Unlock()
 	return sample // both EWMAs took this sample
 }
@@ -412,6 +420,18 @@ func (lb *LoadBalancer) antiValue(b uint32) (float64, bool) {
 		return 0, false
 	}
 	return math.Float64frombits(bits), true
+}
+
+// estimatedFinish is estimated_finish: (q + 1) * EwmaExecTime of backend s,
+// rounded once (no FMA risk: a single product); ok is false before a sample.
+//
+// Design: abstraction/ingress/load_balancer/design.md#estimatedfinish
+func (lb *LoadBalancer) estimatedFinish(s uint32, q uint64) (float64, bool) {
+	e, ok := lb.execValue(s)
+	if !ok {
+		return 0, false
+	}
+	return float64(q+1) * e, true
 }
 
 // ewmaScore is (outstanding + 1) * EwmaLatency.

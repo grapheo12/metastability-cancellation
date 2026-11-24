@@ -121,7 +121,7 @@ func TestForwardRelayAndSpread(t *testing.T) {
 	// Design: abstraction/ingress/frontend/design.md#forwardtask
 	fw, _ := os.ReadFile(ing.cfg.OutputPath + ".forwards.csv")
 	rows := strings.Split(strings.TrimSuffix(string(fw), "\n"), "\n")
-	if rows[0] != "t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns,attempt" || len(rows) != 13 {
+	if rows[0] != "t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns,attempt,estimate_ns" || len(rows) != 13 {
 		t.Fatalf("forwards.csv:\n%s", fw)
 	}
 	for _, r := range rows[1:] {
