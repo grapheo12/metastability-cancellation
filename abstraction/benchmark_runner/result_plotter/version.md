@@ -24,3 +24,4 @@
 | 0.20.0 | 2026-11-24T00:00:00Z | AvailabilityPlot: y is unavailability (1 − availability) on a log axis from `UNAVAILABILITY_FLOOR = 10^-4` to 1 (windows without failures drawn at the floor); `unavailability_y`; worked example column |
 | 0.21.0 | 2026-11-24T00:00:00Z | AvailabilityPlot back to linear availability, 0 to 1 (reverts 0.20.0's log unavailability axis) |
 | 0.22.0 | 2026-11-24T00:00:00Z | AvailabilityPlot groups requests by send time (`send_ns div W`) instead of finish time, so a stuck or late request counts when it was sent; worked example updated |
+| 0.23.0 | 2026-11-24T00:00:00Z | EstimateErrorHistogram (`estimate_error.html`): EstimateError of ok forwards from `forwards.csv` `estimate_ns`, bins floor(err × 10) over the full range, split by pick time at the FailureTime; worked example |
