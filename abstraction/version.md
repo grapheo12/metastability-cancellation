@@ -211,3 +211,4 @@
 | 0.45.0 | 2026-11-24T00:00:00Z | Glossary AvailabilityPlot (linear again). Child bump: benchmark_runner 0.12.0 (result_plotter 0.21.0) |
 | 0.46.0 | 2026-11-24T00:00:00Z | Glossary Availability (send-time windows). Child bump: benchmark_runner 0.13.0 (result_plotter 0.22.0) |
 | 0.46.1 | 2026-11-24T00:00:00Z | Glossary EstimatedFinish, EstimateError. Child bump: ingress 0.13.1 (load_balancer 0.16.0) |
+| 0.47.0 | 2026-11-24T00:00:00Z | Glossary EstimateErrorHistogram. Child bump: benchmark_runner 0.14.0 (result_plotter 0.23.0) |
