@@ -42,3 +42,4 @@
 | 0.10.3 | 2026-11-23T00:00:00Z | BackendStats and summary `ewma_anti_exec_ns`. Child bump: load_balancer 0.14.0 |
 | 0.11.0 | 2026-11-23T00:00:00Z | `lb_retry_policy` value `anxious`; parameter `lb_retry_anxiety_ratio`, validation. Child bump: retry_policy 0.3.0 |
 | 0.11.1 | 2026-11-23T00:00:00Z | Shutdown calls `retry_policy.stop`. Child bump: frontend 0.8.0 (RetryObservations) |
+| 0.11.2 | 2026-11-24T00:00:00Z | Child bump: load_balancer 0.15.0 (ExcludedBackend) |

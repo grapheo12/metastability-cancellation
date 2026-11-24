@@ -21,11 +21,12 @@ lb = { policy, filter: lb_filter, beta: ewma_beta, monitor: HeartbeatMonitor or 
        log: list of ForwardRecord (empty), log_lock: mutex,                     # ForwardLog
        picks: list of PickRecord (empty) }                                      # PickLog, also under log_lock
 
-function pick(lb, remaining_ns, attempt, record = true):   # remaining_ns: i64 or none (the request's time to its deadline);
+function pick(lb, remaining_ns, attempt, record = true, exclude = none):   # remaining_ns: i64 or none (the request's time to its deadline);
                                                      # attempt: LbRetries before this one (0 for the first);
                                                      # record: false for a FilterWaitQueue re-check
+                                                     # exclude: a backend this pick must not choose (RetryElsewhere), or none
     if record: record_pick(lb)                       # PickLog: what the choice below is about to see
-    s = choose(lb, remaining_ns)                     # LbPolicy over the DeadlineFilter's set
+    s = choose(lb, remaining_ns, exclude)            # LbPolicy over the DeadlineFilter's set
     if s is Dropped:
         return Dropped                               # no counter changes; no finish follows (callers count)
     n = lb.stats[s].outstanding.fetch_add(1)         # the value before this pick's increment
@@ -192,9 +193,12 @@ race is accepted, as for the other counters.
 ## LbPolicy
 
 ```
-function choose(lb, remaining_ns):
+function choose(lb, remaining_ns, exclude = none):
     L = [ s for s in 0 ..= B-1 if heartbeat_monitor.is_live(lb.monitor, s) ]     # LiveSet, in id order
     if L is empty: L = [0 ..= B-1]                   # every backend silent: use them all, as without a monitor
+    if exclude is not none:
+        L = [ s for s in L if s != exclude ]         # ExcludedBackend: after the fallback, so it never comes back
+        if L is empty: return Dropped
     if lb.filter != none and remaining_ns is not none:
         L = deadline_filter(lb, L, remaining_ns)     # DeadlineFilter
         if L is empty: return Dropped
@@ -230,6 +234,11 @@ function random_pair(lb, L):                         # two different members of 
   draws, same counter. A dead backend gets no new forwards; forwards already in progress on it are left alone and
   end as they would have. When no backend is live, `L` falls back to all of them, so requests still go somewhere.
   `L` is read once per pick; a backend that changes state during the pick is seen in either state.
+- **ExcludedBackend.** A pick with `exclude = e` (an LbRetry decided `RetryElsewhere`,
+  [../retry_policy/api.md#retrydecision](../retry_policy/api.md#retrydecision)) removes `e` from `L` after the
+  all-silent fallback, so the retry never goes back to `e`, even when `e` is the only live backend. If that leaves
+  `L` empty, the pick is `Dropped` with no counter change, like a DeadlineFilter refusal. With `exclude = none`
+  nothing changes.
 - **Concurrent picks race.** Two picks at the same moment may read the same counters and choose the same backend.
   That is accepted: the policies are heuristics, and the counters correct themselves on the next pick. No lock is
   taken around the read and the increment.
