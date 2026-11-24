@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.22.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.23.0)
 import csv
 import json
 import os
@@ -581,3 +581,50 @@ class ExpectedWaitPlotTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+FWD_HEADER = "t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns,attempt,estimate_ns"
+
+
+class EstimateErrorHistogramTest(unittest.TestCase):
+    # The worked example: FailureTime 1 s, latency 400 ms for every row.
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#estimateerrorhistogram
+    def test_worked_example(self):
+        with tempfile.TemporaryDirectory() as out:
+            write_point(out, 0, {"load_gen.global_rate": 80})
+            pdir = os.path.join(out, "points", "point_0000")
+            params = json.load(open(os.path.join(pdir, "params.json")))
+            params["server_args"] = [["freeze_after_ms", 1000]]
+            json.dump(params, open(os.path.join(pdir, "params.json"), "w"))
+            rows = [(500_000_000, "ok", "400000000"), (600_000_000, "ok", "800000000"),
+                    (1_500_000_000, "ok", "100000000"), (1_600_000_000, "ok", "420000000"),
+                    (1_700_000_000, "ok", ""), (1_800_000_000, "rejected", "400000000")]
+            with open(os.path.join(pdir, "ingress.forwards.csv"), "w") as f:
+                f.write(FWD_HEADER + "\n")
+                for t, o, e in rows:
+                    f.write(f"{t},0,{o},400000000,1,,,0,{e}\n")
+            samples = plotter.read_estimate_errors(os.path.join(pdir, "ingress.forwards.csv"))
+            self.assertEqual([round(e, 12) for _, e in samples], [0.0, -1.0, 0.75, -0.05])
+            self.assertEqual([p for p, _ in samples], [100_000_000, 200_000_000, 1_100_000_000, 1_200_000_000])
+            table, keys = plotter.build_table(out)
+            (label, (everything, before, after), color), = plotter.estimate_error_lines(out, table, keys)
+            self.assertEqual(len(everything), 18)  # bins -10 ..= 7
+            self.assertEqual([(round(x, 2), y) for x, y in everything if y], [(-0.95, 0.25), (-0.05, 0.25), (0.05, 0.25), (0.75, 0.25)])
+            self.assertEqual([(round(x, 2), y) for x, y in before if y], [(-0.95, 0.5), (0.05, 0.5)])
+            self.assertEqual(len(before), 11)  # bins -10 ..= 0
+            self.assertEqual([(round(x, 2), y) for x, y in after if y], [(-0.05, 0.5), (0.75, 0.5)])
+            self.assertEqual(len(after), 9)  # bins -1 ..= 7
+
+    # Bins by multiplying by 10 (0.3 stays in bin 3); old CSVs without the column are left out.
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#estimateerrorhistogram
+    def test_bins_and_missing_column(self):
+        self.assertEqual(plotter.estimate_error_histogram([0.3]), [(0.35, 1.0)])
+        with tempfile.TemporaryDirectory() as out:
+            write_point(out, 0, {"load_gen.global_rate": 80})
+            pdir = os.path.join(out, "points", "point_0000")
+            with open(os.path.join(pdir, "ingress.forwards.csv"), "w") as f:
+                f.write("t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns,attempt\n1,0,ok,5,1,,,0\n")
+            self.assertEqual(plotter.read_estimate_errors(os.path.join(pdir, "ingress.forwards.csv")), [])
+            self.assertIsNone(plotter.read_estimate_errors(os.path.join(pdir, "missing.csv")))
+            table, keys = plotter.build_table(out)
+            self.assertEqual(plotter.estimate_error_lines(out, table, keys), [])

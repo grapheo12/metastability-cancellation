@@ -1,11 +1,12 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.22.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.23.0)
 """PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot, QueueLengthPlot and ForwardTimelinePlots,
 drawn as interactive HTML FigurePages with plotly."""
 
 import csv
 import glob
 import json
+import math
 import os
 
 # API: abstraction/benchmark_runner/result_plotter/api.md#pointrow
@@ -76,6 +77,8 @@ FIGURES = [
     ("availability", "loadgen_time", [], "linear", (0, 1)),
     # Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
     ("start_slack", "start_slack", [], "linear", None),
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#estimateerrorhistogram
+    ("estimate_error", "estimate_error", [], "linear", None),
     # Design: abstraction/benchmark_runner/result_plotter/design.md#expectedwaitplot
     ("expected_wait", "pick_time", [], "linear", None),
 ]
@@ -287,6 +290,9 @@ def plot(output_dir):
             continue
         if x == "start_slack":  # StartSlackHistogram
             draw_start_slack(output_dir, done, swept_keys)
+            continue
+        if x == "estimate_error":  # EstimateErrorHistogram
+            draw_estimate_error(output_dir, done, swept_keys)
             continue
         if x == "forward_time":  # ForwardTimelinePlots
             draw_forward_timelines(output_dir, done, swept_keys)
@@ -703,10 +709,12 @@ def failure_time_ms(params):
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
-def split_histograms(samples, failure_ms):
-    """(all, before, after) histograms; before/after are None without a FailureTime or without samples."""
-    hist = lambda vs: start_slack_histogram(vs) if vs else None
-    everything = start_slack_histogram([v for _, v in samples])
+def split_histograms(samples, failure_ms, histogram=None):
+    """(all, before, after) histograms; before/after are None without a FailureTime or without samples.
+    histogram defaults to start_slack_histogram (the EstimateErrorHistogram passes its own)."""
+    histogram = histogram or start_slack_histogram
+    hist = lambda vs: histogram(vs) if vs else None
+    everything = histogram([v for _, v in samples])
     if failure_ms is None:
         return everything, None, None
     f = failure_ms * 1_000_000
@@ -730,16 +738,24 @@ def start_slack_lines(output_dir, done, swept_keys):
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
 def draw_start_slack(output_dir, done, swept_keys):
-    path = os.path.join(output_dir, "plots", "start_slack.html")
-    lines = start_slack_lines(output_dir, done, swept_keys)
+    draw_split_histograms(os.path.join(output_dir, "plots", "start_slack.html"),
+                          start_slack_lines(output_dir, done, swept_keys),
+                          [f"all requests (per {START_SLACK_BIN_MS} ms bin)", "sent before the failure",
+                           "sent after the failure"], "deadline",
+                          "start slack: RequestDeadline - worker pick-up (s)", "fraction of requests", "start_slack")
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#startslackhistogram
+# Design: abstraction/benchmark_runner/result_plotter/design.md#estimateerrorhistogram
+def draw_split_histograms(path, lines, titles, vline_text, x_label, y_label, page_title):
+    """One page of all / before / after histograms, one line per point (shared by the StartSlackHistogram
+    and the EstimateErrorHistogram); the page is deleted when there is nothing to draw."""
     if not lines:
         if os.path.exists(path):
             os.remove(path)
         return
     split = any(h[1] is not None or h[2] is not None for _, h, _ in lines)
-    titles = [f"all requests (per {START_SLACK_BIN_MS} ms bin)"]
-    if split:
-        titles += ["sent before the failure", "sent after the failure"]
+    titles = titles if split else titles[:1]
     fig = new_figure(titles)
     for col in range(1, len(titles) + 1):
         for label, hists, color in lines:
@@ -750,13 +766,82 @@ def draw_start_slack(output_dir, done, swept_keys):
             first = all(hists[c] is None for c in range(col - 1))
             add_line(fig, col, (p[0] for p in h), (p[1] for p in h), label, "lines+markers", first,
                      color=palette_color(color))
-        fig.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="deadline", row=1, col=col)
+        fig.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text=vline_text, row=1, col=col)
     fig.update_traces(marker=dict(size=3), line=dict(width=1))
-    fig.update_xaxes(title_text="start slack: RequestDeadline - worker pick-up (s)")
-    fig.update_yaxes(title_text="fraction of requests", rangemode="tozero", row=1, col=1)
+    fig.update_xaxes(title_text=x_label)
+    fig.update_yaxes(title_text=y_label, rangemode="tozero", row=1, col=1)
     fig.update_yaxes(rangemode="tozero")
-    fig.update_layout(title_text="start_slack", showlegend=len(lines) > 1)
+    fig.update_layout(title_text=page_title, showlegend=len(lines) > 1)
     save_page(fig, path)
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#estimateerrorhistogram
+ESTIMATE_ERROR_BINS_PER_UNIT = 10
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#estimateerrorhistogram
+def read_estimate_errors(path):
+    """[(pick_ns, err)] of the ok forwards with an EstimatedFinish, err = (latency - estimate) / latency;
+    [] for a forwards.csv without estimate_ns; None if the file is missing."""
+    if not os.path.exists(path):
+        return None
+    out = []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        header = f.readline().rstrip("\n").split(",")
+        if "estimate_ns" not in header:
+            return []  # a run made before the EstimatedFinish
+        col = {c: header.index(c) for c in ("t_ns", "outcome", "latency_ns", "estimate_ns")}
+        for line in f:
+            parts = line.rstrip("\n").split(",")
+            if len(parts) != len(header):
+                break  # a truncated last line
+            if parts[col["outcome"]] != "ok" or not parts[col["estimate_ns"]]:
+                continue
+            try:
+                lat, t, est = int(parts[col["latency_ns"]]), int(parts[col["t_ns"]]), float(parts[col["estimate_ns"]])
+            except ValueError:
+                break
+            if lat <= 0:
+                continue
+            out.append((t - lat, (float(lat) - est) / float(lat)))
+    return out
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#estimateerrorhistogram
+def estimate_error_histogram(errs):
+    """[(bin centre, fraction)] for every bin floor(err x 10) from the smallest to the largest non-empty one
+    (full range, no clipping); empty bins in between are 0. errs is not empty."""
+    counts = {}
+    for e in errs:
+        b = math.floor(e * ESTIMATE_ERROR_BINS_PER_UNIT)
+        counts[b] = counts.get(b, 0) + 1
+    n = len(errs)
+    return [((b + 0.5) / ESTIMATE_ERROR_BINS_PER_UNIT, counts.get(b, 0) / n)
+            for b in range(min(counts), max(counts) + 1)]
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#estimateerrorhistogram
+def estimate_error_lines(output_dir, done, swept_keys):
+    """[(label, (all, before, after), color index)] for the done points with EstimateError samples."""
+    lines = []
+    for row in sorted(done, key=lambda r: int(r["point"])):
+        pdir = os.path.join(output_dir, "points", f"point_{int(row['point']):04d}")
+        samples = read_estimate_errors(os.path.join(pdir, "ingress.forwards.csv"))
+        if not samples:
+            continue
+        params = _read_json(os.path.join(pdir, "params.json")) or {}
+        label = ", ".join(f"{k}={_cell(row[k])}" for k in swept_keys) or f"point {row['point']}"
+        lines.append((label, split_histograms(samples, failure_time_ms(params), estimate_error_histogram), len(lines)))
+    return lines
+
+
+# Design: abstraction/benchmark_runner/result_plotter/design.md#estimateerrorhistogram
+def draw_estimate_error(output_dir, done, swept_keys):
+    draw_split_histograms(os.path.join(output_dir, "plots", "estimate_error.html"),
+                          estimate_error_lines(output_dir, done, swept_keys),
+                          ["all ok forwards", "picked before the failure", "picked after the failure"], "exact",
+                          "(latency - (queue + 1) x EwmaExecTime) / latency", "fraction of ok forwards",
+                          "estimate_error")
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#expectedwaitplot
