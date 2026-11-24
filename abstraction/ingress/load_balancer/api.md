@@ -17,7 +17,7 @@ From the Ingress parameters ([../api.md#program-parameters](../api.md#program-pa
 | `EWMA_INITIAL_LATENCY_NS` | `1_000_000` (1 ms) | Every backend's EwmaLatency before its first sample. Not 0, so that the `ewma` policy still weighs `outstanding` before any response |
 | `DEADLINE_FILTER_CONFIDENCE` | `0.99` | A backend passes the DeadlineFilter if the request finishes there in time with at least this probability ([design.md#deadlinefilter](design.md#deadlinefilter)) |
 | `DEADLINE_FILTER_MISS` | `0.01` | `1 - DEADLINE_FILTER_CONFIDENCE`: the largest allowed late probability |
-| `EXEC_NO_SAMPLE` | binary64 quiet NaN, bits `0x7FF8000000000000` | Stored in `ewma_exec_ns` until the backend's first ExecutionTime sample ([design.md#ewmaexectime](design.md#ewmaexectime)) |
+| `EXEC_NO_SAMPLE` | binary64 quiet NaN, bits `0x7FF8000000000000` | Stored in `ewma_exec_ns` and `ewma_anti_exec_ns` until their first sample ([design.md#ewmaexectime](design.md#ewmaexectime), [design.md#ewmaantiservicetime](design.md#ewmaantiservicetime)) |
 
 ## Types
 
@@ -39,6 +39,8 @@ name ([../api.md#backendstats](../api.md#backendstats)).
 | `server_id` | u32 | The chosen backend |
 | `start_ns` | u64, ns | Monotonic time of the `pick` |
 | `attempt` | u32 | LbRetries of the ForwardTask before this attempt: `0` for its first ([../retry_policy/design.md](../retry_policy/design.md#retrypolicy)) |
+| `seq` | u64 | TicketSeq: unique per run, increasing in pick order ([design.md#forwardticket](design.md#forwardticket)) |
+| `queue_at_send` | u64 | QueueAtSend: the backend's `outstanding` just before this pick's increment ([design.md#forwardticket](design.md#forwardticket)) |
 
 Returned by `pick`, given back unchanged to `finish`. See [design.md#forwardticket](design.md#forwardticket).
 
@@ -79,7 +81,7 @@ concurrent callers. See [design.md#loadbalancer](design.md#loadbalancer).
 
 ### `lb_new(config: IngressConfig, monitor: HeartbeatMonitor | none) -> LoadBalancer`
 `B = len(config.backends)` BackendStats, all counters zero, every `ewma_latency_ns = EWMA_INITIAL_LATENCY_NS` and
-every `ewma_exec_ns = EXEC_NO_SAMPLE`.
+every `ewma_exec_ns` and `ewma_anti_exec_ns = EXEC_NO_SAMPLE`.
 `monitor` gives the BackendLiveness; with `none` every backend is live.
 The random stream is `rng_new(derive_seed(config.seed, STREAM_INGRESS_LB, 0))`.
 See [design.md#loadbalancer](design.md#loadbalancer).
@@ -102,15 +104,16 @@ WaitEntry (FIFO) whose `signal` fires when a later scan sends it (`sent(ticket)`
 Every `FILTER_QUEUE_TICK_MS = 10` while `lb_filter` is not `none`: drops waiting requests past their deadline and
 sends those that now pass, oldest first. See [design.md#filterwaitqueue](design.md#filterwaitqueue).
 
-### `finish(lb, ticket: ForwardTicket, outcome: ForwardOutcome, exec_ns: u64 | none, worker_count: u32 | none) -> nothing`
+### `finish(lb, ticket: ForwardTicket, outcome: ForwardOutcome, exec_ns: u64 | none, worker_count: u32 | none) -> sampled: boolean`
 Decrements `outstanding` and increments the outcome's counter. If `outcome == ok`, also folds the forward's latency
 into the backend's EwmaLatency, under every policy. If `outcome` is `ok` or `rejected` and `exec_ns` is given, folds
-it into the backend's EwmaExecTime ([design.md#ewmaexectime](design.md#ewmaexectime)). Then appends one ForwardRecord to the ForwardLog. See [design.md#loadbalancer](design.md#loadbalancer) and
+it into the backend's EwmaExecTime ([design.md#ewmaexectime](design.md#ewmaexectime)) and every other backend's
+EwmaAntiServiceTime ([design.md#ewmaantiservicetime](design.md#ewmaantiservicetime)), and returns `sampled = true`. Then appends one ForwardRecord to the ForwardLog. See [design.md#loadbalancer](design.md#loadbalancer) and
 [design.md#ewmalatency](design.md#ewmalatency). For `ok` and `rejected`, a given `worker_count` becomes the backend's WorkerCount, used by the
 [DeadlineFilter](design.md#deadlinefilter).
 
 ### `stats_snapshot(lb) -> list of BackendStats values`
-Reads every counter, `ewma_latency_ns` and `ewma_exec_ns` (acquire), in `server_id` order, for the summary.
+Reads every counter, `ewma_latency_ns`, `ewma_exec_ns` and `ewma_anti_exec_ns` (acquire), in `server_id` order, for the summary.
 See [design.md#loadbalancer](design.md#loadbalancer).
 
 ### `pick_log(lb) -> list of PickRecord`

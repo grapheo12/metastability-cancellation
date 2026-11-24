@@ -2,7 +2,8 @@
 
 `B` is the number of backends. All counters are atomic u64, incremented and decremented with relaxed ordering.
 Each backend's `ewma_latency_ns` is an atomic u64 holding the bits of an IEEE-754 binary64 value
-([EwmaLatency](#ewmalatency)), and so is its `ewma_exec_ns` ([EwmaExecTime](#ewmaexectime)). `stats_snapshot` runs after every forward has ended or been abandoned, so its loads
+([EwmaLatency](#ewmalatency)), and so are its `ewma_exec_ns` ([EwmaExecTime](#ewmaexectime)) and its
+`ewma_anti_exec_ns` ([EwmaAntiServiceTime](#ewmaantiservicetime)). `stats_snapshot` runs after every forward has ended or been abandoned, so its loads
 are final. `monotonic_now_ns()` is the Ingress's monotonic clock ([../design.md#time-base](../design.md#time-base)).
 
 ## LoadBalancer
@@ -12,8 +13,10 @@ lb = { policy, filter: lb_filter, beta: ewma_beta, monitor: HeartbeatMonitor or 
        filter_dropped: atomic u64 = 0,                                     # DeadlineFilter drops
        stats: array[B] of BackendStats (counters 0, ewma_latency_ns = EWMA_INITIAL_LATENCY_NS,
                                         ewma_exec_ns = bits of EXEC_NO_SAMPLE,
+                                        ewma_anti_exec_ns = bits of EXEC_NO_SAMPLE,
                                         worker_count = 0),                 # WorkerCount; 0: not known yet
        rr: atomic u64 = 0,
+       seq: atomic u64 = 0,                                                # TicketSeq source
        rng: rng_new(derive_seed(seed, STREAM_INGRESS_LB, 0)), rng_lock: mutex,
        log: list of ForwardRecord (empty), log_lock: mutex,                     # ForwardLog
        picks: list of PickRecord (empty) }                                      # PickLog, also under log_lock
@@ -25,11 +28,14 @@ function pick(lb, remaining_ns, attempt, record = true):   # remaining_ns: i64 o
     s = choose(lb, remaining_ns)                     # LbPolicy over the DeadlineFilter's set
     if s is Dropped:
         return Dropped                               # no counter changes; no finish follows (callers count)
-    lb.stats[s].outstanding.fetch_add(1)
+    n = lb.stats[s].outstanding.fetch_add(1)         # the value before this pick's increment
     lb.stats[s].forwarded.fetch_add(1)
-    return ForwardTicket(server_id = s, start_ns = monotonic_now_ns(), attempt = attempt)
+    q = lb.seq.fetch_add(1)                          # TicketSeq: 0, 1, 2, ... in pick order
+    return ForwardTicket(server_id = s, start_ns = monotonic_now_ns(), attempt = attempt,
+                         seq = q, queue_at_send = max(n, 0))
 
 function finish(lb, ticket, outcome, exec_ns, worker_count):   # exec_ns, worker_count: from the answer, or none
+                                                                # -> sampled: boolean
     s = ticket.server_id
     if outcome in {ok, rejected} and worker_count is not none:
         lb.stats[s].worker_count.store(worker_count)  # the backend's latest WorkerCount
@@ -41,13 +47,17 @@ function finish(lb, ticket, outcome, exec_ns, worker_count):   # exec_ns, worker
         e = ewma_update(lb, s, latency_ns)           # EwmaLatency after this sample
     else:
         e = binary64_from_bits(lb.stats[s].ewma_latency_ns.load())
-    if outcome in {ok, rejected} and exec_ns is not none:
+    sampled = outcome in {ok, rejected} and exec_ns is not none
+    if sampled:
         x = ewma_exec_update(lb, s, exec_ns)         # EwmaExecTime after this sample
+        for b in 0 ..= B-1 except s:
+            ewma_anti_update(lb, b, exec_ns)         # EwmaAntiServiceTime of every other backend
     else:
         x = exec_value(lb, s)                        # unchanged; none before the first sample
     with lb.log_lock:
         lb.log.append(ForwardRecord(end_ns, s, outcome, latency_ns, e,
                                     exec_ns if outcome in {ok, rejected} else none, x, ticket.attempt))   # ForwardLog
+    return sampled                                   # true: both EWMAs above took this sample
 ```
 
 `outstanding` is incremented in `pick`, not when the forward actually starts, so the next `pick` already sees the
@@ -62,6 +72,12 @@ load it is about to add. That narrows, but does not close, the race described be
 - `finish` reads the clock once, after the counters. The latency is `now - start_ns` as unsigned 64-bit; the clock
   is monotonic, so it is never negative.
 - The ticket is a plain value: the LoadBalancer keeps no per-forward state, and a lost ticket only loses a sample.
+- **TicketSeq.** `seq` is unique per Ingress run and increases in pick order (u64, starting at 0; it cannot wrap in a
+  run). It names one attempt, even when several ForwardTasks share a RequestId (client RequestCopies).
+- **QueueAtSend.** `queue_at_send` is the chosen backend's `outstanding` just before this pick's increment, clamped
+  at 0: the `n` of the DeadlineFilter's `(n + 1) × e`, read atomically with the increment, so two concurrent picks of
+  the same backend get different values. The LoadBalancer itself does not use it; the `anxious` RetryPolicy does
+  ([../retry_policy/design.md#retrypolicyregistry](../retry_policy/design.md#retrypolicyregistry)).
 
 ## EwmaLatency
 
@@ -120,6 +136,45 @@ function exec_value(lb, s):                          # binary64 or none
 - **Start value.** None, not a guess: the first sample becomes the average. A stored binary64 is never NaN (samples
   are finite and `beta` is in `[0, 1]`), so the sentinel cannot collide with a value.
 - **Concurrency** is as for the EwmaLatency: a lock-free compare-and-swap loop that applies each sample once.
+
+## EwmaAntiServiceTime
+
+Per backend `b`, the **EwmaAntiServiceTime** is an exponentially weighted moving average of the ExecutionTimes
+reported by every backend **other than** `b`: the service time a request would expect if it were not served by `b`.
+It takes exactly the samples the EwmaExecTime takes (same rule, same `beta`), each folded into every backend except
+the one that served it.
+
+```
+function ewma_anti_update(lb, b, sample_ns):         # sample_ns: u64; b != the serving backend
+    x = float(sample_ns)                             # binary64, round to nearest
+    loop:
+        old_bits = lb.stats[b].ewma_anti_exec_ns.load()
+        if old_bits == bits_of(EXEC_NO_SAMPLE):
+            new = x                                  # the first sample is the average
+        else:
+            old = binary64_from_bits(old_bits)
+            new = old * lb.beta + x * (1 - lb.beta)  # binary64, evaluated left to right, round to nearest
+        if lb.stats[b].ewma_anti_exec_ns.compare_and_swap(old_bits, bits_of(new)): return new
+
+function anti_value(lb, b):                          # binary64 or none
+    bits = lb.stats[b].ewma_anti_exec_ns.load()
+    return none if bits == bits_of(EXEC_NO_SAMPLE) else binary64_from_bits(bits)
+```
+
+- **Order.** `finish` updates the serving backend's EwmaExecTime first, then the other backends' EwmaAntiServiceTime
+  in increasing `b`. Each is its own compare-and-swap, so a reader may see one updated and not yet the other.
+- **One backend.** With `B = 1` no backend is ever "other", so its EwmaAntiServiceTime stays none.
+- **Who reads it.** No LbPolicy and no DeadlineStrategy. The `anxious` RetryPolicy does, through the BackendView
+  ([../retry_policy/design.md#retrypolicyregistry](../retry_policy/design.md#retrypolicyregistry)), and the summary reports its final value.
+
+Worked example, `beta = 0.5`, `B = 3`, all values none at first (ns):
+
+| Finish | Sample | `anti[0]` | `anti[1]` | `anti[2]` | Check |
+|---|---|---|---|---|---|
+| backend 0 ok | 100 | none | 100 | 100 | first sample of 1 and 2 |
+| backend 1 rejected | 300 | 300 | 100 | 200 | `anti[2] = 100·0.5 + 300·0.5 = 200`; `anti[0]` first sample |
+| backend 2 reset | none | 300 | 100 | 200 | no sample: unchanged |
+| backend 2 ok | 500 | 400 | 300 | 200 | `300·0.5 + 500·0.5 = 400`; `100·0.5 + 500·0.5 = 300`; `anti[2]` unchanged (its own sample) |
 
 ## EwmaScore
 

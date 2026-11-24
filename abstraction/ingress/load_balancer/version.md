@@ -15,3 +15,4 @@
 | 0.11.0 | 2026-11-23T00:00:00Z | DeadlineStrategy `deadline_mean_queue_plus_share`: `(n + 1/k) × e <= T` (requests ahead at a full service time, its own at `1/k`); worked example column; admit edge |
 | 0.12.0 | 2026-11-23T00:00:00Z | `pick(lb, remaining_ns, attempt)`: ForwardTicket and ForwardRecord carry `attempt` (LbRetries before this attempt) |
 | 0.13.0 | 2026-11-23T00:00:00Z | FilterWaitQueue: a first attempt no backend passes waits (FIFO) instead of being dropped; `scan` every `FILTER_QUEUE_TICK_MS = 10` sends those that now pass (oldest first) and drops those past their deadline; `admit`; `pick(…, record)` no longer counts `filter_dropped`; worked example and state machine |
+| 0.14.0 | 2026-11-23T00:00:00Z | EwmaAntiServiceTime (per backend, EWMA of every other backend's ExecutionTime samples; `ewma_anti_update`, worked example); ForwardTicket `seq` (TicketSeq) and `queue_at_send` (QueueAtSend); `finish` returns `sampled` |
