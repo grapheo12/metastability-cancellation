@@ -45,3 +45,4 @@
 | 0.11.2 | 2026-11-24T00:00:00Z | Child bump: load_balancer 0.15.0 (ExcludedBackend) |
 | 0.11.3 | 2026-11-24T00:00:00Z | Child bump: retry_policy 0.4.0 (RetryElsewhere, RetryRefused, attach; anxious live-only, evaluate on change) |
 | 0.12.0 | 2026-11-24T00:00:00Z | Shared state: `retry_policy`, attached to the Heartbeat Monitor's `is_live` at startup. Child bump: frontend 0.9.0 (RetryElsewhere, RetryRefused) |
+| 0.12.1 | 2026-11-24T00:00:00Z | Child bump: retry_policy 0.5.0 (anxious ExpectedLate) |

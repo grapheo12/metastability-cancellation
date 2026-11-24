@@ -149,7 +149,8 @@ Worked example, `lb_retry_timeout_ms = 2000`, `lb_max_retries = 1` (times in ms 
 ### anxious
 
 **AnxiousRetry**: retry an attempt when moving it is expected to finish at least a fraction `alpha` sooner than
-leaving it where it is. The policy keeps its own **AnxiousTracker**, an activity that follows every attempt in the
+leaving it where it is, **and** where it is it is expected to miss its RequestDeadline (CurrentExpFinish greater than
+the time left). The policy keeps its own **AnxiousTracker**, an activity that follows every attempt in the
 Ingress through [RetryObservations](#retryobservation) and, every `ANXIOUS_TICK_MS`, marks the anxious ones.
 
 | Name | Value | Meaning |
@@ -162,7 +163,7 @@ Ingress through [RetryObservations](#retryobservation) and, every `ANXIOUS_TICK_
 function anxious_policy(config):
     p = { alpha: config.lb_retry_anxiety_ratio, B: len(config.backends), is_live: none,     # set by attach
           inbox: bounded FIFO channel of ANXIOUS_BUFFER observations, stopped: atomic boolean = false,
-          anxious: atomic reference to an immutable set of u64 = {} }          # TicketSeqs, published by the tracker
+          anxious: atomic reference to an immutable map u64 -> binary64 = {} } # TicketSeq -> CurrentExpFinish (ns)
     spawn anxious_tracker(p)                                                   # its own coroutine or thread
     return RetryPolicy(decide_fn = anxious_decide, observe_fn = anxious_observe, stop_fn = anxious_stop,
                        attach_fn = (p, is_live) -> p.is_live = is_live, params = p)
@@ -176,8 +177,10 @@ procedure anxious_stop(p):
 
 function anxious_decide(p, state, event):
     newest = state.attempts[last]
-    RetryElsewhere if event is Tick and newest.running and newest.ticket_seq in p.anxious.load()
-    else Wait                                                              # AttemptEnded: the 502 is relayed
+    if event is not Tick or not newest.running: return Wait               # AttemptEnded: the 502 is relayed
+    c = p.anxious.load().get(newest.ticket_seq)                            # CurrentExpFinish, or none
+    if c is none or state.remaining_ns is none: return Wait               # no deadline: never late, never retried
+    return RetryElsewhere if c > float(state.remaining_ns) else Wait      # ExpectedLate: strict >
 
 procedure anxious_tracker(p):
     entries = map TicketSeq -> { server_id: u32, queue: u64 }              # attempts in flight
@@ -197,7 +200,7 @@ procedure anxious_tracker(p):
         on EwmaChanged(x, a):
             exec = x; anti = a; dirty = true
         on RetryRefused(seq):                                              # not a stat change: no evaluation
-            p.anxious.store(p.anxious.load() without seq)                  # asked no more until the next evaluation
+            p.anxious.store(p.anxious.load() without key seq)              # asked no more until the next evaluation
         on the tick:
             now_live = [ p.is_live(s) if p.is_live is not none else true for s in 0 ..= B-1 ]
             if now_live != live: live = now_live; dirty = true
@@ -206,7 +209,7 @@ procedure anxious_tracker(p):
                 dirty = false
 
 function anxious_set(p, entries, count, exec, anti, live):                 # binary64, each step rounded, no fused ops
-    out = {}
+    out = {}                                                               # TicketSeq -> CurrentExpFinish
     for each (seq, e) in entries:
         b = e.server_id
         L = [ c for c in 0 ..= B-1 if c != b and live[c] ]                 # where a RetryElsewhere can go
@@ -215,7 +218,7 @@ function anxious_set(p, entries, count, exec, anti, live):                 # bin
         current = float(e.queue + 1) * exec[b]                             # CurrentExpFinish
         others  = sum(count[c] for c in L)                                 # in flight on the live other backends
         retry   = (float(others) / float(len(L)) + 1) * anti[b]            # RetryExpFinish
-        if (current - retry) / current >= p.alpha: out.add(seq)
+        if (current - retry) / current >= p.alpha: out[seq] = current
     return out
 ```
 
@@ -228,12 +231,18 @@ function anxious_set(p, entries, count, exec, anti, live):                 # bin
   A dead backend is no target: its stuck attempts and stale numbers would make moving look cheap. The decision is
   `RetryElsewhere`, so the retry never lands on `b` again; among the others it goes wherever `pick` sends it, and it
   may be refused (DeadlineFilter, or no live other backend at pick time).
+- **ExpectedLate is checked in `decide`, not in the tracker.** The tracker publishes CurrentExpFinish with each
+  anxious TicketSeq; `decide` compares it with `remaining_ns`, which the Frontend computes fresh at every
+  `LB_RETRY_TICK_MS` tick. So an attempt that becomes late while nothing else changes is still retried, without an
+  AnxiousEvaluation. CurrentExpFinish itself is as of the last evaluation. An attempt that is expected to finish in
+  time where it is is never retried, however much faster moving looks. A request without a RequestDeadline is never
+  retried. `remaining_ns <= 0` (already late) retries whenever `c > 0`. A tie (`c == remaining_ns`) waits.
 - **AnxiousEvaluation only after a change.** The set is recomputed at a tick only if an `AttemptSent`,
   `AttemptFinished` or `EwmaChanged` arrived, or the liveness read at the tick differs from the last one, since the
-  previous evaluation; otherwise the tick does nothing. A `RetryRefused(seq)` removes `seq` from the published set
+  previous evaluation; otherwise the tick does nothing. A `RetryRefused(seq)` removes `seq` from the published map
   without an evaluation, so a ForwardTask whose retry was refused is not asked again until the stats change.
 - **Not the newest.** The set holds every anxious attempt, but `decide` only retries a ForwardTask whose **newest**
-  attempt is in it, while budget remains. Once an LbRetry starts, its own `AttemptSent` adds it; the older attempt
+  attempt is in it and is ExpectedLate, while budget remains. Once an LbRetry starts, its own `AttemptSent` adds it; the older attempt
   stays in `entries` until it finishes.
 - **Ties and races.**
   - A ratio exactly equal to `alpha` retries (`>=`).
@@ -261,7 +270,17 @@ Worked example, `alpha = 0.3`, times in ms:
 | Other backend dead | 2 | (0, 4) | 80 | 80 | [6, 2], backend 1 not live | — | — | — | no (`L` empty) |
 | Three, one dead | 3 | (0, 4) | 100 | 100 | [5, 3, 1], backend 2 not live | `5 × 100 = 500` | `(3/1 + 1) × 100 = 400` | `100/500 = 0.2` | no |
 
-In every row above, the other backends are live unless the row says otherwise.
+In every row above, the other backends are live unless the row says otherwise. "Anxious" means the TicketSeq is in the
+published map with `current` as its CurrentExpFinish; `decide` then also needs ExpectedLate:
+
+| `c` (CurrentExpFinish, ms) | `remaining_ns` (ms) | Decision on a Tick (newest running) | Why |
+|---|---|---|---|
+| 400 | 150 | `RetryElsewhere` | `400 > 150` |
+| 400 | 400 | `Wait` | tie: strict `>` |
+| 400 | 4000 | `Wait` | expected in time |
+| 400 | -20 | `RetryElsewhere` | already past the deadline |
+| 400 | none | `Wait` | no RequestDeadline |
+| not in the map | 10 | `Wait` | not anxious |
 
 When the set is recomputed (ticks at 10, 20, 30, … ms):
 
