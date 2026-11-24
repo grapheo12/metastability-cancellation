@@ -149,8 +149,8 @@ Worked example, `lb_retry_timeout_ms = 2000`, `lb_max_retries = 1` (times in ms 
 ### anxious
 
 **AnxiousRetry**: retry an attempt when moving it is expected to finish at least a fraction `alpha` sooner than
-leaving it where it is, **and** where it is it is expected to miss its RequestDeadline (CurrentExpFinish greater than
-the time left). The policy keeps its own **AnxiousTracker**, an activity that follows every attempt in the
+leaving it where it is, **and** where it is it is expected to miss its RequestDeadline: CurrentExpFinish greater
+than `beta` times the time left (ExpectedLate). The policy keeps its own **AnxiousTracker**, an activity that follows every attempt in the
 Ingress through [RetryObservations](#retryobservation) and, every `ANXIOUS_TICK_MS`, marks the anxious ones.
 
 | Name | Value | Meaning |
@@ -158,10 +158,12 @@ Ingress through [RetryObservations](#retryobservation) and, every `ANXIOUS_TICK_
 | `ANXIOUS_TICK_MS` | `10` | Period of the tracker's evaluation |
 | `ANXIOUS_BUFFER` | `4096` | Capacity of the observation channel |
 | `alpha` | `lb_retry_anxiety_ratio` (default `0.3`) | The anxiety ratio |
+| `beta` | `lb_retry_late_factor` (default `10`) | The late factor of ExpectedLate |
 
 ```
 function anxious_policy(config):
-    p = { alpha: config.lb_retry_anxiety_ratio, B: len(config.backends), is_live: none,     # set by attach
+    p = { alpha: config.lb_retry_anxiety_ratio, beta: config.lb_retry_late_factor,
+          B: len(config.backends), is_live: none,                                          # set by attach
           inbox: bounded FIFO channel of ANXIOUS_BUFFER observations, stopped: atomic boolean = false,
           anxious: atomic reference to an immutable map u64 -> binary64 = {} } # TicketSeq -> CurrentExpFinish (ns)
     spawn anxious_tracker(p)                                                   # its own coroutine or thread
@@ -180,7 +182,8 @@ function anxious_decide(p, state, event):
     if event is not Tick or not newest.running: return Wait               # AttemptEnded: the 502 is relayed
     c = p.anxious.load().get(newest.ticket_seq)                            # CurrentExpFinish, or none
     if c is none or state.remaining_ns is none: return Wait               # no deadline: never late, never retried
-    return RetryElsewhere if c > float(state.remaining_ns) else Wait      # ExpectedLate: strict >
+    return RetryElsewhere if c > p.beta * float(state.remaining_ns) else Wait   # ExpectedLate: strict >;
+                                                                           # the product rounded first, no fused ops
 
 procedure anxious_tracker(p):
     entries = array[B] of map TicketSeq -> deadline                       # attempts in flight, per backend; deadline: u64
@@ -240,11 +243,14 @@ function anxious_set(p, entries, exec, anti, live):                        # bin
   `RetryElsewhere`, so the retry never lands on `b` again; among the others it goes wherever `pick` sends it, and it
   may be refused (DeadlineFilter, or no live other backend at pick time).
 - **ExpectedLate is checked in `decide`, not in the tracker.** The tracker publishes CurrentExpFinish with each
-  anxious TicketSeq; `decide` compares it with `remaining_ns`, which the Frontend computes fresh at every
+  anxious TicketSeq; `decide` compares it with `beta × remaining_ns`, `remaining_ns` computed fresh by the Frontend at every
   `LB_RETRY_TICK_MS` tick. So an attempt that becomes late while nothing else changes is still retried, without an
   AnxiousEvaluation. CurrentExpFinish itself is as of the last evaluation. An attempt that is expected to finish in
   time where it is is never retried, however much faster moving looks. A request without a RequestDeadline is never
-  retried. `remaining_ns <= 0` (already late) retries whenever `c > 0`. A tie (`c == remaining_ns`) waits.
+  retried. `remaining_ns <= 0` (already late) retries whenever `c > 0`. A tie (`c == beta × remaining_ns`) waits.
+  `beta = 1` compares with the time left itself; `beta > 1` waits until less than `c / beta` is left (later);
+  `beta < 1` retries as soon as less than `c / beta` is left (earlier); `beta = 0` retries any anxious attempt that
+  has a RequestDeadline.
 - **AnxiousEvaluation only after a change.** The set is recomputed at a tick only if an `AttemptSent`,
   `AttemptFinished` or `EwmaChanged` arrived, or the liveness read at the tick differs from the last one, since the
   previous evaluation; otherwise the tick does nothing. A `RetryRefused(seq)` removes `seq` from the published map
@@ -285,16 +291,19 @@ marks the entry being evaluated, and `MAX` is `NO_DEADLINE`:
 The "EDF, not FIFO" row would count 5 ahead on backend 0 and 3 on backend 1 if every request in flight were ahead.
 
 In every row above, the other backends are live unless the row says otherwise. "Anxious" means the TicketSeq is in the
-published map with `current` as its CurrentExpFinish; `decide` then also needs ExpectedLate:
+published map with `current` as its CurrentExpFinish; `decide` then also needs ExpectedLate (`beta = 10` unless the
+row says otherwise):
 
-| `c` (CurrentExpFinish, ms) | `remaining_ns` (ms) | Decision on a Tick (newest running) | Why |
-|---|---|---|---|
-| 400 | 150 | `RetryElsewhere` | `400 > 150` |
-| 400 | 400 | `Wait` | tie: strict `>` |
-| 400 | 4000 | `Wait` | expected in time |
-| 400 | -20 | `RetryElsewhere` | already past the deadline |
-| 400 | none | `Wait` | no RequestDeadline |
-| not in the map | 10 | `Wait` | not anxious |
+| `c` (CurrentExpFinish, ms) | `remaining_ns` (ms) | `beta × remaining_ns` | Decision on a Tick (newest running) | Why |
+|---|---|---|---|---|
+| 400 | 30 | 300 | `RetryElsewhere` | `400 > 300` |
+| 400 | 40 | 400 | `Wait` | tie: strict `>` |
+| 400 | 150 | 1500 | `Wait` | not late enough |
+| 400 | -20 | -200 | `RetryElsewhere` | already past the deadline |
+| 400 | none | — | `Wait` | no RequestDeadline |
+| not in the map | 10 | 100 | `Wait` | not anxious |
+| 400 | 150, `beta = 1` | 150 | `RetryElsewhere` | `400 > 150` |
+| 400 | 4000, `beta = 0` | 0 | `RetryElsewhere` | `beta = 0`: any anxious attempt with a deadline |
 
 When the set is recomputed (ticks at 10, 20, 30, … ms):
 
