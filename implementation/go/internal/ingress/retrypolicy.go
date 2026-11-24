@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.4.0)
+// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.5.0)
 package ingress
 
 import (

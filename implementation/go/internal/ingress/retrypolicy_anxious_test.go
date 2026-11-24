@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.4.0)
+// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.5.0)
 package ingress
 
 import (
@@ -125,7 +125,8 @@ func TestAnxiousPolicyDecide(t *testing.T) {
 		HasExec: []bool{true, true}, HasAnti: []bool{true, true}})
 	// retry = (0/1 + 1) * 80 = 80; current = (q+1)*80: q = 0 gives ratio 0, q >= 1 gives >= 0.5.
 	state := func(seq uint64, running bool) RetryState {
-		return RetryState{MaxRetries: 1, Attempts: []AttemptView{{TicketSeq: seq, Running: running}}}
+		// 10 ms left: every anxious attempt here (CurrentExpFinish >= 80 ns-units) is ExpectedLate
+		return RetryState{MaxRetries: 1, Attempts: []AttemptView{{TicketSeq: seq, Running: running}}, RemainingNs: 10, HasDeadline: true}
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for p.Decide(state(5, true), RetryEvent{Kind: EventTick}) != RetryElsewhere {
@@ -241,4 +242,43 @@ func TestAnxiousEvaluateOnlyOnChange(t *testing.T) {
 	down1 := func(s uint32) bool { return s != 1 }
 	p.Attach(down1)
 	waitFor(false, "other backend not live")
+}
+
+// ExpectedLate: decide retries an anxious running newest attempt only if its
+// CurrentExpFinish exceeds the time left (strict); no deadline never retries.
+// The decide worked example (ms written as ns).
+//
+// Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
+func TestAnxiousDecideRemaining(t *testing.T) {
+	p := &anxiousPolicy{}
+	m := map[uint64]float64{7: 400}
+	p.anxious.Store(&m)
+	cases := []struct {
+		seq       uint64
+		remaining int64
+		has       bool
+		want      RetryDecision
+	}{
+		{7, 150, true, RetryElsewhere},
+		{7, 400, true, Wait},
+		{7, 4000, true, Wait},
+		{7, -20, true, RetryElsewhere},
+		{7, 0, false, Wait},
+		{8, 10, true, Wait},
+	}
+	for i, c := range cases {
+		s := RetryState{MaxRetries: 1, Attempts: []AttemptView{{TicketSeq: c.seq, Running: true}}, RemainingNs: c.remaining, HasDeadline: c.has}
+		if got := p.Decide(s, RetryEvent{Kind: EventTick}); got != c.want {
+			t.Errorf("case %d (%+v): %v, want %v", i, c, got, c.want)
+		}
+	}
+	// AttemptEnded and a finished newest attempt always wait.
+	s := RetryState{MaxRetries: 1, Attempts: []AttemptView{{TicketSeq: 7, Running: true}}, RemainingNs: 1, HasDeadline: true}
+	if p.Decide(s, RetryEvent{Kind: EventAttemptEnded, Outcome: OutcomeBadGateway}) != Wait {
+		t.Error("AttemptEnded must wait")
+	}
+	s.Attempts[0].Running = false
+	if p.Decide(s, RetryEvent{Kind: EventTick}) != Wait {
+		t.Error("newest not running must wait")
+	}
 }

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.4.0)
+// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.5.0)
 package ingress
 
 import (
@@ -18,8 +18,9 @@ const (
 	AnxiousBuffer = 4096
 )
 
-// init registers anxious: RetryElsewhere on a Tick when the newest attempt is running
-// and its TicketSeq is in the set the AnxiousTracker last published.
+// init registers anxious: RetryElsewhere on a Tick when the newest attempt is running,
+// its TicketSeq is in the map the AnxiousTracker last published, and its
+// CurrentExpFinish exceeds the request's time left (ExpectedLate).
 //
 // Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 func init() {
@@ -38,9 +39,9 @@ type anxiousPolicy struct {
 	inbox    chan RetryObservation
 	stopped  chan struct{} // closed by Stop
 	stopOnce sync.Once
-	done     chan struct{} // closed when the tracker goroutine returned
-	anxious  atomic.Pointer[map[uint64]struct{}]
-	isLive   atomic.Pointer[func(uint32) bool] // set by Attach; nil: every backend live
+	done     chan struct{}                      // closed when the tracker goroutine returned
+	anxious  atomic.Pointer[map[uint64]float64] // TicketSeq -> CurrentExpFinish (ns)
+	isLive   atomic.Pointer[func(uint32) bool]  // set by Attach; nil: every backend live
 }
 
 // Attach is attach(policy, is_live): the tracker reads it at every tick.
@@ -53,14 +54,15 @@ func (p *anxiousPolicy) Attach(isLive func(s uint32) bool) {
 func newAnxiousPolicy(alpha float64, b int, tick time.Duration) *anxiousPolicy {
 	p := &anxiousPolicy{alpha: alpha, b: b, inbox: make(chan RetryObservation, AnxiousBuffer),
 		stopped: make(chan struct{}), done: make(chan struct{})}
-	empty := map[uint64]struct{}{}
+	empty := map[uint64]float64{}
 	p.anxious.Store(&empty)
 	go p.run(tick)
 	return p
 }
 
 // Decide is anxious_decide: RetryElsewhere for an anxious running newest
-// attempt on a Tick; AttemptEnded is Wait (the 502 is relayed).
+// attempt that is ExpectedLate (CurrentExpFinish > RemainingNs, strict; no
+// deadline: never) on a Tick; AttemptEnded is Wait (the 502 is relayed).
 //
 // Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 func (p *anxiousPolicy) Decide(s RetryState, e RetryEvent) RetryDecision {
@@ -68,7 +70,11 @@ func (p *anxiousPolicy) Decide(s RetryState, e RetryEvent) RetryDecision {
 	if e.Kind != EventTick || !newest.Running {
 		return Wait
 	}
-	if _, ok := (*p.anxious.Load())[newest.TicketSeq]; ok {
+	c, ok := (*p.anxious.Load())[newest.TicketSeq]
+	if !ok || !s.HasDeadline {
+		return Wait
+	}
+	if c > float64(s.RemainingNs) { // ExpectedLate
 		return RetryElsewhere
 	}
 	return Wait
@@ -139,10 +145,10 @@ func (p *anxiousPolicy) unpublish(seq uint64) {
 	if _, ok := old[seq]; !ok {
 		return
 	}
-	next := make(map[uint64]struct{}, len(old))
-	for k := range old {
+	next := make(map[uint64]float64, len(old))
+	for k, v := range old {
 		if k != seq {
-			next[k] = struct{}{}
+			next[k] = v
 		}
 	}
 	p.anxious.Store(&next)
@@ -229,8 +235,8 @@ func (tr *anxiousTracker) readLiveness(isLive *func(uint32) bool) {
 // is converted explicitly so Go cannot fuse a multiply and an add.
 //
 // Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
-func (tr *anxiousTracker) anxiousSet(alpha float64) map[uint64]struct{} {
-	out := map[uint64]struct{}{}
+func (tr *anxiousTracker) anxiousSet(alpha float64) map[uint64]float64 {
+	out := map[uint64]float64{} // TicketSeq -> CurrentExpFinish
 	for s, m := range tr.entries {
 		if len(m) == 0 || !tr.hasExec[s] || !tr.hasAnti[s] || tr.exec[s] == 0 {
 			continue
@@ -249,7 +255,7 @@ func (tr *anxiousTracker) anxiousSet(alpha float64) map[uint64]struct{} {
 		for seq, e := range m {
 			current := float64(float64(e.queue+1) * tr.exec[s]) // CurrentExpFinish
 			if float64(float64(current-retry)/current) >= alpha {
-				out[seq] = struct{}{}
+				out[seq] = current
 			}
 		}
 	}

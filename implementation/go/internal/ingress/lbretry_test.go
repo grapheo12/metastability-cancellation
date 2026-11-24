@@ -4,6 +4,7 @@ package ingress
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -387,8 +388,9 @@ func TestFilterWaitQueueClientReset(t *testing.T) {
 }
 
 // anxious end to end: once both backends have an EwmaExecTime (one ping to
-// each), a ping on the slow backend (exec 300 ms; anti 20 ms) is anxious at
-// once and is retried on the fast one within a few ticks.
+// each), a ping on the slow backend (exec 300 ms; anti 20 ms) with only 100 ms
+// left is anxious and ExpectedLate at once, and is retried on the fast one
+// within a few ticks. The warm-up pings have no deadline: never retried.
 //
 // Design: abstraction/ingress/frontend/design.md#forwardattempt
 func TestLbRetryAnxiousPolicy(t *testing.T) {
@@ -404,7 +406,9 @@ func TestLbRetryAnxiousPolicy(t *testing.T) {
 		t.Fatalf("warm-up retried %d times", n)
 	}
 	start := time.Now()
-	st, b, err := ping(t, context.Background(), conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(0, 3), 0, nil, 128))
+	// RequestDeadline 100 ms ahead: CurrentExpFinish (1 x 300 ms) > time left, so ExpectedLate.
+	late := []byte(fmt.Sprintf(`{"id":"%d","deadline":"%d"}`, protocol.MakeRequestID(0, 3), time.Now().Add(100*time.Millisecond).UnixNano()))
+	st, b, err := ping(t, context.Background(), conn, "POST", "/ping", late)
 	elapsed := time.Since(start)
 	if ex, _, _, _ := protocol.ParseExecReport(b); err != nil || st != 202 || ex != uint64(20*time.Millisecond) {
 		t.Fatalf("want the fast backend's 202: %d %v", st, err)
