@@ -1,8 +1,9 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.14.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.15.0)
 package ingress
 
 import (
 	"math"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -272,7 +273,7 @@ func TestEwmaExecTimeWorkedExample(t *testing.T) {
 
 // chooseAny is choose for a request without a RequestDeadline (never dropped).
 func (lb *LoadBalancer) chooseAny() uint32 {
-	s, _ := lb.choose(0, false)
+	s, _ := lb.choose(0, false, NoExclude)
 	return s
 }
 
@@ -540,5 +541,35 @@ func TestTicketSeqAndQueueAtSend(t *testing.T) {
 	}
 	if tk := lb.Pick(); tk.ServerID != 0 || tk.QueueAtSend != 2 {
 		t.Fatalf("backend 0 after its finish: %+v", tk)
+	}
+}
+
+// ExcludedBackend: a pick with exclude never chooses it, even when it is the
+// only live backend (then Dropped, no counter change); NoExclude is unchanged.
+//
+// Design: abstraction/ingress/load_balancer/design.md#lbpolicy
+func TestPickExcluding(t *testing.T) {
+	lb := newLB(PolicyRoundRobin, 3)
+	for i := 0; i < 6; i++ {
+		tk, ok := lb.PickExcluding(0, false, 1, 1)
+		if !ok || tk.ServerID == 1 || tk.Attempt != 1 {
+			t.Fatalf("pick %d: %+v %v", i, tk, ok)
+		}
+	}
+	m := &HeartbeatMonitor{live: make([]atomic.Bool, 2)}
+	m.live[0].Store(true) // backend 1 dead: L = [0]
+	two := NewLoadBalancer(Config{LbPolicy: PolicyRoundRobin, EwmaBeta: 0.7, Backends: []string{"h:1", "h:1"}}, m)
+	if _, ok := two.PickExcluding(0, false, 1, 0); ok {
+		t.Fatal("the only live backend excluded: want Dropped")
+	}
+	if s := two.Snapshot(); s[0].Forwarded != 0 || s[1].Forwarded != 0 {
+		t.Fatalf("Dropped changed counters: %+v", s)
+	}
+	if tk, ok := two.PickExcluding(0, false, 0, NoExclude); !ok || tk.ServerID != 0 {
+		t.Fatalf("NoExclude: %+v %v", tk, ok)
+	}
+	m.live[0].Store(false) // all silent: fallback to [0, 1], minus 0
+	if tk, ok := two.PickExcluding(0, false, 1, 0); !ok || tk.ServerID != 1 {
+		t.Fatalf("all-silent fallback minus exclude: %+v %v", tk, ok)
 	}
 }

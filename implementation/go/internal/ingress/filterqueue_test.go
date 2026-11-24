@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.14.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.15.0)
 package ingress
 
 import (

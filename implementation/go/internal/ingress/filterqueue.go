@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.14.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.15.0)
 package ingress
 
 import (
@@ -51,13 +51,13 @@ type filterWaitQueue struct {
 // Design: abstraction/ingress/load_balancer/design.md#filterwaitqueue
 func (lb *LoadBalancer) Admit(deadline uint64, hasDeadline bool) (ForwardTicket, *WaitEntry) {
 	if lb.filter == FilterNone || !hasDeadline {
-		t, _ := lb.pick(0, false, 0, true) // never filtered, so never Dropped
+		t, _ := lb.pick(0, false, 0, true, NoExclude) // never filtered, so never Dropped
 		return t, nil
 	}
 	lb.wq.mu.Lock()
 	defer lb.wq.mu.Unlock()
 	if len(lb.wq.waiting) == 0 { // FIFO: a newcomer never overtakes a waiting request
-		if t, ok := lb.pick(remaining(deadline, time.Now().UnixNano()), true, 0, true); ok {
+		if t, ok := lb.pick(remaining(deadline, time.Now().UnixNano()), true, 0, true, NoExclude); ok {
 			return t, nil
 		}
 	}
@@ -110,7 +110,7 @@ func (lb *LoadBalancer) scan() {
 			close(e.signal)
 			continue
 		}
-		if t, ok := lb.pick(rem, true, 0, false); ok {
+		if t, ok := lb.pick(rem, true, 0, false, NoExclude); ok {
 			e.state, e.ticket = waitSent, t
 			lb.wq.sentFromQueue++
 			close(e.signal)

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.14.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.15.0)
 package ingress
 
 import (
@@ -196,18 +196,30 @@ func (lb *LoadBalancer) PickWithin(remainingNs int64, hasDeadline bool) (Forward
 // Design: abstraction/ingress/load_balancer/design.md#loadbalancer
 // Design: abstraction/ingress/load_balancer/design.md#forwardticket
 func (lb *LoadBalancer) PickAttempt(remainingNs int64, hasDeadline bool, attempt uint32) (ForwardTicket, bool) {
-	return lb.pick(remainingNs, hasDeadline, attempt, true)
+	return lb.pick(remainingNs, hasDeadline, attempt, true, NoExclude)
+}
+
+// NoExclude is exclude = none for pick.
+const NoExclude = -1
+
+// PickExcluding is pick(lb, remaining_ns, attempt, exclude = e): PickAttempt
+// that never chooses backend e (an LbRetry decided RetryElsewhere); ok is false
+// when no backend is left. NoExclude makes it PickAttempt.
+//
+// Design: abstraction/ingress/load_balancer/design.md#lbpolicy
+func (lb *LoadBalancer) PickExcluding(remainingNs int64, hasDeadline bool, attempt uint32, exclude int) (ForwardTicket, bool) {
+	return lb.pick(remainingNs, hasDeadline, attempt, true, exclude)
 }
 
 // pick is pick(lb, remaining_ns, attempt, record): record = false for a
 // FilterWaitQueue re-check writes no PickRecord. A Dropped changes nothing.
 //
 // Design: abstraction/ingress/load_balancer/design.md#loadbalancer
-func (lb *LoadBalancer) pick(remainingNs int64, hasDeadline bool, attempt uint32, record bool) (ForwardTicket, bool) {
+func (lb *LoadBalancer) pick(remainingNs int64, hasDeadline bool, attempt uint32, record bool, exclude int) (ForwardTicket, bool) {
 	if record {
 		lb.recordPick() // PickLog: what choose is about to see
 	}
-	s, ok := lb.choose(remainingNs, hasDeadline)
+	s, ok := lb.choose(remainingNs, hasDeadline, exclude)
 	if !ok {
 		return ForwardTicket{}, false // the caller decides: wait in the queue, or skip a refused retry
 	}
@@ -445,8 +457,20 @@ func (lb *LoadBalancer) Snapshot() []BackendStatsValue {
 // choose applies the LbPolicy. B == 1 always gives 0 with no draw.
 //
 // Design: abstraction/ingress/load_balancer/design.md#lbpolicy
-func (lb *LoadBalancer) choose(remainingNs int64, hasDeadline bool) (uint32, bool) {
+func (lb *LoadBalancer) choose(remainingNs int64, hasDeadline bool, exclude int) (uint32, bool) {
 	live := lb.liveSet()
+	if exclude != NoExclude {
+		// Design: abstraction/ingress/load_balancer/design.md#lbpolicy
+		kept := live[:0] // liveSet builds a fresh slice per call
+		for _, s := range live {
+			if s != uint64(exclude) {
+				kept = append(kept, s)
+			}
+		}
+		if live = kept; len(live) == 0 {
+			return 0, false // ExcludedBackend was the only candidate: Dropped
+		}
+	}
 	if lb.filter != FilterNone && hasDeadline {
 		// Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
 		live = lb.deadlineFilter(live, remainingNs)
