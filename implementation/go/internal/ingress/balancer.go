@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.13.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.14.0)
 package ingress
 
 import (
@@ -43,6 +43,11 @@ type BackendStats struct {
 	//
 	// Design: abstraction/ingress/load_balancer/design.md#ewmaexectime
 	ExecBits atomic.Uint64
+	// AntiBits is the EwmaAntiServiceTime in ns, as math.Float64bits, or
+	// execNoSampleBits before the first sample from another backend.
+	//
+	// Design: abstraction/ingress/load_balancer/design.md#ewmaantiservicetime
+	AntiBits atomic.Uint64
 	// WorkerCount is the backend's latest x-worker-threads; 0: not known yet.
 	//
 	// Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
@@ -67,6 +72,10 @@ type ForwardTicket struct {
 	ServerID uint32
 	Start    time.Time // carries the monotonic reading
 	Attempt  uint32    // LbRetries of the ForwardTask before this attempt (0: first)
+	// Seq is the TicketSeq: unique per run, increasing in pick order.
+	Seq uint64
+	// QueueAtSend is the backend's outstanding just before this pick's increment.
+	QueueAtSend uint64
 }
 
 // BackendStatsValue is a plain copy of one backend's counters for the summary.
@@ -83,6 +92,8 @@ type BackendStatsValue struct {
 	EwmaLatencyNs float64 `json:"ewma_latency_ns"`
 	// EwmaExecNs is the final EwmaExecTime; nil (JSON null) before a sample.
 	EwmaExecNs *float64 `json:"ewma_exec_ns"`
+	// EwmaAntiExecNs is the final EwmaAntiServiceTime; nil (JSON null) before a sample.
+	EwmaAntiExecNs *float64 `json:"ewma_anti_exec_ns"`
 	// WorkerCount is the backend's latest WorkerCount, 0 before its first answer.
 	WorkerCount uint64 `json:"worker_count"`
 }
@@ -129,6 +140,7 @@ type LoadBalancer struct {
 	backends []string
 	stats    []BackendStats
 	rr       atomic.Uint64
+	seq      atomic.Uint64 // TicketSeq source
 	rngMu    sync.Mutex
 	rng      *sampling.Rng
 	logMu    sync.Mutex        // ForwardLog: held for one append or one copy
@@ -153,6 +165,7 @@ func NewLoadBalancer(cfg Config, monitor *HeartbeatMonitor) *LoadBalancer {
 	for i := range lb.stats {
 		lb.stats[i].EwmaBits.Store(math.Float64bits(EwmaInitialLatencyNs))
 		lb.stats[i].ExecBits.Store(execNoSampleBits)
+		lb.stats[i].AntiBits.Store(execNoSampleBits)
 	}
 	return lb
 }
@@ -198,9 +211,14 @@ func (lb *LoadBalancer) pick(remainingNs int64, hasDeadline bool, attempt uint32
 	if !ok {
 		return ForwardTicket{}, false // the caller decides: wait in the queue, or skip a refused retry
 	}
-	lb.stats[s].Outstanding.Add(1)
+	n := lb.stats[s].Outstanding.Add(1) - 1 // QueueAtSend: the value before this pick's increment
 	lb.stats[s].Forwarded.Add(1)
-	return ForwardTicket{ServerID: s, Start: time.Now(), Attempt: attempt}, true
+	if n < 0 {
+		n = 0
+	}
+	// Design: abstraction/ingress/load_balancer/design.md#forwardticket
+	q := lb.seq.Add(1) - 1 // TicketSeq: 0, 1, 2, ... in pick order
+	return ForwardTicket{ServerID: s, Start: time.Now(), Attempt: attempt, Seq: q, QueueAtSend: uint64(n)}, true
 }
 
 // Finish ends a forward started by Pick: counters, then one clock read; an ok
@@ -209,7 +227,7 @@ func (lb *LoadBalancer) pick(remainingNs int64, hasDeadline bool, attempt uint32
 // a ForwardRecord.
 //
 // Design: abstraction/ingress/load_balancer/design.md#loadbalancer
-func (lb *LoadBalancer) Finish(t ForwardTicket, outcome ForwardOutcome, execNs uint64, hasExec bool, workers uint32) {
+func (lb *LoadBalancer) Finish(t ForwardTicket, outcome ForwardOutcome, execNs uint64, hasExec bool, workers uint32) (sampled bool) {
 	st := &lb.stats[t.ServerID]
 	if workers > 0 && (outcome == OutcomeOK || outcome == OutcomeRejected) {
 		st.WorkerCount.Store(uint64(workers)) // the backend's latest WorkerCount (0: none given)
@@ -242,6 +260,12 @@ func (lb *LoadBalancer) Finish(t ForwardTicket, outcome ForwardOutcome, execNs u
 	var hasX bool
 	if sample {
 		x, hasX = lb.ewmaExecUpdate(t.ServerID, execNs), true
+		// Design: abstraction/ingress/load_balancer/design.md#ewmaantiservicetime
+		for b := range lb.stats {
+			if uint32(b) != t.ServerID {
+				lb.ewmaAntiUpdate(uint32(b), execNs) // every other backend, in increasing b
+			}
+		}
 	} else {
 		x, hasX = lb.execValue(t.ServerID)
 	}
@@ -253,6 +277,7 @@ func (lb *LoadBalancer) Finish(t ForwardTicket, outcome ForwardOutcome, execNs u
 	lb.log = append(lb.log, ForwardRecord{End: end, ServerID: t.ServerID, Outcome: outcome, LatencyNs: latencyNs, EwmaLatencyNs: e,
 		ExecNs: execNs, HasExec: sample, EwmaExecNs: x, HasEwmaExec: hasX, Attempt: t.Attempt})
 	lb.logMu.Unlock()
+	return sample // both EWMAs took this sample
 }
 
 // recordPick appends one PickRecord per backend, in id order, read before
@@ -346,6 +371,37 @@ func (lb *LoadBalancer) execValue(s uint32) (float64, bool) {
 	return math.Float64frombits(bits), true
 }
 
+// ewmaAntiUpdate folds one ExecutionTime from another backend into backend
+// b's EwmaAntiServiceTime with a CAS loop; the first sample becomes the average.
+//
+// Design: abstraction/ingress/load_balancer/design.md#ewmaantiservicetime
+func (lb *LoadBalancer) ewmaAntiUpdate(b uint32, sampleNs uint64) float64 {
+	e := &lb.stats[b].AntiBits
+	for {
+		oldBits := e.Load()
+		var next float64
+		if oldBits == execNoSampleBits {
+			next = float64(sampleNs)
+		} else {
+			next = ewmaNext(math.Float64frombits(oldBits), sampleNs, lb.beta)
+		}
+		if e.CompareAndSwap(oldBits, math.Float64bits(next)) {
+			return next
+		}
+	}
+}
+
+// antiValue reads backend b's EwmaAntiServiceTime; ok is false before a sample.
+//
+// Design: abstraction/ingress/load_balancer/design.md#ewmaantiservicetime
+func (lb *LoadBalancer) antiValue(b uint32) (float64, bool) {
+	bits := lb.stats[b].AntiBits.Load()
+	if bits == execNoSampleBits {
+		return 0, false
+	}
+	return math.Float64frombits(bits), true
+}
+
 // ewmaScore is (outstanding + 1) * EwmaLatency.
 //
 // Design: abstraction/ingress/load_balancer/design.md#ewmascore
@@ -375,8 +431,13 @@ func (lb *LoadBalancer) Snapshot() []BackendStatsValue {
 		if x, ok := lb.execValue(uint32(i)); ok {
 			exec = &x
 		}
+		var anti *float64
+		if a, ok := lb.antiValue(uint32(i)); ok {
+			anti = &a
+		}
 		out[i] = BackendStatsValue{uint32(i), lb.backends[i], st.Forwarded.Load(), st.OK.Load(), st.Rejected.Load(),
-			st.BadRequest.Load(), st.BadGateway.Load(), st.Reset.Load(), math.Float64frombits(st.EwmaBits.Load()), exec, st.WorkerCount.Load()}
+			st.BadRequest.Load(), st.BadGateway.Load(), st.Reset.Load(), math.Float64frombits(st.EwmaBits.Load()), exec, anti,
+			st.WorkerCount.Load()}
 	}
 	return out
 }

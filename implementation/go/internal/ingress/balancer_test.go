@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.13.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.14.0)
 package ingress
 
 import (
@@ -472,5 +472,73 @@ func TestDeadlineMeanStrategiesWorkedExample(t *testing.T) {
 		if got := mk(FilterDeadlineMeanQueuePlusShare).deadlineFilter([]uint64{0, 1}, c.rem); !same(got, c.plusShare) {
 			t.Errorf("deadline_mean_queue_plus_share, remaining %d: %v, want %v", c.rem, got, c.plusShare)
 		}
+	}
+}
+
+// The EwmaAntiServiceTime worked example: beta 0.5, B = 3; each sample goes to
+// every backend but the one that served it.
+//
+// Design: abstraction/ingress/load_balancer/design.md#ewmaantiservicetime
+func TestEwmaAntiServiceTimeWorkedExample(t *testing.T) {
+	lb := NewLoadBalancer(Config{LbPolicy: PolicyRoundRobin, EwmaBeta: 0.5, Backends: []string{"h:1", "h:1", "h:1"}}, nil)
+	none := -1.0
+	steps := []struct {
+		server  uint32
+		outcome ForwardOutcome
+		exec    uint64
+		hasExec bool
+		sampled bool
+		want    [3]float64
+	}{
+		{0, OutcomeOK, 100, true, true, [3]float64{none, 100, 100}},
+		{1, OutcomeRejected, 300, true, true, [3]float64{300, 100, 200}},
+		{2, OutcomeReset, 0, false, false, [3]float64{300, 100, 200}},
+		{2, OutcomeOK, 500, true, true, [3]float64{400, 300, 200}},
+	}
+	for i, st := range steps {
+		if got := lb.Finish(ForwardTicket{ServerID: st.server, Start: time.Now()}, st.outcome, st.exec, st.hasExec, 0); got != st.sampled {
+			t.Fatalf("step %d: sampled %v", i, got)
+		}
+		for b := uint32(0); b < 3; b++ {
+			v, ok := lb.antiValue(b)
+			if (st.want[b] == none) == ok || (ok && v != st.want[b]) {
+				t.Fatalf("step %d backend %d: %v %v, want %v", i, b, v, ok, st.want[b])
+			}
+		}
+	}
+	snap := lb.Snapshot()
+	if snap[0].EwmaAntiExecNs == nil || *snap[0].EwmaAntiExecNs != 400 {
+		t.Fatalf("summary ewma_anti_exec_ns: %v", snap[0].EwmaAntiExecNs)
+	}
+	one := newLB(PolicyRoundRobin, 1)
+	one.Finish(one.Pick(), OutcomeOK, 7, true, 0)
+	if _, ok := one.antiValue(0); ok || one.Snapshot()[0].EwmaAntiExecNs != nil {
+		t.Fatal("B = 1: EwmaAntiServiceTime must stay none")
+	}
+}
+
+// TicketSeq increases in pick order; QueueAtSend is outstanding before the pick.
+//
+// Design: abstraction/ingress/load_balancer/design.md#forwardticket
+func TestTicketSeqAndQueueAtSend(t *testing.T) {
+	lb := newLB(PolicyRoundRobin, 2)
+	want := []struct {
+		seq, queue uint64
+		server     uint32
+	}{{0, 0, 0}, {1, 0, 1}, {2, 1, 0}, {3, 1, 1}, {4, 2, 0}}
+	var tks []ForwardTicket
+	for i, w := range want {
+		tk := lb.Pick()
+		if tk.Seq != w.seq || tk.QueueAtSend != w.queue || tk.ServerID != w.server {
+			t.Fatalf("pick %d: %+v, want %+v", i, tk, w)
+		}
+		tks = append(tks, tk)
+	}
+	lb.Finish(tks[0], OutcomeOK, 0, false, 0)
+	if tk := lb.Pick(); tk.Seq != 5 || tk.ServerID != 1 || tk.QueueAtSend != 2 {
+		t.Fatalf("after a finish: %+v", tk)
+	}
+	if tk := lb.Pick(); tk.ServerID != 0 || tk.QueueAtSend != 2 {
+		t.Fatalf("backend 0 after its finish: %+v", tk)
 	}
 }
