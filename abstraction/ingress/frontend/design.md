@@ -119,9 +119,9 @@ One upstream forward of a ForwardTask. Attempt 0 is the forward every `/ping` ge
 **LbRetry**, started only by the [LbRetryLoop](#lbretryloop).
 
 ```
-function start_attempt(ctx, task, k, ticket = none):              # -> ForwardAttempt | Dropped
+function start_attempt(ctx, task, k, ticket = none, exclude = none):   # -> ForwardAttempt | Dropped
     if ticket is none:                                            # an LbRetry (k > 0): pick now
-        ticket = load_balancer.pick(ctx.lb, remaining_ns(task), k)    # ForwardTicket (attempt = k), or Dropped
+        ticket = load_balancer.pick(ctx.lb, remaining_ns(task), k, exclude = exclude)   # ForwardTicket (attempt = k), or Dropped
         if ticket is Dropped:
             ctx.lb_retry_refused.fetch_add(1)                     # summary lb_retry_refused; no attempt starts
             return Dropped
@@ -162,7 +162,10 @@ procedure attempt_activity(ctx, task, a, entry):
 - **RetryObservations** ([../retry_policy/design.md#retryobservation](../retry_policy/design.md#retryobservation)) are
   sent for every attempt, in the order sent, finished, EWMAs: `observe` is a no-op unless the policy observes
   (`anxious`), and never waits on the policy's logic. A first attempt that waited in the FilterWaitQueue is observed
-  as sent only once a scan sends it, with the QueueAtSend of that `pick`.
+  as sent only once a scan sends it, with the QueueAtSend of that `pick`. A refused retry (its `pick` `Dropped`) is
+  observed as `RetryRefused` with the newest attempt's TicketSeq.
+- **RetryElsewhere** passes the newest attempt's backend as `exclude` to the retry's `pick`
+  ([../load_balancer/design.md#lbpolicy](../load_balancer/design.md#lbpolicy)); `Retry` passes none.
 
 ## LbRetryLoop
 
@@ -187,12 +190,20 @@ function lb_retry_loop(ctx, task, stream):
                 a.running = false; a.outcome = outcome
                 if a is not newest: continue                            # an older attempt: answer ignored
                 if outcome != bad_gateway: return response              # 202 / 503 / 400 relayed
-                if budget and decide(policy, retry_state(...), AttemptEnded(outcome)) == Retry:
-                    if start_attempt(ctx, task, len(task.attempts)) is not Dropped: continue
+                if budget:
+                    d = decide(policy, retry_state(...), AttemptEnded(outcome))
+                    if d != Wait and retry(ctx, task, newest, d) is not Dropped: continue
                 return response                                         # 502 relayed
             LB_RETRY_TICK_MS since the last tick, only if ticking and budget and newest.running:
-                if decide(policy, retry_state(...), Tick) == Retry:
-                    start_attempt(ctx, task, len(task.attempts))        # Dropped: keep waiting on the newest
+                d = decide(policy, retry_state(...), Tick)
+                if d != Wait: retry(ctx, task, newest, d)               # Dropped: keep waiting on the newest
+
+function retry(ctx, task, newest, d):                             # d: Retry | RetryElsewhere -> ForwardAttempt | Dropped
+    exclude = newest.server_id if d == RetryElsewhere else none   # ExcludedBackend
+    a = start_attempt(ctx, task, len(task.attempts), exclude = exclude)
+    if a is Dropped:
+        retry_policy.observe(ctx.retry_policy, RetryRefused(newest.ticket.seq))
+    return a
 ```
 
 `retry_state(...)` is [../retry_policy/design.md#retrystate](../retry_policy/design.md#retrystate), built from

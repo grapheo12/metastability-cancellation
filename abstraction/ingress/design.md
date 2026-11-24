@@ -41,7 +41,8 @@ One of each per process, created at startup and never replaced:
 | ForwardLog | Load Balancer | Frontend (one append per `finish`), Shutdown (`forwards.csv`) |
 | PickLog | Load Balancer | Frontend (`B` appends per `pick`), Shutdown (`picks.csv`) |
 | `run_start` | set once, by the first `/ping` | Load Canceller (time base) |
-| `monitor: HeartbeatMonitor` or none | Heartbeat Monitor | Load Balancer (`is_live`), Shutdown (`liveness.csv`) |
+| `monitor: HeartbeatMonitor` or none | Heartbeat Monitor | Load Balancer (`is_live`), Retry Policy (`is_live`, through `attach`), Shutdown (`liveness.csv`) |
+| `retry_policy: RetryPolicy` | Retry Policy, built by `retry_policy_new` at startup, then `retry_policy.attach(retry_policy, is_live)` (optional) before the first request | Frontend (`decide`, `observe`), Shutdown (`stop`) |
 
 `B` is the number of backends.
 
