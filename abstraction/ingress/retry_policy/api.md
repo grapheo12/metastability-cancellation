@@ -6,9 +6,17 @@ From the Ingress parameters ([../api.md#program-parameters](../api.md#program-pa
 
 | Parameter | Type / unit / constraint | Default | Meaning |
 |---|---|---|---|
-| `lb_retry_policy` | a name in the RetryPolicyRegistry: `none` \| `timeout` | `none` | The RetryPolicy the Frontend consults ([design.md#retrypolicyregistry](design.md#retrypolicyregistry)) |
+| `lb_retry_policy` | a name in the RetryPolicyRegistry: `none` \| `timeout` \| `anxious` | `none` | The RetryPolicy the Frontend consults ([design.md#retrypolicyregistry](design.md#retrypolicyregistry)) |
 | `lb_max_retries` | integer, `>= 0` | `0` | Most LbRetries per ForwardTask (one client stream). `0`: no LB retries whatever the policy |
 | `lb_retry_timeout_ms` | float, ms, `> 0` | `150` | The `timeout` policy's delay: retry once the newest attempt has run this long ([design.md#retrypolicyregistry](design.md#retrypolicyregistry)); validated always, used only by `timeout` |
+| `lb_retry_anxiety_ratio` | float, `>= 0`, finite | `0.3` | The `anxious` policy's `alpha`: retry when moving is expected to finish at least this fraction sooner ([design.md#anxious](design.md#anxious)); validated always, used only by `anxious` |
+
+## Constants
+
+| Name | Value | Meaning |
+|---|---|---|
+| `ANXIOUS_TICK_MS` | `10` | The AnxiousTracker's evaluation period ([design.md#anxious](design.md#anxious)) |
+| `ANXIOUS_BUFFER` | `4096` | Capacity of the AnxiousTracker's observation channel |
 
 ## Types
 
@@ -29,6 +37,7 @@ From the Ingress parameters ([../api.md#program-parameters](../api.md#program-pa
 | `start_ns` | u64, ns, monotonic | When its `pick` stamped its ForwardTicket |
 | `running` | boolean | `true` until its forward ended |
 | `outcome` | ForwardOutcome or none | How it ended; none while running |
+| `ticket_seq` | u64 | Its ForwardTicket's TicketSeq ([../load_balancer/design.md#forwardticket](../load_balancer/design.md#forwardticket)) |
 
 ### `BackendView`
 
@@ -37,6 +46,7 @@ From the Ingress parameters ([../api.md#program-parameters](../api.md#program-pa
 | `outstanding` | i64 | The backend's forwards in progress ([../load_balancer/design.md#loadbalancer](../load_balancer/design.md#loadbalancer)) |
 | `worker_count` | u64 | Its WorkerCount, 0 before its first answer |
 | `ewma_exec_ns` | binary64 or none | Its EwmaExecTime |
+| `ewma_anti_exec_ns` | binary64 or none | Its EwmaAntiServiceTime ([../load_balancer/design.md#ewmaantiservicetime](../load_balancer/design.md#ewmaantiservicetime)) |
 | `live` | boolean | Its BackendLiveness (always `true` without a Heartbeat Monitor) |
 
 ### `RetryState`
@@ -54,6 +64,12 @@ From the Ingress parameters ([../api.md#program-parameters](../api.md#program-pa
 
 See [design.md#retrystate](design.md#retrystate).
 
+### `RetryObservation`
+
+`AttemptSent(seq: u64, server_id: u32, queue_at_send: u64)` \| `AttemptFinished(seq: u64, server_id: u32)` \|
+`EwmaChanged(exec: list of binary64 or none, anti: list of binary64 or none)`. What the Frontend tells an observing
+policy about every attempt. See [design.md#retryobservation](design.md#retryobservation).
+
 ### `RetryPolicy`
 
 An opaque value made by `retry_policy_new`; consulted only through `decide`.
@@ -68,7 +84,15 @@ Looks `name` up in the RetryPolicyRegistry. `ConfigError` for an unknown name. C
 Whether to start another attempt now. Must not block, must not change any shared state, and is only called while
 `retries_so_far < max_retries`. See [design.md#retrypolicy](design.md#retrypolicy).
 
+### `observe(policy: RetryPolicy, observation: RetryObservation) -> nothing`
+Optional; a no-op for a policy without it. Called by the Frontend for every attempt; never blocks on the policy's
+logic, and discards after `stop`. See [design.md#retryobservation](design.md#retryobservation).
+
+### `stop(policy: RetryPolicy) -> nothing`
+Optional. Called once at Ingress Shutdown; ends the policy's own activity. See
+[design.md#retryobservation](design.md#retryobservation).
+
 ## Uses
 
-- [../load_balancer/api.md](../load_balancer/api.md): `ForwardOutcome`, BackendStats values for the BackendView
+- [../load_balancer/api.md](../load_balancer/api.md): `ForwardOutcome`, `ForwardTicket` (`seq`, `queue_at_send`), BackendStats values for the BackendView
 - [../heartbeat_monitor/api.md](../heartbeat_monitor/api.md): `is_live` for the BackendView
