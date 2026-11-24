@@ -57,6 +57,7 @@ an atomic binary64 starting at `EWMA_INITIAL_LATENCY_NS` ([load_balancer/api.md]
 | `ewma_latency_ns` | EwmaLatency: moving average of the latency of `ok` forwards, in ns (float), under every policy ([load_balancer/design.md](load_balancer/design.md#ewmalatency)) |
 | `worker_count` | The backend's latest WorkerCount (`x-worker-threads` of its last `202`/`503`), `0` before its first answer; divides the DeadlineFilter's expected wait ([load_balancer/design.md](load_balancer/design.md#deadlinefilter)) |
 | `ewma_exec_ns` | EwmaExecTime: moving average of the ExecutionTime the backend reported on `ok` and `rejected` forwards, in ns (float), or none before the first sample ([load_balancer/design.md](load_balancer/design.md#ewmaexectime)) |
+| `ewma_anti_exec_ns` | EwmaAntiServiceTime: moving average of the ExecutionTime every **other** backend reported (the samples of their EwmaExecTime), in ns (float), or none before the first such sample ([load_balancer/design.md](load_balancer/design.md#ewmaantiservicetime)) |
 
 ## Behavior visible on the wire
 
@@ -146,13 +147,13 @@ at shutdown ([design.md#shutdown](design.md#shutdown)).
   "filter_queue_max": integer,
   "lb_retry_refused": integer,
   "lb_retries": integer,
-  "backends": [ { "server_id", "addr", "forwarded", "ok", "rejected", "bad_request", "bad_gateway", "reset", "ewma_latency_ns", "ewma_exec_ns", "worker_count" }, ... ]
+  "backends": [ { "server_id", "addr", "forwarded", "ok", "rejected", "bad_request", "bad_gateway", "reset", "ewma_latency_ns", "ewma_exec_ns", "ewma_anti_exec_ns", "worker_count" }, ... ]
 }
 ```
 
 `counts`, `rates_per_s` and `clients_targeted` describe the LoadCanceller and keep the names they had when it was a
 separate program, so result tools can read them unchanged (all zero when it is disabled). `filter_queued` counts the `/ping`s that waited in the FilterWaitQueue because no backend passed the DeadlineFilter, `filter_sent_from_queue` those later sent from it, `filter_dropped` those dropped once their RequestDeadline passed while waiting, and `filter_queue_max` the longest queue a scan saw ([load_balancer/design.md](load_balancer/design.md#filterwaitqueue)); all 0 with `lb_filter = none`. `lb_retry_refused` counts LbRetries the DeadlineFilter refused (no attempt started). `lb_retries` is the number of LbRetries started (attempts beyond each ForwardTask's first; 0 with `lb_retry_policy = none` or `lb_max_retries = 0`). `backends` is in
-`server_id` order and holds the final BackendStats; `ewma_exec_ns` is `null` for a backend with no ExecutionTime sample. `run_start_unix_ns` is the wall-clock time (Unix epoch, ns) of
+`server_id` order and holds the final BackendStats; `ewma_exec_ns` is `null` for a backend with no ExecutionTime sample, and `ewma_anti_exec_ns` for one with no sample from another backend. `run_start_unix_ns` is the wall-clock time (Unix epoch, ns) of
 `run_start`, or `0` when no `/ping` was received ([design.md#time-base](design.md#time-base)). Written by [design.md#shutdown](design.md#shutdown).
 
 ## Lifecycle
