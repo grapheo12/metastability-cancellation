@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.9.0)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.10.0)
 package ingress
 
 import (
@@ -155,8 +155,12 @@ func (ing *Ingress) startAttempt(task *forwardTask, k uint32, picked *ForwardTic
 		ing.lbRetries.Add(1) // summary lb_retries
 	}
 	// Design: abstraction/ingress/frontend/design.md#forwardattempt
+	deadline := NoDeadline // AttemptSent's deadline: the RequestDeadline, or NO_DEADLINE
+	if task.hasDeadline {
+		deadline = task.deadline
+	}
 	observePolicy(ing.retryPolicy, RetryObservation{Kind: ObsAttemptSent, Seq: ticket.Seq, ServerID: ticket.ServerID,
-		QueueAtSend: ticket.QueueAtSend})
+		QueueAtSend: ticket.QueueAtSend, Deadline: deadline})
 	actx, cancel := context.WithCancel(context.Background()) // not the client's: older attempts outlive the task
 	a := &forwardAttempt{k: k, ticket: ticket, cancel: cancel, running: true}
 	entry := &InFlightEntry{RequestID: task.requestID, ServerID: ticket.ServerID, Attempt: k}

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.9.0)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.10.0)
 package ingress
 
 import (
@@ -465,6 +465,48 @@ func TestLbRetryElsewhereRefused(t *testing.T) {
 	}
 	if n := ing.lbRetryRefused.Load(); n != 1 {
 		t.Fatalf("lb_retry_refused %d", n)
+	}
+	_ = ing.Shutdown()
+}
+
+// sentRecorder never retries and records the deadline of every AttemptSent.
+type sentRecorder struct{ deadlines chan uint64 }
+
+func (p *sentRecorder) Decide(RetryState, RetryEvent) RetryDecision { return Wait }
+func (p *sentRecorder) Observe(o RetryObservation) {
+	if o.Kind == ObsAttemptSent {
+		p.deadlines <- o.Deadline
+	}
+}
+
+// AttemptSent carries the request's RequestDeadline, or NoDeadline without one.
+//
+// Design: abstraction/ingress/frontend/design.md#forwardattempt
+func TestAttemptSentDeadline(t *testing.T) {
+	rec := &sentRecorder{deadlines: make(chan uint64, 4)}
+	RegisterRetryPolicy("test_sent_recorder", func(Config) RetryPolicy { return rec })
+	defer delete(retryPolicies, "test_sent_recorder")
+	fb := startFakeBackend(t, time.Millisecond)
+	ing := startRetryIngress(t, []string{fb.addr()}, "test_sent_recorder", "0")
+	conn := dial(t, ing)
+	dl := uint64(time.Now().Add(time.Hour).UnixNano())
+	for _, body := range [][]byte{
+		[]byte(fmt.Sprintf(`{"id":"%d","deadline":"%d"}`, protocol.MakeRequestID(0, 1), dl)),
+		protocol.BuildBody(protocol.MakeRequestID(0, 2), 0, nil, 128),
+	} {
+		if st, _, err := ping(t, context.Background(), conn, "POST", "/ping", body); err != nil || st != 202 {
+			t.Fatalf("ping: %d %v", st, err)
+		}
+	}
+	for i, want := range []uint64{dl, NoDeadline} {
+		select {
+		case got := <-rec.deadlines:
+			if got != want {
+				t.Fatalf("AttemptSent %d: deadline %d, want %d", i, got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("AttemptSent %d not observed", i)
+		}
 	}
 	_ = ing.Shutdown()
 }
