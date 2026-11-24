@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.3.0)
+// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.4.0)
 package ingress
 
 import (
@@ -28,7 +28,8 @@ type RetryEvent struct {
 	Outcome ForwardOutcome // meaningful for EventAttemptEnded only
 }
 
-// RetryDecision is Retry | Wait.
+// RetryDecision is Retry | RetryElsewhere | Wait. RetryElsewhere is a Retry
+// whose pick excludes the newest attempt's backend.
 //
 // API: abstraction/ingress/retry_policy/api.md#retrydecision
 type RetryDecision int
@@ -36,6 +37,7 @@ type RetryDecision int
 const (
 	Wait RetryDecision = iota
 	Retry
+	RetryElsewhere
 )
 
 // AttemptView is one attempt as a policy sees it.
@@ -99,6 +101,8 @@ const (
 	ObsAttemptFinished
 	// ObsEwmaChanged: finish sampled; Exec/Anti hold every backend's EWMAs.
 	ObsEwmaChanged
+	// ObsRetryRefused: a Retry/RetryElsewhere pick was Dropped (Seq: the newest attempt's).
+	ObsRetryRefused
 )
 
 // RetryObservation is what the Frontend tells an observing policy about an attempt.
@@ -120,6 +124,21 @@ type RetryObservation struct {
 // Design: abstraction/ingress/retry_policy/design.md#retryobservation
 type RetryObserver interface {
 	Observe(o RetryObservation)
+}
+
+// RetryAttacher is the optional attach(policy, is_live), called once at
+// Ingress start before any request.
+//
+// Design: abstraction/ingress/retry_policy/design.md#retryobservation
+type RetryAttacher interface {
+	Attach(isLive func(s uint32) bool)
+}
+
+// attachPolicy calls Attach if p has one.
+func attachPolicy(p RetryPolicy, isLive func(s uint32) bool) {
+	if at, ok := p.(RetryAttacher); ok {
+		at.Attach(isLive)
+	}
 }
 
 // RetryStopper is the optional stop(policy), called once at Ingress Shutdown.

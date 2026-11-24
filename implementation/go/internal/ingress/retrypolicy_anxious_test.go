@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.3.0)
+// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.4.0)
 package ingress
 
 import (
@@ -50,9 +50,15 @@ func TestAnxiousWorkedExample(t *testing.T) {
 		{"three backends", 3, 0, 4, 100, 100, true, true, []int{5, 3, 1}, true},
 		{"no sample", 2, 1, 9, 0, 80, false, true, []int{1, 10}, false},
 		{"one backend", 1, 0, 9, 80, 0, true, false, []int{10}, false},
+		{"other backend dead", 2, 0, 4, 80, 80, true, true, []int{6, 2}, false},
+		{"three, one dead", 3, 0, 4, 100, 100, true, true, []int{5, 3, 1}, false},
 	}
+	dead := map[string]int{"other backend dead": 1, "three, one dead": 2}
 	for _, c := range cases {
 		tr := trackerWith(c.b, c.count, c.s, c.q, c.exec, c.anti, c.hasExec, c.hasAnti)
+		if d, ok := dead[c.name]; ok {
+			tr.live[d] = false
+		}
 		_, got := tr.anxiousSet(0.3)[1000]
 		if got != c.want {
 			t.Errorf("%s: anxious %v, want %v", c.name, got, c.want)
@@ -122,7 +128,7 @@ func TestAnxiousPolicyDecide(t *testing.T) {
 		return RetryState{MaxRetries: 1, Attempts: []AttemptView{{TicketSeq: seq, Running: running}}}
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for p.Decide(state(5, true), RetryEvent{Kind: EventTick}) != Retry {
+	for p.Decide(state(5, true), RetryEvent{Kind: EventTick}) != RetryElsewhere {
 		if time.Now().After(deadline) {
 			t.Fatal("seq 5 never became anxious")
 		}
@@ -183,4 +189,56 @@ func TestAnxiousRegistryAndConfig(t *testing.T) {
 	if c, err := Validate(p); err != nil || c.LbRetryAnxietyRatio != 0 {
 		t.Errorf("0 rejected: %v", err)
 	}
+}
+
+// AnxiousEvaluation: a tick re-evaluates only after a stat or liveness change;
+// RetryRefused removes a TicketSeq until the next evaluation.
+//
+// Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
+func TestAnxiousEvaluateOnlyOnChange(t *testing.T) {
+	tr := trackerWith(2, []int{1, 0}, 0, 4, 80, 80, true, true) // current 400, retry 80: anxious
+	if !tr.dirty {
+		t.Fatal("observations must mark the tracker dirty")
+	}
+	tr.dirty = false
+	tr.readLiveness(nil) // all live, as before: no change
+	if tr.dirty {
+		t.Fatal("unchanged liveness must not mark dirty")
+	}
+	down := func(s uint32) bool { return s != 1 }
+	tr.readLiveness(&down)
+	if !tr.dirty || tr.live[1] {
+		t.Fatal("a liveness change must mark dirty")
+	}
+
+	// Through the policy: the set appears, a refusal removes it, and it stays
+	// out while nothing changes; a new observation brings it back.
+	p := newAnxiousPolicy(0.3, 2, time.Millisecond)
+	defer p.Stop()
+	p.Observe(RetryObservation{Kind: ObsAttemptSent, Seq: 7, ServerID: 0, QueueAtSend: 4})
+	p.Observe(RetryObservation{Kind: ObsEwmaChanged, Exec: []float64{80, 80}, Anti: []float64{80, 80},
+		HasExec: []bool{true, true}, HasAnti: []bool{true, true}})
+	has := func() bool { _, ok := (*p.anxious.Load())[7]; return ok }
+	waitFor := func(want bool, what string) {
+		deadline := time.Now().Add(2 * time.Second)
+		for has() != want {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: seq 7 in set = %v", what, has())
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	waitFor(true, "first evaluation")
+	p.Observe(RetryObservation{Kind: ObsRetryRefused, Seq: 7})
+	waitFor(false, "refused")
+	time.Sleep(30 * time.Millisecond) // many ticks, no change
+	if has() {
+		t.Fatal("re-evaluated without a change")
+	}
+	p.Observe(RetryObservation{Kind: ObsAttemptSent, Seq: 8, ServerID: 1, QueueAtSend: 0})
+	waitFor(true, "after a new observation") // retry = (1/1+1)*80 = 160 < 400*0.7
+	// Attach: backend 1 goes down -> no live other backend -> 7 leaves the set.
+	down1 := func(s uint32) bool { return s != 1 }
+	p.Attach(down1)
+	waitFor(false, "other backend not live")
 }

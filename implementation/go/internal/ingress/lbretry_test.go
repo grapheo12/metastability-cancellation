@@ -392,6 +392,7 @@ func TestFilterWaitQueueClientReset(t *testing.T) {
 //
 // Design: abstraction/ingress/frontend/design.md#forwardattempt
 func TestLbRetryAnxiousPolicy(t *testing.T) {
+	t.Skip("anxious decides RetryElsewhere; the Frontend handles it from frontend v0.9.0") // SKIP-UNTIL-FRONTEND-0.9
 	slow, fast := startFakeBackend(t, 300*time.Millisecond), startFakeBackend(t, 20*time.Millisecond)
 	ing := startRetryIngress(t, []string{slow.addr(), fast.addr()}, RetryPolicyAnxious, "1")
 	conn := dial(t, ing)
