@@ -13,3 +13,4 @@
 | 0.7.0 | 2026-11-23T00:00:00Z | Attempt 0 goes through `admit` (FilterWaitQueue): sent at once, or waits until a scan sends it or drops it past its deadline (`503`); a client reset while waiting marks it `gone`; a refused LbRetry counts `lb_retry_refused`; state machine and table |
 | 0.8.0 | 2026-11-23T00:00:00Z | RetryObservations: `start_attempt` sends `AttemptSent` (TicketSeq, backend, QueueAtSend); `attempt_activity` sends `AttemptFinished` after `finish`, then `EwmaChanged` when `finish` sampled |
 | 0.9.0 | 2026-11-24T00:00:00Z | LbRetryLoop: `retry(…, d)`; `RetryElsewhere` passes the newest attempt's backend as `exclude` to the retry's `pick`; a refused retry is observed as `RetryRefused` |
+| 0.10.0 | 2026-11-24T00:00:00Z | `start_attempt` sends the request's RequestDeadline (or NO_DEADLINE) in AttemptSent |

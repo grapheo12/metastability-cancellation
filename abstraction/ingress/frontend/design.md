@@ -126,7 +126,8 @@ function start_attempt(ctx, task, k, ticket = none, exclude = none):   # -> Forw
             ctx.lb_retry_refused.fetch_add(1)                     # summary lb_retry_refused; no attempt starts
             return Dropped
     if k > 0: ctx.lb_retries.fetch_add(1)                         # summary lb_retries
-    retry_policy.observe(ctx.retry_policy, AttemptSent(ticket.seq, ticket.server_id, ticket.queue_at_send))
+    retry_policy.observe(ctx.retry_policy, AttemptSent(ticket.seq, ticket.server_id, ticket.queue_at_send,
+                         task.deadline if task.deadline is not none else NO_DEADLINE))   # NO_DEADLINE = 2^64 - 1
     a = { k, ticket, server_id: ticket.server_id, start_ns: ticket.start_ns,
           running: true, outcome: none, cancel: new one-shot signal }
     entry = InFlightEntry(request_id = task.request_id, server_id = a.server_id, attempt = k)
