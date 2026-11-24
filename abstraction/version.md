@@ -206,3 +206,4 @@
 | 0.42.2 | 2026-11-24T00:00:00Z | Glossary AnxiousRetry, AnxiousTracker, EdfAhead. Child bump: ingress 0.12.2 (retry_policy 0.6.0) |
 | 0.42.3 | 2026-11-24T00:00:00Z | Child bump: ingress 0.12.3 (frontend 0.10.0) |
 | 0.43.0 | 2026-11-24T00:00:00Z | Parameter `lb_retry_late_factor`; glossary AnxiousRetry. Child bump: ingress 0.13.0 (retry_policy 0.7.0) |
+| 0.43.1 | 2026-11-24T00:00:00Z | Child bump: benchmark_runner 0.10.1 (config 0.26.0) |
