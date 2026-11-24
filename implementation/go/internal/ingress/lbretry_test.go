@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.8.0)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.9.0)
 package ingress
 
 import (
@@ -392,7 +392,6 @@ func TestFilterWaitQueueClientReset(t *testing.T) {
 //
 // Design: abstraction/ingress/frontend/design.md#forwardattempt
 func TestLbRetryAnxiousPolicy(t *testing.T) {
-	t.Skip("anxious decides RetryElsewhere; the Frontend handles it from frontend v0.9.0") // SKIP-UNTIL-FRONTEND-0.9
 	slow, fast := startFakeBackend(t, 300*time.Millisecond), startFakeBackend(t, 20*time.Millisecond)
 	ing := startRetryIngress(t, []string{slow.addr(), fast.addr()}, RetryPolicyAnxious, "1")
 	conn := dial(t, ing)
@@ -418,4 +417,50 @@ func TestLbRetryAnxiousPolicy(t *testing.T) {
 	if lbRetriesOf(t, ing) != 1 || slow.hits.Load() != 2 || fast.hits.Load() != 2 {
 		t.Fatalf("lb_retries %d, slow hits %d, fast hits %d", lbRetriesOf(t, ing), slow.hits.Load(), fast.hits.Load())
 	}
+}
+
+// observingElsewhere answers RetryElsewhere on AttemptEnded and records the
+// TicketSeqs of RetryRefused observations.
+type observingElsewhere struct{ refused chan uint64 }
+
+func (p *observingElsewhere) Decide(s RetryState, e RetryEvent) RetryDecision {
+	if e.Kind == EventAttemptEnded {
+		return RetryElsewhere
+	}
+	return Wait
+}
+
+func (p *observingElsewhere) Observe(o RetryObservation) {
+	if o.Kind == ObsRetryRefused {
+		p.refused <- o.Seq
+	}
+}
+
+// RetryElsewhere with one backend: the retry's pick excludes it, so it is
+// refused, the 502 is relayed, lb_retry_refused counts it and the policy is
+// told RetryRefused with attempt 0's TicketSeq (0, the run's first pick).
+//
+// Design: abstraction/ingress/frontend/design.md#lbretryloop
+func TestLbRetryElsewhereRefused(t *testing.T) {
+	pol := &observingElsewhere{refused: make(chan uint64, 4)}
+	RegisterRetryPolicy("test_elsewhere", func(Config) RetryPolicy { return pol })
+	defer delete(retryPolicies, "test_elsewhere")
+	ing := startRetryIngress(t, []string{"127.0.0.1:1"}, "test_elsewhere", "1")
+	conn := dial(t, ing)
+	st, _, err := ping(t, context.Background(), conn, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(0, 1), 0, nil, 128))
+	if err != nil || st != 502 {
+		t.Fatalf("want the 502 relayed: %d %v", st, err)
+	}
+	select {
+	case seq := <-pol.refused:
+		if seq != 0 {
+			t.Fatalf("RetryRefused seq %d, want 0", seq)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no RetryRefused observation")
+	}
+	if n := ing.lbRetryRefused.Load(); n != 1 {
+		t.Fatalf("lb_retry_refused %d", n)
+	}
+	_ = ing.Shutdown()
 }

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.11.1)
+// Source: abstraction/ingress/design.md (ingress v0.12.0)
 package ingress
 
 import (
@@ -80,6 +80,8 @@ func Listen(cfg Config) (*Ingress, error) {
 		_ = ln.Close()
 		return nil, err
 	}
+	// Design: abstraction/ingress/design.md#shared-state
+	attachPolicy(ing.retryPolicy, func(s uint32) bool { return ing.monitor.IsLive(uint64(s)) }) // nil monitor: all live
 	fmt.Println("listening on " + cfg.ListenAddr)
 	return ing, nil
 }

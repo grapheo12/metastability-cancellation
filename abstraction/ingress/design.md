@@ -160,6 +160,7 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 - `forwards.csv` writes `attempt` last with `strconv.FormatUint`; the summary's `lb_retries` is `Ingress.lbRetries atomic.Uint64`, incremented by the Frontend for every attempt beyond the first.
 - `lb_retry_timeout_ms` is `Config.LbRetryTimeoutMs float64` and `LbRetryTimeoutNs = int64(math.Round(ms * 1e6))`, parsed like the load generator's `retry_timeout_ms` (finite, `> 0`, and small enough for the ns value to fit an `int64`); flag `--lb_retry_timeout_ms`, default `150`; echoed in the summary config. `TestValidateLbRetryTimeout` covers it.
 - Shutdown calls `stopPolicy(ing.retryPolicy)` (a no-op unless the policy is a `RetryStopper`) right after the Load Canceller stops and before closing the upstream connections; observations from attempts still finishing are then discarded.
+- `Listen` calls `attachPolicy(ing.retryPolicy, func(s) { ing.monitor.IsLive(s) })` right after `NewRetryPolicy`. `IsLive` is nil-safe, so without a monitor every backend is live.
 
 ### Traceability
 
@@ -170,10 +171,10 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | Design subsection | Implementation (file:line) |
 |---|---|
 | [Structure](#structure) | [ingress.go:55](../../implementation/go/internal/ingress/ingress.go#L55) |
-| [Shared state](#shared-state) | [ingress.go:25](../../implementation/go/internal/ingress/ingress.go#L25) |
+| [Shared state](#shared-state) | [ingress.go:25](../../implementation/go/internal/ingress/ingress.go#L25), [ingress.go:84](../../implementation/go/internal/ingress/ingress.go#L84) |
 | [Configuration validation](#configuration-validation) | [config.go:100](../../implementation/go/internal/ingress/config.go#L100), [config.go:180](../../implementation/go/internal/ingress/config.go#L180), [config_test.go:9](../../implementation/go/internal/ingress/config_test.go#L9), [config_test.go:40](../../implementation/go/internal/ingress/config_test.go#L40), [retrypolicy_test.go:48](../../implementation/go/internal/ingress/retrypolicy_test.go#L48), [retrypolicy_test.go:88](../../implementation/go/internal/ingress/retrypolicy_test.go#L88) |
-| [Concurrency model](#concurrency-model) | [ingress.go:95](../../implementation/go/internal/ingress/ingress.go#L95) |
-| [Time base](#time-base) | [frontend.go:329](../../implementation/go/internal/ingress/frontend.go#L329), [ingress.go:186](../../implementation/go/internal/ingress/ingress.go#L186) |
-| [Shutdown](#shutdown) | [heartbeat_test.go:114](../../implementation/go/internal/ingress/heartbeat_test.go#L114), [ingress.go:129](../../implementation/go/internal/ingress/ingress.go#L129), [ingress.go:151](../../implementation/go/internal/ingress/ingress.go#L151), [ingress.go:249](../../implementation/go/internal/ingress/ingress.go#L249), [ingress.go:289](../../implementation/go/internal/ingress/ingress.go#L289), [ingress.go:325](../../implementation/go/internal/ingress/ingress.go#L325), [ingress_test.go:81](../../implementation/go/internal/ingress/ingress_test.go#L81), [outputs_test.go:15](../../implementation/go/internal/ingress/outputs_test.go#L15), [outputs_test.go:49](../../implementation/go/internal/ingress/outputs_test.go#L49) |
+| [Concurrency model](#concurrency-model) | [ingress.go:97](../../implementation/go/internal/ingress/ingress.go#L97) |
+| [Time base](#time-base) | [frontend.go:346](../../implementation/go/internal/ingress/frontend.go#L346), [ingress.go:188](../../implementation/go/internal/ingress/ingress.go#L188) |
+| [Shutdown](#shutdown) | [heartbeat_test.go:114](../../implementation/go/internal/ingress/heartbeat_test.go#L114), [ingress.go:131](../../implementation/go/internal/ingress/ingress.go#L131), [ingress.go:153](../../implementation/go/internal/ingress/ingress.go#L153), [ingress.go:251](../../implementation/go/internal/ingress/ingress.go#L251), [ingress.go:291](../../implementation/go/internal/ingress/ingress.go#L291), [ingress.go:327](../../implementation/go/internal/ingress/ingress.go#L327), [ingress_test.go:81](../../implementation/go/internal/ingress/ingress_test.go#L81), [outputs_test.go:15](../../implementation/go/internal/ingress/outputs_test.go#L15), [outputs_test.go:49](../../implementation/go/internal/ingress/outputs_test.go#L49) |
 | [Why one upstream connection per client and backend](#why-one-upstream-connection-per-client-and-backend) | [upstream.go:29](../../implementation/go/internal/ingress/upstream.go#L29) |
 <!-- trace:end -->

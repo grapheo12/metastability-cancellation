@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/frontend/design.md (frontend v0.8.0)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.9.0)
 package ingress
 
 import (
@@ -87,7 +87,7 @@ func (ing *Ingress) handlePing(ctx context.Context, body []byte) fwdResponse {
 		}
 		ticket = t
 	}
-	ing.startAttempt(task, 0, &ticket) // attempt 0, already picked
+	ing.startAttempt(task, 0, &ticket, NoExclude) // attempt 0, already picked
 	return ing.lbRetryLoop(ctx, task)
 }
 
@@ -138,13 +138,13 @@ func (task *forwardTask) remainingNs() (int64, bool) {
 // activity; false if the DeadlineFilter refused the retry.
 //
 // Design: abstraction/ingress/frontend/design.md#forwardattempt
-func (ing *Ingress) startAttempt(task *forwardTask, k uint32, picked *ForwardTicket) bool {
+func (ing *Ingress) startAttempt(task *forwardTask, k uint32, picked *ForwardTicket, exclude int) bool {
 	var ticket ForwardTicket
 	if picked != nil { // attempt 0: already picked by Admit or a FilterWaitQueue scan
 		ticket = *picked
 	} else { // an LbRetry: pick now
 		rem, has := task.remainingNs()
-		t, ok := ing.lb.PickAttempt(rem, has, k) // ForwardTicket (Attempt = k): given back to Finish
+		t, ok := ing.lb.PickExcluding(rem, has, k, exclude) // ForwardTicket (Attempt = k): given back to Finish
 		if !ok {
 			ing.lbRetryRefused.Add(1) // summary lb_retry_refused; no attempt starts
 			return false
@@ -245,8 +245,8 @@ func (ing *Ingress) lbRetryLoop(ctx context.Context, task *forwardTask) fwdRespo
 			if r.outcome != OutcomeBadGateway {
 				return r.resp // 202 / 503 / 400 relayed
 			}
-			if budget && ing.retryPolicy.Decide(ing.retryState(task), RetryEvent{Kind: EventAttemptEnded, Outcome: r.outcome}) == Retry {
-				if ing.startAttempt(task, uint32(len(task.attempts)), nil) {
+			if budget {
+				if d := ing.retryPolicy.Decide(ing.retryState(task), RetryEvent{Kind: EventAttemptEnded, Outcome: r.outcome}); d != Wait && ing.retry(task, newest, d) {
 					continue
 				}
 			}
@@ -255,11 +255,28 @@ func (ing *Ingress) lbRetryLoop(ctx context.Context, task *forwardTask) fwdRespo
 			if !budget || !newest.running {
 				continue
 			}
-			if ing.retryPolicy.Decide(ing.retryState(task), RetryEvent{Kind: EventTick}) == Retry {
-				ing.startAttempt(task, uint32(len(task.attempts)), nil) // refused: keep waiting on the newest
+			if d := ing.retryPolicy.Decide(ing.retryState(task), RetryEvent{Kind: EventTick}); d != Wait {
+				ing.retry(task, newest, d) // refused: keep waiting on the newest
 			}
 		}
 	}
+}
+
+// retry starts the next attempt for a Retry or RetryElsewhere decision; the
+// latter excludes the newest attempt's backend. A refused pick is observed as
+// RetryRefused(newest TicketSeq); false then.
+//
+// Design: abstraction/ingress/frontend/design.md#lbretryloop
+func (ing *Ingress) retry(task *forwardTask, newest *forwardAttempt, d RetryDecision) bool {
+	exclude := NoExclude
+	if d == RetryElsewhere {
+		exclude = int(newest.ticket.ServerID) // ExcludedBackend
+	}
+	if ing.startAttempt(task, uint32(len(task.attempts)), nil, exclude) {
+		return true
+	}
+	observePolicy(ing.retryPolicy, RetryObservation{Kind: ObsRetryRefused, Seq: newest.ticket.Seq})
+	return false
 }
 
 // retryState builds the RetryState right before a decide.
