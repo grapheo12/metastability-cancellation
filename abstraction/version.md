@@ -209,3 +209,4 @@
 | 0.43.1 | 2026-11-24T00:00:00Z | Child bump: benchmark_runner 0.10.1 (config 0.26.0) |
 | 0.44.0 | 2026-11-24T00:00:00Z | Glossary AvailabilityPlot (log unavailability). Child bump: benchmark_runner 0.11.0 (result_plotter 0.20.0) |
 | 0.45.0 | 2026-11-24T00:00:00Z | Glossary AvailabilityPlot (linear again). Child bump: benchmark_runner 0.12.0 (result_plotter 0.21.0) |
+| 0.46.0 | 2026-11-24T00:00:00Z | Glossary Availability (send-time windows). Child bump: benchmark_runner 0.13.0 (result_plotter 0.22.0) |

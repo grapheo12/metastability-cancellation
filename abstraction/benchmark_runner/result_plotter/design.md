@@ -380,8 +380,8 @@ finished in time, over time, from the load generator's Requests CSV
 ([../../load_generator/metrics/api.md#requests-csv](../../load_generator/metrics/api.md#requests-csv)).
 
 **Availability** at time `t` is the number of requests that finished under the SLO divided by the number of
-requests that finished, among the requests whose `end_ns` lies in the `AVAILABILITY_WINDOW_MS = 1000` ms window
-centred on `t`:
+requests that finished, among the requests **sent** in the `AVAILABILITY_WINDOW_MS = 1000` ms window centred on `t`
+(their `send_ns`, the first copy's send, lies in it):
 
 - **Finished:** the row has an `end_ns` (`ok`, `rejected`, `cancelled`, `dropped`, `error`); `not_sent` rows are
   ignored. A row is one logical request however many RequestCopies it sent, so retries are never counted twice.
@@ -408,7 +408,7 @@ AVAILABILITY_WINDOW_MS = 1000
 
 function availability_series(rows, slo_ns):        # -> list of (x_s, availability), windows in increasing order
     W = AVAILABILITY_WINDOW_MS * 1_000_000          # 1 s
-    windows = group rows by end_ns div W            # window b is [b W, (b+1) W), centred on (b + 1/2) W
+    windows = group rows by send_ns div W           # window b is [b W, (b+1) W), centred on (b + 1/2) W
     return [ ((b + 0.5) * AVAILABILITY_WINDOW_MS / 1000,
               count of r in windows[b] with r.ok and r.end_ns - r.send_ns <= slo_ns) / len(windows[b]))
              for b in sorted keys of windows ]      # empty windows have no key, so they are skipped
@@ -432,6 +432,10 @@ function draw_availability(output_dir, done, swept_keys):
     save as output_dir/plots/availability.html, full page width (see FigurePage)
 ```
 
+- **Grouped by send time.** A request counts in the window it was sent in, whenever it finished. A request stuck on a
+  frozen server, or answered late, therefore shows as a failure at the moment it was sent, not when it was finally
+  answered or abandoned (which can be the DrainDeadline, long after the run). Requests that finish after the run
+  still count, so the last windows are complete only once the client's drain has ended.
 - **Window and x.** The window centred on `t` is `[t - 500 ms, t + 500 ms)`. Evaluating it at the centres
   `t = 0.5, 1.5, 2.5, … s` gives disjoint windows. One second holds enough requests for a stable ratio even at the
   tens of req/s of the CPU-burn runs (40 to 60 per window at 40 to 60 req/s), where 200 ms windows held only 8 to
@@ -443,20 +447,20 @@ function draw_availability(output_dir, done, swept_keys):
 
 Worked example, `slo_ms = 50` (`slo_ns = 50_000_000`):
 
-| `end_ns` | `send_ns` | outcome | Window (`end_ns div 1_000_000_000`) | Under SLO | Why |
+| `end_ns` | `send_ns` | outcome | Window (`send_ns div 1_000_000_000`) | Under SLO | Why |
 |---|---|---|---|---|---|
 | 10_000_000 | 0 | ok | 0 | yes | 10 ms |
 | 480_000_000 | 400_000_000 | ok | 0 | no | 80 ms > 50 ms |
-| 999_999_999 | 900_000_000 | cancelled | 0 | no | not ok (last ns of window 0) |
-| 1_000_000_000 | 960_000_000 | ok | 1 | yes | 40 ms; first ns of window 1 |
+| 999_999_999 | 900_000_000 | cancelled | 0 | no | not ok |
+| 1_000_000_000 | 960_000_000 | ok | 0 | yes | 40 ms; sent in window 0, though it ends in window 1 |
 | 1_500_000_000 | 1_450_000_000 | ok | 1 | yes | exactly 50 ms: `<=` |
 | (empty) | (empty) | not_sent | — | — | not finished |
 | 3_700_000_000 | 3_660_000_000 | rejected | 3 | no | not ok |
 
 | Window | x (s) | Availability | Check |
 |---|---|---|---|
-| 0 | 0.5 | 1/3 | one of three |
-| 1 | 1.5 | 1 | two of two |
+| 0 | 0.5 | 2/4 | two of four |
+| 1 | 1.5 | 1 | one of one |
 | 2 | — | skipped | no row ends in it |
 | 3 | 3.5 | 0 | zero of one |
 
