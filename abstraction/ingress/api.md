@@ -21,6 +21,7 @@ or missing required parameters make the program exit non-zero with a one-line er
 | `lb_retry_policy` | `none` \| `timeout` \| `anxious` | `none` | RetryPolicy: when the Ingress retries a forward itself (an LbRetry), consulted when the newest attempt fails and on a tick ([retry_policy/design.md](retry_policy/design.md#retrypolicyregistry)) |
 | `lb_max_retries` | integer, `>= 0` | `0` | Most LbRetries per ForwardTask (one client stream). `0`: no LB retries whatever the policy ([retry_policy/design.md](retry_policy/design.md#retrypolicy)) |
 | `lb_retry_timeout_ms` | float, ms, `> 0` | `150` | `timeout` RetryPolicy: start an LbRetry once the newest attempt has run this long without an answer ([retry_policy/design.md](retry_policy/design.md#retrypolicyregistry)) |
+| `lb_retry_late_factor` | float, `>= 0` | `10` | `anxious` RetryPolicy: retry only if CurrentExpFinish exceeds this times the request's time left ([retry_policy/design.md](retry_policy/design.md#anxious)) |
 | `lb_retry_anxiety_ratio` | float, `>= 0` | `0.3` | `anxious` RetryPolicy: retry an attempt when moving it is expected to finish at least this fraction sooner than staying ([retry_policy/design.md](retry_policy/design.md#anxious)) |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for the LoadBalancer's and the LoadCanceller's random choices |
 | `output_path` | path prefix | `ingress` | Outputs go to `<output_path>.cancels.csv`, `<output_path>.forwards.csv`, `<output_path>.liveness.csv`, `<output_path>.picks.csv` and `<output_path>.summary.json` |
