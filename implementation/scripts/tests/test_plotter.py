@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.20.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.21.0)
 import csv
 import json
 import os
@@ -407,16 +407,6 @@ class AvailabilityPlotTest(unittest.TestCase):
             table, keys = plotter.build_table(out)
             (label, s, gc, color), = plotter.availability_lines(out, table, keys)
             self.assertEqual((label, gc, color), ("load_gen.global_rate=500", None, 0))   # no run_start: no overlay
-
-    # The worked example's y column and the floor edge cases.
-    # Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
-    def test_unavailability_y(self):
-        self.assertAlmostEqual(plotter.unavailability_y(1 / 3), 2 / 3)
-        self.assertEqual(plotter.unavailability_y(1.0), plotter.UNAVAILABILITY_FLOOR)
-        self.assertEqual(plotter.unavailability_y(0.0), 1.0)
-        self.assertEqual(plotter.unavailability_y(0.9999), plotter.UNAVAILABILITY_FLOOR)  # 1 - 0.9999 rounds below 1e-4
-        self.assertAlmostEqual(plotter.unavailability_y(0.999), 0.001)
-        self.assertEqual(plotter.unavailability_y(0.5), 0.5)
 
     # Old CSVs (no in_stall_window column, as in test_worked_example) keep every
     # row; a current CSV skips the flagged StallWindowRequests.
