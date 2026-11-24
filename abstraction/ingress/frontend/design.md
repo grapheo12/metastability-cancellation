@@ -126,6 +126,7 @@ function start_attempt(ctx, task, k, ticket = none):              # -> ForwardAt
             ctx.lb_retry_refused.fetch_add(1)                     # summary lb_retry_refused; no attempt starts
             return Dropped
     if k > 0: ctx.lb_retries.fetch_add(1)                         # summary lb_retries
+    retry_policy.observe(ctx.retry_policy, AttemptSent(ticket.seq, ticket.server_id, ticket.queue_at_send))
     a = { k, ticket, server_id: ticket.server_id, start_ns: ticket.start_ns,
           running: true, outcome: none, cancel: new one-shot signal }
     entry = InFlightEntry(request_id = task.request_id, server_id = a.server_id, attempt = k)
@@ -141,7 +142,12 @@ procedure attempt_activity(ctx, task, a, entry):
     if outcome in {ok, rejected}:
         (exec_ns, _) = protocol.parse_exec_report(response.body)  # ExecReport; StartSlack is not used here
         worker_count = protocol.parse_worker_count(upstream x-worker-threads header)   # WorkerCount
-    load_balancer.finish(ctx.lb, a.ticket, outcome, exec_ns, worker_count)   # every attempt is finished, by itself
+    sampled = load_balancer.finish(ctx.lb, a.ticket, outcome, exec_ns, worker_count)   # every attempt is finished, by itself
+    retry_policy.observe(ctx.retry_policy, AttemptFinished(a.ticket.seq, a.server_id))
+    if sampled:
+        retry_policy.observe(ctx.retry_policy,
+                             EwmaChanged([exec_value(ctx.lb, s) for s in 0 ..= B-1],
+                                         [anti_value(ctx.lb, s) for s in 0 ..= B-1]))
     task.results.push((a, response, outcome))                     # never blocks: capacity covers every attempt
 ```
 
@@ -153,6 +159,10 @@ procedure attempt_activity(ctx, task, a, entry):
 - **Older attempts keep running** after a newer one starts and after the client has its answer; they are reset only
   if the client resets its stream while the ForwardTask is still waiting ([LbRetryLoop](#lbretryloop)).
 - An attempt to the same backend as an earlier one shares the client's upstream connection as another stream.
+- **RetryObservations** ([../retry_policy/design.md#retryobservation](../retry_policy/design.md#retryobservation)) are
+  sent for every attempt, in the order sent, finished, EWMAs: `observe` is a no-op unless the policy observes
+  (`anxious`), and never waits on the policy's logic. A first attempt that waited in the FilterWaitQueue is observed
+  as sent only once a scan sends it, with the QueueAtSend of that `pick`.
 
 ## LbRetryLoop
 

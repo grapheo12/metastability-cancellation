@@ -108,6 +108,7 @@ procedure shutdown():                                  # on interrupt or termina
     deadline = now() + INGRESS_DRAIN_TIMEOUT_MS * 1e6
     wait until no forward is in progress (sum of stats[*].outstanding == 0) or now() >= deadline
     stop the Load Canceller if it is still sending, then run its drain
+    retry_policy.stop(retry_policy)                         # optional: ends an observing policy's own activity
     close every upstream and canceller connection           # errors ignored
     liveness = heartbeat_monitor.monitor_stop(monitor) if monitor is not none else []
     write <output_path>.cancels.csv, <output_path>.forwards.csv, <output_path>.liveness.csv, <output_path>.picks.csv
