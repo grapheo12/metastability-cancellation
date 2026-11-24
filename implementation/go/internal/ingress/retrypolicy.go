@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.2.0)
+// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.3.0)
 package ingress
 
 import (
@@ -46,6 +46,8 @@ type AttemptView struct {
 	Start    time.Time // start_ns: the ticket's stamp (monotonic reading)
 	Running  bool
 	Outcome  ForwardOutcome // valid when !Running
+	// TicketSeq is the attempt's ForwardTicket.Seq.
+	TicketSeq uint64
 }
 
 // BackendView is a read-only copy of one backend's Load Balancer state.
@@ -56,6 +58,8 @@ type BackendView struct {
 	WorkerCount uint64
 	EwmaExecNs  float64 // valid when HasEwmaExec
 	HasEwmaExec bool
+	EwmaAntiNs  float64 // EwmaAntiServiceTime; valid when HasEwmaAnti
+	HasEwmaAnti bool
 	Live        bool
 }
 
@@ -81,6 +85,62 @@ type RetryState struct {
 // Design: abstraction/ingress/retry_policy/design.md#retrypolicy
 type RetryPolicy interface {
 	Decide(state RetryState, event RetryEvent) RetryDecision
+}
+
+// RetryObservationKind says what a RetryObservation reports.
+//
+// API: abstraction/ingress/retry_policy/api.md#retryobservation
+type RetryObservationKind int
+
+const (
+	// ObsAttemptSent: an attempt's pick succeeded (Seq, ServerID, QueueAtSend).
+	ObsAttemptSent RetryObservationKind = iota
+	// ObsAttemptFinished: an attempt was finished (Seq, ServerID).
+	ObsAttemptFinished
+	// ObsEwmaChanged: finish sampled; Exec/Anti hold every backend's EWMAs.
+	ObsEwmaChanged
+)
+
+// RetryObservation is what the Frontend tells an observing policy about an attempt.
+//
+// Design: abstraction/ingress/retry_policy/design.md#retryobservation
+type RetryObservation struct {
+	Kind        RetryObservationKind
+	Seq         uint64
+	ServerID    uint32
+	QueueAtSend uint64
+	Exec, Anti  []float64 // EwmaChanged: per backend, valid where HasExec/HasAnti
+	HasExec     []bool
+	HasAnti     []bool
+}
+
+// RetryObserver is the optional observe(policy, observation): it must not block
+// on the policy's logic and must discard once stopped.
+//
+// Design: abstraction/ingress/retry_policy/design.md#retryobservation
+type RetryObserver interface {
+	Observe(o RetryObservation)
+}
+
+// RetryStopper is the optional stop(policy), called once at Ingress Shutdown.
+//
+// Design: abstraction/ingress/retry_policy/design.md#retryobservation
+type RetryStopper interface {
+	Stop()
+}
+
+// observePolicy calls Observe if p observes; a no-op otherwise.
+func observePolicy(p RetryPolicy, o RetryObservation) {
+	if ob, ok := p.(RetryObserver); ok {
+		ob.Observe(o)
+	}
+}
+
+// stopPolicy calls Stop if p has one.
+func stopPolicy(p RetryPolicy) {
+	if st, ok := p.(RetryStopper); ok {
+		st.Stop()
+	}
 }
 
 // RetryPolicyFunc adapts a function to RetryPolicy.
@@ -141,11 +201,14 @@ func (lb *LoadBalancer) backendViews() []BackendView {
 	out := make([]BackendView, len(lb.stats))
 	for s := range lb.stats {
 		e, ok := lb.execValue(uint32(s))
+		a, okA := lb.antiValue(uint32(s))
 		out[s] = BackendView{
 			Outstanding: lb.stats[s].Outstanding.Load(),
 			WorkerCount: lb.stats[s].WorkerCount.Load(),
 			EwmaExecNs:  e,
 			HasEwmaExec: ok,
+			EwmaAntiNs:  a,
+			HasEwmaAnti: okA,
 			Live:        lb.monitor.IsLive(uint64(s)),
 		}
 	}

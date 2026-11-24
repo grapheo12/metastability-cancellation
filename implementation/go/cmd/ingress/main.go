@@ -1,7 +1,7 @@
 // Command ingress runs the Ingress: a load-balancing /ping proxy with an
 // in-process LoadCanceller.
 //
-// Source: abstraction/ingress/api.md (ingress v0.10.2)
+// Source: abstraction/ingress/api.md (ingress v0.11.0)
 package main
 
 import (
@@ -24,6 +24,7 @@ func main() {
 	fs.StringVar(&p.LbPolicy, "lb_policy", p.LbPolicy, "round_robin | least_outstanding | power_of_two | ewma")
 	fs.StringVar(&p.LbRetryPolicy, "lb_retry_policy", p.LbRetryPolicy, "RetryPolicy for LbRetries (registered name; none: never retry)")
 	fs.StringVar(&p.LbRetryTimeoutMs, "lb_retry_timeout_ms", p.LbRetryTimeoutMs, "timeout RetryPolicy: retry once the newest attempt has run this long, ms (> 0)")
+	fs.StringVar(&p.LbRetryAnxietyRatio, "lb_retry_anxiety_ratio", p.LbRetryAnxietyRatio, "anxious RetryPolicy: retry when moving is expected to finish at least this fraction sooner (>= 0)")
 	fs.StringVar(&p.LbMaxRetries, "lb_max_retries", p.LbMaxRetries, "most LbRetries per client stream (>= 0; 0: no LB retries)")
 	fs.StringVar(&p.LbFilter, "lb_filter", p.LbFilter, "none | deadline_mean | deadline_mean_per_worker | deadline_mean_queue_plus_share | deadline_mmk (DeadlineFilter strategy; no backend passes: 503)")
 	fs.StringVar(&p.EwmaBeta, "ewma_beta", p.EwmaBeta, "EwmaLatency weight of the old value, in [0, 1]")

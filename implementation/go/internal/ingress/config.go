@@ -2,7 +2,7 @@
 // proxy in front of several servers, with an in-process LoadCanceller that
 // picks victims from the InFlightMap.
 //
-// Source: abstraction/ingress/design.md (ingress v0.10.2)
+// Source: abstraction/ingress/design.md (ingress v0.11.0)
 package ingress
 
 import (
@@ -62,32 +62,36 @@ type Config struct {
 	// LbRetryTimeoutMs is the timeout policy's delay; LbRetryTimeoutNs = round(ms * 1e6).
 	LbRetryTimeoutMs float64
 	LbRetryTimeoutNs int64
+	// LbRetryAnxietyRatio is the anxious policy's alpha.
+	LbRetryAnxietyRatio float64
 }
 
 // Params holds the raw command-line values, named after the API parameters.
 type Params struct {
-	ListenAddr         string
-	Backends           string
-	NumClients         string
-	LbPolicy           string
-	LbFilter           string
-	EwmaBeta           string
-	CancelRate         string
-	DurationS          string
-	Seed               string
-	OutputPath         string
-	InitialStallMs     string
-	HeartbeatTimeoutMs string
-	LbRetryPolicy      string
-	LbMaxRetries       string
-	LbRetryTimeoutMs   string
+	ListenAddr          string
+	Backends            string
+	NumClients          string
+	LbPolicy            string
+	LbFilter            string
+	EwmaBeta            string
+	CancelRate          string
+	DurationS           string
+	Seed                string
+	OutputPath          string
+	InitialStallMs      string
+	HeartbeatTimeoutMs  string
+	LbRetryPolicy       string
+	LbMaxRetries        string
+	LbRetryTimeoutMs    string
+	LbRetryAnxietyRatio string
 }
 
 // DefaultParams returns the defaults from abstraction/ingress/api.md#program-parameters.
 func DefaultParams() Params {
 	return Params{ListenAddr: "0.0.0.0:9090", LbPolicy: PolicyLeastOutstanding, LbFilter: FilterNone, EwmaBeta: "0.7", CancelRate: "0", Seed: "0",
 		OutputPath: "ingress", InitialStallMs: "1000", HeartbeatTimeoutMs: "0",
-		LbRetryPolicy: RetryPolicyNone, LbMaxRetries: "0", LbRetryTimeoutMs: "150"}
+		LbRetryPolicy: RetryPolicyNone, LbMaxRetries: "0", LbRetryTimeoutMs: "150",
+		LbRetryAnxietyRatio: "0.3"}
 }
 
 // Validate turns Params into a Config or returns a one-line error.
@@ -172,6 +176,12 @@ func Validate(p Params) (Config, error) {
 		return c, errors.New("lb_retry_timeout_ms must be a finite number > 0")
 	}
 	c.LbRetryTimeoutMs, c.LbRetryTimeoutNs = rt, int64(math.Round(rt*1e6))
+	// Design: abstraction/ingress/design.md#configuration-validation
+	ar, err := strconv.ParseFloat(p.LbRetryAnxietyRatio, 64)
+	if p.LbRetryAnxietyRatio == "" || err != nil || !(ar >= 0) || math.IsInf(ar, 0) {
+		return c, errors.New("lb_retry_anxiety_ratio must be a finite number >= 0")
+	}
+	c.LbRetryAnxietyRatio = ar
 	c.OutputPath = p.OutputPath
 	return c, nil
 }

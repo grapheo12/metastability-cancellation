@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/design.md (ingress v0.10.2)
+// Source: abstraction/ingress/design.md (ingress v0.11.0)
 package ingress
 
 import (
@@ -185,21 +185,22 @@ func (ing *Ingress) Shutdown() error {
 }
 
 type summaryConfig struct {
-	ListenAddr         string   `json:"listen_addr"`
-	Backends           []string `json:"backends"`
-	NumClients         uint32   `json:"num_clients"`
-	LbPolicy           string   `json:"lb_policy"`
-	LbFilter           string   `json:"lb_filter"`
-	EwmaBeta           float64  `json:"ewma_beta"`
-	CancelRate         float64  `json:"cancel_rate"`
-	DurationS          float64  `json:"duration_s"`
-	InitialStallMs     uint64   `json:"initial_stall_ms"`
-	HeartbeatTimeoutMs uint64   `json:"heartbeat_timeout_ms"`
-	LbRetryPolicy      string   `json:"lb_retry_policy"`
-	LbMaxRetries       uint32   `json:"lb_max_retries"`
-	LbRetryTimeoutMs   float64  `json:"lb_retry_timeout_ms"`
-	Seed               uint64   `json:"seed"`
-	OutputPath         string   `json:"output_path"`
+	ListenAddr          string   `json:"listen_addr"`
+	Backends            []string `json:"backends"`
+	NumClients          uint32   `json:"num_clients"`
+	LbPolicy            string   `json:"lb_policy"`
+	LbFilter            string   `json:"lb_filter"`
+	EwmaBeta            float64  `json:"ewma_beta"`
+	CancelRate          float64  `json:"cancel_rate"`
+	DurationS           float64  `json:"duration_s"`
+	InitialStallMs      uint64   `json:"initial_stall_ms"`
+	HeartbeatTimeoutMs  uint64   `json:"heartbeat_timeout_ms"`
+	LbRetryPolicy       string   `json:"lb_retry_policy"`
+	LbMaxRetries        uint32   `json:"lb_max_retries"`
+	LbRetryTimeoutMs    float64  `json:"lb_retry_timeout_ms"`
+	LbRetryAnxietyRatio float64  `json:"lb_retry_anxiety_ratio"`
+	Seed                uint64   `json:"seed"`
+	OutputPath          string   `json:"output_path"`
 }
 
 // Summary has the field order of the Ingress summary JSON.
@@ -226,7 +227,7 @@ func (ing *Ingress) writeSummary(records []*CancelRecord, runEndS float64, runSt
 	counts, rates, targeted := summarizeCancels(records, c)
 	fQueued, fSent, fDropped, fMax := ing.lb.filterQueueCounts()
 	s := Summary{
-		Config:  summaryConfig{c.ListenAddr, c.Backends, c.NumClients, c.LbPolicy, c.LbFilter, c.EwmaBeta, c.CancelRate, c.DurationS, c.InitialStallMs, c.HeartbeatTimeoutMs, c.LbRetryPolicy, c.LbMaxRetries, c.LbRetryTimeoutMs, c.Seed, c.OutputPath},
+		Config:  summaryConfig{c.ListenAddr, c.Backends, c.NumClients, c.LbPolicy, c.LbFilter, c.EwmaBeta, c.CancelRate, c.DurationS, c.InitialStallMs, c.HeartbeatTimeoutMs, c.LbRetryPolicy, c.LbMaxRetries, c.LbRetryTimeoutMs, c.LbRetryAnxietyRatio, c.Seed, c.OutputPath},
 		RunEndS: runEndS, RunStartUnixNs: runStartUnixNs, Counts: counts, RatesPerS: rates, ClientsTargeted: targeted, FilterDropped: fDropped, FilterQueued: fQueued, FilterSentFromQ: fSent, FilterQueueMax: fMax, LbRetryRefused: ing.lbRetryRefused.Load(), LbRetries: ing.lbRetries.Load(), Backends: ing.lb.Snapshot(),
 	}
 	b, err := json.MarshalIndent(s, "", "  ")
