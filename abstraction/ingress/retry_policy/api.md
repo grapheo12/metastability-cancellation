@@ -67,7 +67,7 @@ See [design.md#retrystate](design.md#retrystate).
 
 ### `RetryObservation`
 
-`AttemptSent(seq: u64, server_id: u32, queue_at_send: u64)` \| `AttemptFinished(seq: u64, server_id: u32)` \|
+`AttemptSent(seq: u64, server_id: u32, queue_at_send: u64, deadline: u64)` (deadline: RequestDeadline, Unix ns, or `NO_DEADLINE = 2^64 - 1`) \| `AttemptFinished(seq: u64, server_id: u32)` \|
 `RetryRefused(seq: u64)` \|
 `EwmaChanged(exec: list of binary64 or none, anti: list of binary64 or none)`. What the Frontend tells an observing
 policy about every attempt. See [design.md#retryobservation](design.md#retryobservation).
