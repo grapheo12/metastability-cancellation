@@ -197,3 +197,4 @@
 | 0.40.4 | 2026-11-23T00:00:00Z | Glossary: EwmaAntiServiceTime, TicketSeq, QueueAtSend. Child bump: ingress 0.10.3 (load_balancer 0.14.0) |
 | 0.41.0 | 2026-11-23T00:00:00Z | `lb_retry_policy = anxious`, `lb_retry_anxiety_ratio`; glossary AnxiousRetry, AnxiousTracker, RetryObservation. Child bump: ingress 0.11.0 (retry_policy 0.3.0) |
 | 0.41.1 | 2026-11-23T00:00:00Z | Child bump: ingress 0.11.1 (frontend 0.8.0) |
+| 0.41.2 | 2026-11-23T00:00:00Z | Child bump: benchmark_runner 0.9.6 (config 0.25.0) |

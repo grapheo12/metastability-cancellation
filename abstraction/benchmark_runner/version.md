@@ -67,3 +67,4 @@
 | 0.9.3 | 2026-11-23T00:00:00Z | Child bump: experiment_executor 0.13.0 (sum `rejected_past_deadline`) |
 | 0.9.4 | 2026-11-23T00:00:00Z | Child bump: config 0.23.0 (`lb_retry_policy`, `lb_max_retries`) |
 | 0.9.5 | 2026-11-23T00:00:00Z | Child bump: config 0.24.0 (`lb_retry_timeout_ms`) |
+| 0.9.6 | 2026-11-23T00:00:00Z | Child bump: config 0.25.0 (`lb_retry_anxiety_ratio`) |
