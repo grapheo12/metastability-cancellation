@@ -27,7 +27,8 @@ From the Ingress parameters ([../api.md#program-parameters](../api.md#program-pa
 
 ### `RetryDecision`
 
-`Retry` \| `Wait`.
+`Retry` \| `RetryElsewhere` \| `Wait`. `RetryElsewhere` is a `Retry` whose `pick` excludes the newest attempt's
+backend ([design.md#retrypolicy](design.md#retrypolicy)).
 
 ### `AttemptView`
 
@@ -67,6 +68,7 @@ See [design.md#retrystate](design.md#retrystate).
 ### `RetryObservation`
 
 `AttemptSent(seq: u64, server_id: u32, queue_at_send: u64)` \| `AttemptFinished(seq: u64, server_id: u32)` \|
+`RetryRefused(seq: u64)` \|
 `EwmaChanged(exec: list of binary64 or none, anti: list of binary64 or none)`. What the Frontend tells an observing
 policy about every attempt. See [design.md#retryobservation](design.md#retryobservation).
 
@@ -88,6 +90,10 @@ Whether to start another attempt now. Must not block, must not change any shared
 Optional; a no-op for a policy without it. Called by the Frontend for every attempt; never blocks on the policy's
 logic, and discards after `stop`. See [design.md#retryobservation](design.md#retryobservation).
 
+### `attach(policy: RetryPolicy, is_live: function(u32) -> boolean) -> nothing`
+Optional. Called once at Ingress start, before any request, with the BackendLiveness source. See
+[design.md#retryobservation](design.md#retryobservation).
+
 ### `stop(policy: RetryPolicy) -> nothing`
 Optional. Called once at Ingress Shutdown; ends the policy's own activity. See
 [design.md#retryobservation](design.md#retryobservation).
@@ -95,4 +101,4 @@ Optional. Called once at Ingress Shutdown; ends the policy's own activity. See
 ## Uses
 
 - [../load_balancer/api.md](../load_balancer/api.md): `ForwardOutcome`, `ForwardTicket` (`seq`, `queue_at_send`), BackendStats values for the BackendView
-- [../heartbeat_monitor/api.md](../heartbeat_monitor/api.md): `is_live` for the BackendView
+- [../heartbeat_monitor/api.md](../heartbeat_monitor/api.md): `is_live` for the BackendView and `attach`
