@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.18.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.19.0)
 """PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot, QueueLengthPlot and ForwardTimelinePlots,
 drawn as interactive HTML FigurePages with plotly."""
 
@@ -590,12 +590,12 @@ def read_requests(path):
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
-AVAILABILITY_WINDOW_MS = 200
+AVAILABILITY_WINDOW_MS = 1000
 
 
 # Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
 def availability_series(rows, slo_ns):
-    """[(window centre s, available / finished)] for the non-empty 200 ms windows of end_ns, in order."""
+    """[(window centre s, available / finished)] for the non-empty 1 s windows of end_ns, in order."""
     w = AVAILABILITY_WINDOW_MS * 1_000_000
     windows = {}
     for end, send, ok in rows:

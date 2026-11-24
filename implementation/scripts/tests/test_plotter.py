@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.18.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.19.0)
 import csv
 import json
 import os
@@ -390,9 +390,9 @@ def write_requests(pdir, rows, slo_ms=5, instances=1, run_start=None):
 
 
 # The AvailabilityPlot worked example (result_plotter/design.md).
-AVAIL_EXAMPLE = [("ok", 0, 10_000_000), ("ok", 0, 80_000_000), ("cancelled", 140_000_000, 190_000_000),
-                 ("ok", 210_000_000, 250_000_000), ("ok", 250_000_000, 300_000_000), ("not_sent", None, None),
-                 ("rejected", 660_000_000, 700_000_000)]
+AVAIL_EXAMPLE = [("ok", 0, 10_000_000), ("ok", 400_000_000, 480_000_000), ("cancelled", 900_000_000, 999_999_999),
+                 ("ok", 960_000_000, 1_000_000_000), ("ok", 1_450_000_000, 1_500_000_000), ("not_sent", None, None),
+                 ("rejected", 3_660_000_000, 3_700_000_000)]
 
 
 class AvailabilityPlotTest(unittest.TestCase):
@@ -403,7 +403,7 @@ class AvailabilityPlotTest(unittest.TestCase):
             write_requests(os.path.join(out, "points", "point_0000"), AVAIL_EXAMPLE, slo_ms=50)
             rows = plotter.read_requests(os.path.join(out, "points", "point_0000", "loadgen.requests.csv"))
             self.assertEqual(len(rows), 6)  # not_sent ignored
-            self.assertEqual(plotter.availability_series(rows, 50_000_000), [(0.1, 1 / 3), (0.3, 1.0), (0.7, 0.0)])
+            self.assertEqual(plotter.availability_series(rows, 50_000_000), [(0.5, 1 / 3), (1.5, 1.0), (3.5, 0.0)])
             table, keys = plotter.build_table(out)
             (label, s, gc, color), = plotter.availability_lines(out, table, keys)
             self.assertEqual((label, gc, color), ("load_gen.global_rate=500", None, 0))   # no run_start: no overlay
@@ -423,7 +423,7 @@ class AvailabilityPlotTest(unittest.TestCase):
                 f.write("4,0,4,not_sent,,0,,,,,0,0\n")
             rows = plotter.read_requests(path)
             self.assertEqual(rows, [(1010000000, 1000000000, True), (1350000000, 1050000000, False)])
-            self.assertEqual(plotter.availability_series(rows, 300_000_000), [(1.1, 1.0), (1.3, 0.0)])
+            self.assertEqual(plotter.availability_series(rows, 300_000_000), [(1.5, 0.5)])  # one 1 s window
 
     # Design: abstraction/benchmark_runner/result_plotter/design.md#availabilityplot
     # Design: abstraction/benchmark_runner/result_plotter/design.md#gcoverlay
@@ -435,14 +435,14 @@ class AvailabilityPlotTest(unittest.TestCase):
             write_requests(pd(0), AVAIL_EXAMPLE, slo_ms=50, instances=2, run_start=10**18)
             for k, t in ((0, 10**18 + 15_000_000), (1, 10**18 + 50_000_000)):
                 with open(os.path.join(pd(0), f"server_{k}.gc.csv"), "w") as f:
-                    f.write(plotter.GC_HEADER + f"\n{t},{k + 1},0.01,3,0.02\n{10**18 + 900_000_000},99,1,1,1\n")
+                    f.write(plotter.GC_HEADER + f"\n{t},{k + 1},0.01,3,0.02\n{10**18 + 4_500_000_000},99,1,1,1\n")
             write_requests(pd(1), [("not_sent", None, None)])                             # nothing finished
             with open(os.path.join(pd(2), "loadgen.requests.csv"), "w") as f:
                 f.write(REQ_HEADER + "\n0,0,0,ok,202,0,1,2,1,1\n0,0,1,o")                  # truncated, slo missing
             table, keys = plotter.build_table(out)
             lines = plotter.availability_lines(out, table, keys)
             self.assertEqual([l[0] for l in lines], ["load_gen.global_rate=500"])
-            # t_end_s = 0.7 + 0.1 = 0.8: cycles at 0.015 s (instance 0) and 0.05 s (instance 1); 0.9 s dropped
+            # t_end_s = 3.5 + 0.5 = 4.0: cycles at 0.015 s (instance 0) and 0.05 s (instance 1); 4.5 s dropped
             self.assertEqual([(round(e[0], 3), e[1]) for e in lines[0][2]], [(0.015, 1), (0.05, 2)])
             try:
                 import plotly  # noqa: F401
