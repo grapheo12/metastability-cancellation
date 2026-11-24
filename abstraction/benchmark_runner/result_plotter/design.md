@@ -61,7 +61,7 @@ function plot(output_dir):
 | `throughput_latency_normalized` | `lg_goodput / (1 - cx_offered_fraction)` | `e2e_p50_us`, `e2e_p99_us`, `e2e_p999_us` | log |
 | `server_counters_normalized` | `x_key` | `srv_cancelled_before_processing / cx_sent`, `srv_cancelled_during_processing / cx_sent`, `srv_completed_before_cancel / cx_sent` | linear, 0 to 1 |
 | `queue_length` | `time` (s since server start) | one plot: `queue_len` summed over instances, one line per done point ([QueueLengthPlot](#queuelengthplot)) | linear, from 0 |
-| `availability` | `loadgen_time` (s since the load generator's `run_start`) | one plot: unavailability (1 − Availability) per `AVAILABILITY_WINDOW_MS` (1000 ms) window, one line per done point ([AvailabilityPlot](#availabilityplot)) | log, `UNAVAILABILITY_FLOOR` (10^-4) to 1 |
+| `availability` | `loadgen_time` (s since the load generator's `run_start`) | one plot: Availability per `AVAILABILITY_WINDOW_MS` (1000 ms) window, one line per done point ([AvailabilityPlot](#availabilityplot)) | linear, 0 to 1 |
 | `forward_latency`, `ewma_latency` (one figure each per backend when a point has `B > 1`) | `forward_time` (s since the Ingress's `run_start`) | median and p99 per `FORWARD_BIN_MS` bin, one line per done point ([ForwardTimelinePlots](#forwardtimelineplots)) | log |
 
 A fraction is empty when its denominator (`lg_scheduled` or `cx_sent`) is empty or `0`.
@@ -413,12 +413,6 @@ function availability_series(rows, slo_ns):        # -> list of (x_s, availabili
               count of r in windows[b] with r.ok and r.end_ns - r.send_ns <= slo_ns) / len(windows[b]))
              for b in sorted keys of windows ]      # empty windows have no key, so they are skipped
 
-UNAVAILABILITY_FLOOR = 0.0001                        # 10^-4: where a fully available window is drawn
-
-function unavailability_y(a):                         # binary64; a in [0, 1]
-    u = 1 - a
-    return u if u >= UNAVAILABILITY_FLOOR else UNAVAILABILITY_FLOOR
-
 function draw_availability(output_dir, done, swept_keys):
     lines = []
     for row in done, in point-id order:
@@ -431,11 +425,9 @@ function draw_availability(output_dir, done, swept_keys):
         gc = gc_events(pdir, [0 ..= I-1], origin(pdir, "loadgen.summary.json"), t_end_s)   # GcOverlay
         lines.append((label as in the QueueLengthPlot, s, gc, the point's color index))
     if lines is empty: delete output_dir/plots/availability.html if it exists; return
-    one plot; for each line: a line with small markers through [ (x, unavailability_y(a)) for (x, a) in s ],
-        in the point's color; the hover text shows the availability a itself
-    overlay each line's gc as in [GcOverlay](#gcoverlay), from y UNAVAILABILITY_FLOOR to 1
-    x-axis linear, label "time since the load generator's run start (s)";
-    y-axis log, range UNAVAILABILITY_FLOOR to 1, label "unavailability (1 − availability)"
+    one plot; for each line: a line with small markers through s, in the point's color
+    overlay each line's gc as in [GcOverlay](#gcoverlay), from y 0 to 1
+    x-axis linear, label "time since the load generator's run start (s)"; y-axis linear 0 to 1, label "availability"
     legend with the labels when there is more than one line
     save as output_dir/plots/availability.html, full page width (see FigurePage)
 ```
@@ -445,13 +437,6 @@ function draw_availability(output_dir, done, swept_keys):
   tens of req/s of the CPU-burn runs (40 to 60 per window at 40 to 60 req/s), where 200 ms windows held only 8 to
   12 and the line jumped in steps of about 10%. Effects of a few seconds (a WorkerFreeze, a retry wave) still span
   several windows; shorter ones, such as single GC cycles, are smoothed.
-- **Log of unavailability.** Near 1, availability differences are what matter (99% vs 99.9% vs 99.99%), and a linear
-  or log availability axis squeezes them together. Plotting `1 − availability` on a log axis puts each "nine" a decade
-  apart. A window with no failure has unavailability 0, which a log axis cannot show; it is drawn at
-  `UNAVAILABILITY_FLOOR = 10^-4`, the bottom of the axis, so "no failure in this window" reads as the floor line. With
-  `n` requests in a window the smallest nonzero value is `1/n` (for example 1/80 at 80 req/s, 1/800 at 800 req/s), so
-  the floor stays below every real failure unless a window holds 10,000 requests or more. A window at 0 availability
-  is drawn at 1, the top.
 - **Integer test.** `slo_ns = round(slo_ms × 1_000_000)` once per point; the per-row comparison is in integers.
 - **Color.** The color index is the point's position among the done points with a Requests CSV, as in the
   ForwardTimelinePlots.
@@ -468,15 +453,12 @@ Worked example, `slo_ms = 50` (`slo_ns = 50_000_000`):
 | (empty) | (empty) | not_sent | — | — | not finished |
 | 3_700_000_000 | 3_660_000_000 | rejected | 3 | no | not ok |
 
-| Window | x (s) | Availability | y = `unavailability_y` | Check |
-|---|---|---|---|---|
-| 0 | 0.5 | 1/3 | 2/3 | one of three |
-| 1 | 1.5 | 1 | 10^-4 (floor) | two of two: unavailability 0 |
-| 2 | — | skipped | — | no row ends in it |
-| 3 | 3.5 | 0 | 1 | zero of one |
-
-`unavailability_y` edge cases: `a = 0.9999` gives `0.0001` (at the floor exactly, binary64 `1 - 0.9999` may round just
-below it and is then raised to the floor); `a = 0.999` gives `0.001`; `a = 0.5` gives `0.5`.
+| Window | x (s) | Availability | Check |
+|---|---|---|---|
+| 0 | 0.5 | 1/3 | one of three |
+| 1 | 1.5 | 1 | two of two |
+| 2 | — | skipped | no row ends in it |
+| 3 | 3.5 | 0 | zero of one |
 
 | Situation | Result |
 |---|---|
