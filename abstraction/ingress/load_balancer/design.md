@@ -33,7 +33,8 @@ function pick(lb, remaining_ns, attempt, record = true, exclude = none):   # rem
     lb.stats[s].forwarded.fetch_add(1)
     q = lb.seq.fetch_add(1)                          # TicketSeq: 0, 1, 2, ... in pick order
     return ForwardTicket(server_id = s, start_ns = monotonic_now_ns(), attempt = attempt,
-                         seq = q, queue_at_send = max(n, 0))
+                         seq = q, queue_at_send = max(n, 0),
+                         estimate_ns = estimated_finish(lb, s, max(n, 0)))      # EstimatedFinish
 
 function finish(lb, ticket, outcome, exec_ns, worker_count):   # exec_ns, worker_count: from the answer, or none
                                                                 # -> sampled: boolean
@@ -57,7 +58,8 @@ function finish(lb, ticket, outcome, exec_ns, worker_count):   # exec_ns, worker
         x = exec_value(lb, s)                        # unchanged; none before the first sample
     with lb.log_lock:
         lb.log.append(ForwardRecord(end_ns, s, outcome, latency_ns, e,
-                                    exec_ns if outcome in {ok, rejected} else none, x, ticket.attempt))   # ForwardLog
+                                    exec_ns if outcome in {ok, rejected} else none, x, ticket.attempt,
+                                    ticket.estimate_ns))                   # ForwardLog
     return sampled                                   # true: both EWMAs above took this sample
 ```
 
@@ -79,6 +81,35 @@ load it is about to add. That narrows, but does not close, the race described be
   at 0: the `n` of the DeadlineFilter's `(n + 1) × e`, read atomically with the increment, so two concurrent picks of
   the same backend get different values. The LoadBalancer itself does not use it; the `anxious` RetryPolicy does
   ([../retry_policy/design.md#retrypolicyregistry](../retry_policy/design.md#retrypolicyregistry)).
+
+## EstimatedFinish
+
+At each pick the LoadBalancer records, on the ForwardTicket, the time it expects the forward to take: the
+**EstimatedFinish** `(queue_at_send + 1) × EwmaExecTime` of the chosen backend, the same quantity as the
+`deadline_mean` DeadlineFilter's `(n + 1) × e`.
+
+```
+function estimated_finish(lb, s, q):                 # binary64 ns, or none
+    e = exec_value(lb, s)                            # EwmaExecTime as read now; none before the first sample
+    return none if e is none else float(q + 1) * e   # binary64, round to nearest
+```
+
+- **What it is compared with.** The ForwardRecord carries it to the ForwardLog (`estimate_ns` in `forwards.csv`),
+  next to the forward's `latency_ns` (pick to answer). The **EstimateError** of a forward is
+  `(latency_ns − estimate_ns) / latency_ns`: `0` is exact, positive means the forward took longer than estimated,
+  negative shorter. The ResultPlotter draws its histogram
+  ([../../benchmark_runner/result_plotter/design.md](../../benchmark_runner/result_plotter/design.md), EstimateErrorHistogram).
+- **Not used to choose.** Recording it changes no pick: `choose` already ran.
+- **Races.** `exec_value` is read after the pick's increment; a concurrent `finish` may update EwmaExecTime in between,
+  as for every LoadBalancer heuristic.
+
+Worked example: backend with EwmaExecTime 400 ms (`400_000_000` ns).
+
+| `queue_at_send` | `estimate_ns` | Check |
+|---|---|---|
+| 0 | 400_000_000 | `1 × 400 ms` |
+| 3 | 1_600_000_000 | `4 × 400 ms` |
+| any, no EwmaExecTime yet | none | empty in `forwards.csv` |
 
 ## EwmaLatency
 

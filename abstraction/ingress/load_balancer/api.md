@@ -41,6 +41,7 @@ name ([../api.md#backendstats](../api.md#backendstats)).
 | `attempt` | u32 | LbRetries of the ForwardTask before this attempt: `0` for its first ([../retry_policy/design.md](../retry_policy/design.md#retrypolicy)) |
 | `seq` | u64 | TicketSeq: unique per run, increasing in pick order ([design.md#forwardticket](design.md#forwardticket)) |
 | `queue_at_send` | u64 | QueueAtSend: the backend's `outstanding` just before this pick's increment ([design.md#forwardticket](design.md#forwardticket)) |
+| `estimate_ns` | binary64, ns, or none | EstimatedFinish `(queue_at_send + 1) × EwmaExecTime` at the pick; none before the backend's first ExecutionTime sample ([design.md#estimatedfinish](design.md#estimatedfinish)) |
 
 Returned by `pick`, given back unchanged to `finish`. See [design.md#forwardticket](design.md#forwardticket).
 
@@ -56,6 +57,7 @@ Returned by `pick`, given back unchanged to `finish`. See [design.md#forwardtick
 | `exec_ns` | u64, ns, or none | The ExecutionTime the backend reported for this forward; none unless `ok` or `rejected` with a valid ExecReport |
 | `ewma_exec_ns` | float (binary64), ns, or none | The backend's EwmaExecTime right after this `finish`; none before its first sample |
 | `attempt` | u32 | The ticket's `attempt` |
+| `estimate_ns` | binary64, ns, or none | The ticket's EstimatedFinish ([design.md#estimatedfinish](design.md#estimatedfinish)) |
 
 One per `finish`, kept in the **ForwardLog**. See [design.md#forwardlog](design.md#forwardlog).
 
