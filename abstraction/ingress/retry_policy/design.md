@@ -42,7 +42,7 @@ Such a policy implements two optional operations; a policy without them (`none`,
 
 | Observation | Sent by (Frontend) | When | Payload |
 |---|---|---|---|
-| `AttemptSent(seq, server_id, queue_at_send)` | `start_attempt` | right after its `pick` succeeded, before the forward starts; for attempt 0 and every LbRetry | the ForwardTicket's TicketSeq, backend and QueueAtSend ([../load_balancer/design.md#forwardticket](../load_balancer/design.md#forwardticket)) |
+| `AttemptSent(seq, server_id, queue_at_send, deadline)` | `start_attempt` | right after its `pick` succeeded, before the forward starts; for attempt 0 and every LbRetry | the ForwardTicket's TicketSeq, backend and QueueAtSend ([../load_balancer/design.md#forwardticket](../load_balancer/design.md#forwardticket)), and the request's RequestDeadline (u64 Unix ns) or `NO_DEADLINE = 2^64 - 1` |
 | `AttemptFinished(seq, server_id)` | `attempt_activity` | right after `finish`, for every outcome (`reset` and `bad_gateway` included) | the ticket's TicketSeq and backend |
 | `RetryRefused(seq)` | LbRetryLoop | a `Retry` or `RetryElsewhere` whose `pick` was `Dropped` | the newest attempt's TicketSeq |
 | `EwmaChanged(exec[0..B-1], anti[0..B-1])` | `attempt_activity` | right after `AttemptFinished`, only when `finish` returned `sampled` | every backend's EwmaExecTime and EwmaAntiServiceTime (`exec_value`, `anti_value`; none before a sample), read in `server_id` order |
@@ -183,20 +183,16 @@ function anxious_decide(p, state, event):
     return RetryElsewhere if c > float(state.remaining_ns) else Wait      # ExpectedLate: strict >
 
 procedure anxious_tracker(p):
-    entries = map TicketSeq -> { server_id: u32, queue: u64 }              # attempts in flight
-    count   = array[B] of u64 = 0                                          # entries per backend
+    entries = array[B] of map TicketSeq -> deadline                       # attempts in flight, per backend; deadline: u64
     exec    = array[B] of (binary64 or none) = none                        # EwmaExecTime, as last observed
     anti    = array[B] of (binary64 or none) = none                        # EwmaAntiServiceTime, as last observed
     live    = array[B] of boolean = true                                   # BackendLiveness, as last read
     dirty   = false                                                        # a stat changed since the last evaluation
     every ANXIOUS_TICK_MS, and on each observation, until p.stopped:
-        on AttemptSent(seq, s, q):
-            entries[seq] = { s, q }; count[s] += 1; dirty = true
+        on AttemptSent(seq, s, q, d):
+            entries[s][seq] = d; dirty = true                              # q (QueueAtSend) is not used
         on AttemptFinished(seq, s):
-            if seq in entries: remove entries[seq]; count[s] -= 1
-            for each e in entries with e.server_id == s:
-                e.queue = e.queue - 1 if e.queue > 0 else 0                # one fewer request ahead of it
-            dirty = true
+            remove entries[s][seq] if present; dirty = true
         on EwmaChanged(x, a):
             exec = x; anti = a; dirty = true
         on RetryRefused(seq):                                              # not a stat change: no evaluation
@@ -205,29 +201,41 @@ procedure anxious_tracker(p):
             now_live = [ p.is_live(s) if p.is_live is not none else true for s in 0 ..= B-1 ]
             if now_live != live: live = now_live; dirty = true
             if dirty:                                                      # AnxiousEvaluation
-                p.anxious.store(anxious_set(p, entries, count, exec, anti, live))
+                p.anxious.store(anxious_set(p, entries, exec, anti, live))
                 dirty = false
 
-function anxious_set(p, entries, count, exec, anti, live):                 # binary64, each step rounded, no fused ops
+function edf_ahead(entries, c, d):                                         # EdfAhead: u64
+    return count of seq in entries[c] with entries[c][seq] <= d           # ties count as ahead
+
+function anxious_set(p, entries, exec, anti, live):                        # binary64, each step rounded, no fused ops
     out = {}                                                               # TicketSeq -> CurrentExpFinish
-    for each (seq, e) in entries:
-        b = e.server_id
-        L = [ c for c in 0 ..= B-1 if c != b and live[c] ]                 # where a RetryElsewhere can go
-        if L is empty: continue
-        if exec[b] is none or anti[b] is none or exec[b] == 0: continue
-        current = float(e.queue + 1) * exec[b]                             # CurrentExpFinish
-        others  = sum(count[c] for c in L)                                 # in flight on the live other backends
-        retry   = (float(others) / float(len(L)) + 1) * anti[b]            # RetryExpFinish
-        if (current - retry) / current >= p.alpha: out[seq] = current
+    for b in 0 ..= B-1:
+        for each (seq, d) in entries[b]:
+            L = [ c for c in 0 ..= B-1 if c != b and live[c] ]             # where a RetryElsewhere can go
+            if L is empty: continue
+            if exec[b] is none or anti[b] is none or exec[b] == 0: continue
+            mine    = edf_ahead(entries, b, d) - 1                         # ahead of it on its own backend (itself excluded)
+            current = float(mine + 1) * exec[b]                            # CurrentExpFinish
+            others  = sum(edf_ahead(entries, c, d) for c in L)             # ahead of it on each live other backend
+            retry   = (float(others) / float(len(L)) + 1) * anti[b]        # RetryExpFinish
+            if (current - retry) / current >= p.alpha: out[seq] = current
     return out
 ```
 
-- **Which queue.** `queue` starts at the attempt's QueueAtSend, the `n` its `pick` saw, and loses one for every attempt
-  on the same backend that finishes after it was sent (whatever its outcome), never below 0. `count[b]` is the number
-  of attempts the tracker knows to be in flight on `b`, older attempts of an LbRetry included: they still occupy the
-  backend.
-- **Which retry estimate.** `others / len(L)` is the average number in flight on one of the **live** backends other
-  than `b`, plus one for the retry itself, at the service time a request sees away from `b` (EwmaAntiServiceTime).
+- **EdfAhead: which requests are ahead.** The servers' EDF WorkQueue
+  ([../../server/worker_pool/design.md#earliestdeadlinefirst](../../server/worker_pool/design.md#earliestdeadlinefirst))
+  serves the earliest RequestDeadline first, so a request is behind exactly the requests whose deadline is at or
+  before its own, i.e. whose remaining time is `<=` its own, wherever it was sent and whenever. `edf_ahead(c, d)`
+  counts the attempts the tracker knows to be in flight on `c` with `deadline <= d`, older attempts of an LbRetry
+  included (they still occupy the backend). `deadline` is the request's RequestDeadline from `AttemptSent`, or
+  `NO_DEADLINE = 2^64 - 1` without one, the same key the server uses. On its own backend the attempt counts itself,
+  so `mine` subtracts it.
+- **Approximations, accepted.** Ties count as ahead (`<=`); the server breaks them by push order, which the tracker
+  does not know. Attempts already being served are still in flight and are counted if their deadline is `<= d`; the
+  tracker cannot tell queued from running. With a `fifo` WorkQueue the estimate does not match the server's order.
+- **Which retry estimate.** `others / len(L)` is the average number ahead of it by deadline on one of the **live**
+  backends other than `b`, plus one for the retry itself, at the service time a request sees away from `b`
+  (EwmaAntiServiceTime).
   A dead backend is no target: its stuck attempts and stale numbers would make moving look cheap. The decision is
   `RetryElsewhere`, so the retry never lands on `b` again; among the others it goes wherever `pick` sends it, and it
   may be refused (DeadlineFilter, or no live other backend at pick time).
@@ -246,29 +254,35 @@ function anxious_set(p, entries, count, exec, anti, live):                 # bin
   stays in `entries` until it finishes.
 - **Ties and races.**
   - A ratio exactly equal to `alpha` retries (`>=`).
-  - Observations are applied in the order the tracker receives them. If an attempt's `AttemptSent` is received
-    after the `AttemptFinished` of an attempt its `pick` already counted, that finish does not lower its `queue`. The
-    estimate is a heuristic and the race is accepted.
+  - Observations are applied in the order the tracker receives them; an entry exists from its `AttemptSent` until its
+    `AttemptFinished`. A finish received before its own `AttemptSent` (impossible from one activity) would leave a
+    stale entry; the estimate is a heuristic.
   - `decide` reads the set published at the last tick, so it is up to `ANXIOUS_TICK_MS` old, and a TicketSeq whose
     attempt has since finished is harmless (`decide` checks `newest.running`).
 - **Edge cases.** No live backend other than `b` (including `B = 1`), a backend with no EwmaExecTime or EwmaAntiServiceTime yet, or an EwmaExecTime of 0: never
   anxious. `alpha = 0` retries as soon as moving is expected to be no slower. `alpha > 1` never retries (the ratio
   is at most 1).
-- **A request first in line on a stopped backend** (`queue = 0`, no finishes) is anxious only if
+- **A request with the earliest deadline on a stopped backend** (`mine = 0`) is anxious only if
   `exec[b] × (1 - alpha) >= retry`: the policy estimates from queue position, not from elapsed time.
 
-Worked example, `alpha = 0.3`, times in ms:
+Worked example, `alpha = 0.3`, times in ms; deadlines are written as small numbers (only their order matters), `*`
+marks the entry being evaluated, and `MAX` is `NO_DEADLINE`:
 
-| Case | `B` | entry (`b`, `queue`) | `exec[b]` | `anti[b]` | `count` | current | retry | ratio | Anxious |
-|---|---|---|---|---|---|---|---|---|---|
-| Long queue | 2 | (0, 4) | 80 | 80 | [6, 2] | `5 × 80 = 400` | `(2/1 + 1) × 80 = 240` | `160/400 = 0.4` | yes |
-| Exactly alpha | 2 | (0, 4) | 80 | 70 | [5, 3] | `5 × 80 = 400` | `(3/1 + 1) × 70 = 280` | `120/400 = 0.3` | yes (`>=`) |
-| Short queue | 2 | (0, 1) | 80 | 80 | [2, 2] | `2 × 80 = 160` | `(2/1 + 1) × 80 = 240` | `-80/160 = -0.5` | no |
-| Three backends | 3 | (0, 4) | 100 | 100 | [5, 3, 1] | `5 × 100 = 500` | `(4/2 + 1) × 100 = 300` | `200/500 = 0.4` | yes |
-| No sample | 2 | (1, 9) | none | 80 | [1, 10] | — | — | — | no |
-| One backend | 1 | (0, 9) | 80 | none | [10] | — | — | — | no |
-| Other backend dead | 2 | (0, 4) | 80 | 80 | [6, 2], backend 1 not live | — | — | — | no (`L` empty) |
-| Three, one dead | 3 | (0, 4) | 100 | 100 | [5, 3, 1], backend 2 not live | `5 × 100 = 500` | `(3/1 + 1) × 100 = 400` | `100/500 = 0.2` | no |
+| Case | `B` | Deadlines in flight per backend | `exec[b]` | `anti[b]` | `mine` | `others` / `len(L)` | current | retry | ratio | Anxious |
+|---|---|---|---|---|---|---|---|---|---|---|
+| EDF, not FIFO | 2 | 0: [3, 5, 10*, 20, 30, 40]; 1: [4, 12, 15] | 80 | 80 | 2 | 1 / 1 | `3 × 80 = 240` | `(1/1 + 1) × 80 = 160` | `80/240 = 0.333` | yes |
+| Late deadline | 2 | 0: [3, 5, 20, 30, 40, 50*]; 1: [4, 12, 15] | 80 | 80 | 5 | 3 / 1 | `6 × 80 = 480` | `(3/1 + 1) × 80 = 320` | `160/480 = 0.333` | yes |
+| Earliest deadline | 2 | 0: [2*, 3, 5]; 1: [4, 12, 15] | 80 | 80 | 0 | 0 / 1 | `1 × 80 = 80` | `(0/1 + 1) × 80 = 80` | `0/80 = 0` | no |
+| Exactly alpha | 2 | 0: [1, 2, 3, 4, 10*]; 1: [5, 6, 7, 20] | 80 | 70 | 4 | 3 / 1 | `5 × 80 = 400` | `(3/1 + 1) × 70 = 280` | `120/400 = 0.3` | yes (`>=`) |
+| Tie | 2 | 0: [10*, 10]; 1: [10, 10] | 80 | 80 | 1 | 2 / 1 | `2 × 80 = 160` | `(2/1 + 1) × 80 = 240` | `-80/160 = -0.5` | no (ties count as ahead) |
+| No deadline | 2 | 0: [3, MAX*]; 1: [4, MAX] | 80 | 80 | 1 | 2 / 1 | `2 × 80 = 160` | `(2/1 + 1) × 80 = 240` | `-0.5` | no (and `decide` never retries it) |
+| Three backends | 3 | 0: [3, 5, 7, 9, 10*]; 1: [1, 2, 30]; 2: [50] | 100 | 100 | 4 | 2 / 2 | `5 × 100 = 500` | `(2/2 + 1) × 100 = 200` | `300/500 = 0.6` | yes |
+| Three, one dead | 3 | same, backend 2 not live | 100 | 100 | 4 | 2 / 1 | `500` | `(2/1 + 1) × 100 = 300` | `200/500 = 0.4` | yes |
+| Other backend dead | 2 | 0: [3, 10*]; 1 not live | 80 | 80 | — | — / 0 | — | — | — | no (`L` empty) |
+| No sample | 2 | 0: [1]; 1: [10*] | none | 80 | — | — | — | — | — | no |
+| One backend | 1 | 0: [9*] | 80 | none | — | — | — | — | — | no |
+
+The "EDF, not FIFO" row would count 5 ahead on backend 0 and 3 on backend 1 if every request in flight were ahead.
 
 In every row above, the other backends are live unless the row says otherwise. "Anxious" means the TicketSeq is in the
 published map with `current` as its CurrentExpFinish; `decide` then also needs ExpectedLate:
@@ -286,21 +300,22 @@ When the set is recomputed (ticks at 10, 20, 30, … ms):
 
 | Between ticks | At the tick | Evaluation | Published set |
 |---|---|---|---|
-| `AttemptSent(7, 0, 4)` | liveness unchanged | yes | recomputed: `{7}` if anxious |
+| `AttemptSent(7, 0, 4, d)` | liveness unchanged | yes | recomputed: `{7}` if anxious |
 | nothing | liveness unchanged | no | unchanged |
 | `RetryRefused(7)` | liveness unchanged | no | `7` removed at once, not added back |
 | nothing | backend 1 turns not live | yes | recomputed (7 may return) |
 | `AttemptFinished(3, 1)` | — | yes | recomputed |
 
-Queue bookkeeping, backend 0 holding TicketSeqs 9 (`queue 1`), 10 (`queue 2`), 11 (`queue 3`):
+Bookkeeping, backend 0 holding TicketSeqs 9 (deadline 5), 10 (deadline 8), 11 (deadline 12); `edf_ahead(0, 12)` for
+TicketSeq 11:
 
-| Observation | 9 | 10 | 11 | `count[0]` |
-|---|---|---|---|---|
-| start | 1 | 2 | 3 | 3 |
-| `AttemptFinished(9, 0)` | removed | 1 | 2 | 2 |
-| `AttemptFinished(10, 0)` | — | removed | 1 | 1 |
-| `AttemptFinished(42, 0)` (not tracked) | — | — | 0 | 1 |
-| `AttemptFinished(43, 0)` (not tracked) | — | — | 0 (floor) | 1 |
+| Observation | Entries on backend 0 | `edf_ahead(0, 12)` |
+|---|---|---|
+| start | 9: 5, 10: 8, 11: 12 | 3 |
+| `AttemptSent(12, 0, q, 20)` | + 12: 20 | 3 (deadline 20 is after 12) |
+| `AttemptSent(13, 0, q, 1)` | + 13: 1 | 4 (deadline 1 is before 12, though sent later) |
+| `AttemptFinished(9, 0)` | − 9 | 3 |
+| `AttemptFinished(42, 0)` (not tracked) | unchanged | 3 |
 
 ## Adding a RetryPolicy
 

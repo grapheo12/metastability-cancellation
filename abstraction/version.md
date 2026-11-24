@@ -203,3 +203,4 @@
 | 0.41.5 | 2026-11-24T00:00:00Z | Child bump: ingress 0.12.0 (frontend 0.9.0) |
 | 0.42.0 | 2026-11-24T00:00:00Z | Glossary Availability: 1 s window. Child bump: benchmark_runner 0.10.0 (result_plotter 0.19.0) |
 | 0.42.1 | 2026-11-24T00:00:00Z | Glossary AnxiousRetry (ExpectedLate). Child bump: ingress 0.12.1 (retry_policy 0.5.0) |
+| 0.42.2 | 2026-11-24T00:00:00Z | Glossary AnxiousRetry, AnxiousTracker, EdfAhead. Child bump: ingress 0.12.2 (retry_policy 0.6.0) |
