@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.5.0)
+// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.6.0)
 package ingress
 
 import (
@@ -113,10 +113,17 @@ type RetryObservation struct {
 	Seq         uint64
 	ServerID    uint32
 	QueueAtSend uint64
+	Deadline    uint64    // AttemptSent: the RequestDeadline (Unix ns), or NoDeadline
 	Exec, Anti  []float64 // EwmaChanged: per backend, valid where HasExec/HasAnti
 	HasExec     []bool
 	HasAnti     []bool
 }
+
+// NoDeadline is NO_DEADLINE (2^64 - 1): an AttemptSent of a request without a
+// RequestDeadline, after every deadline in EDF order.
+//
+// API: abstraction/ingress/retry_policy/api.md#retryobservation
+const NoDeadline = ^uint64(0)
 
 // RetryObserver is the optional observe(policy, observation): it must not block
 // on the policy's logic and must discard once stopped.

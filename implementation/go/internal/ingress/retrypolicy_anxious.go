@@ -1,7 +1,8 @@
-// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.5.0)
+// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.6.0)
 package ingress
 
 import (
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -154,17 +155,13 @@ func (p *anxiousPolicy) unpublish(seq uint64) {
 	p.anxious.Store(&next)
 }
 
-// anxiousEntry is one attempt in flight: its backend's requests ahead of it.
-type anxiousEntry struct {
-	queue uint64
-}
-
 // anxiousTracker is the AnxiousTracker's state, owned by one goroutine.
-// entries is kept per backend, so a finish only walks its own backend.
+// entries is kept per backend: TicketSeq -> RequestDeadline (NoDeadline
+// without one).
 //
 // Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 type anxiousTracker struct {
-	entries []map[uint64]*anxiousEntry // per backend: TicketSeq -> entry; count[b] = len(entries[b])
+	entries []map[uint64]uint64 // per backend: TicketSeq -> deadline (Unix ns)
 	exec    []float64
 	hasExec []bool
 	anti    []float64
@@ -174,38 +171,31 @@ type anxiousTracker struct {
 }
 
 func newAnxiousTracker(b int) *anxiousTracker {
-	tr := &anxiousTracker{entries: make([]map[uint64]*anxiousEntry, b), exec: make([]float64, b),
+	tr := &anxiousTracker{entries: make([]map[uint64]uint64, b), exec: make([]float64, b),
 		hasExec: make([]bool, b), anti: make([]float64, b), hasAnti: make([]bool, b), live: make([]bool, b)}
 	for i := range tr.entries {
-		tr.entries[i] = map[uint64]*anxiousEntry{}
+		tr.entries[i] = map[uint64]uint64{}
 		tr.live[i] = true
 	}
 	return tr
 }
 
 // apply folds one observation into the state. An observation naming a backend
-// out of range is ignored.
+// out of range is ignored. QueueAtSend is not used (EdfAhead replaces it).
 //
 // Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 func (tr *anxiousTracker) apply(o RetryObservation) {
 	switch o.Kind {
 	case ObsAttemptSent:
 		if int(o.ServerID) < len(tr.entries) {
-			tr.entries[o.ServerID][o.Seq] = &anxiousEntry{queue: o.QueueAtSend}
+			tr.entries[o.ServerID][o.Seq] = o.Deadline
 			tr.dirty = true
 		}
 	case ObsAttemptFinished:
-		if int(o.ServerID) >= len(tr.entries) {
-			return
+		if int(o.ServerID) < len(tr.entries) {
+			delete(tr.entries[o.ServerID], o.Seq)
+			tr.dirty = true
 		}
-		m := tr.entries[o.ServerID]
-		delete(m, o.Seq) // count[s] -= 1 when it was tracked
-		for _, e := range m {
-			if e.queue > 0 {
-				e.queue-- // one fewer request ahead of it; never below 0
-			}
-		}
-		tr.dirty = true
 	case ObsEwmaChanged:
 		copy(tr.exec, o.Exec)
 		copy(tr.hasExec, o.HasExec)
@@ -229,31 +219,55 @@ func (tr *anxiousTracker) readLiveness(isLive *func(uint32) bool) {
 	}
 }
 
+// edfAhead is EdfAhead: the number of deadlines in the sorted slice that are
+// <= d (an upper bound; ties count as ahead).
+//
+// Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
+func edfAhead(sorted []uint64, d uint64) uint64 {
+	return uint64(sort.Search(len(sorted), func(i int) bool { return sorted[i] > d }))
+}
+
 // anxiousSet is anxious_set: every TicketSeq with
-// (current - retry) / current >= alpha, where retry averages over the live
-// backends other than the attempt's (none: not anxious). Each binary64 step
-// is converted explicitly so Go cannot fuse a multiply and an add.
+// (current - retry) / current >= alpha, where current counts the attempts
+// ahead of it by deadline on its own backend and retry averages the same count
+// over the live backends other than its own (none: not anxious). Each binary64
+// step is converted explicitly so Go cannot fuse a multiply and an add.
 //
 // Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 func (tr *anxiousTracker) anxiousSet(alpha float64) map[uint64]float64 {
-	out := map[uint64]float64{} // TicketSeq -> CurrentExpFinish
-	for s, m := range tr.entries {
-		if len(m) == 0 || !tr.hasExec[s] || !tr.hasAnti[s] || tr.exec[s] == 0 {
+	out := map[uint64]float64{}                 // TicketSeq -> CurrentExpFinish
+	sorted := make([][]uint64, len(tr.entries)) // per backend, deadlines ascending
+	for c, m := range tr.entries {
+		ds := make([]uint64, 0, len(m))
+		for _, d := range m {
+			ds = append(ds, d)
+		}
+		sort.Slice(ds, func(i, j int) bool { return ds[i] < ds[j] })
+		sorted[c] = ds
+	}
+	for b, m := range tr.entries {
+		if len(m) == 0 || !tr.hasExec[b] || !tr.hasAnti[b] || tr.exec[b] == 0 {
 			continue
 		}
-		var others, nLive uint64 // over L = live backends other than s
+		var nLive uint64 // |L|: live backends other than b
 		for c := range tr.entries {
-			if c != s && tr.live[c] {
-				others += uint64(len(tr.entries[c]))
+			if c != b && tr.live[c] {
 				nLive++
 			}
 		}
 		if nLive == 0 {
 			continue
 		}
-		retry := float64(float64(float64(others)/float64(nLive)+1) * tr.anti[s]) // RetryExpFinish
-		for seq, e := range m {
-			current := float64(float64(e.queue+1) * tr.exec[s]) // CurrentExpFinish
+		for seq, d := range m {
+			mine := edfAhead(sorted[b], d) - 1 // itself excluded
+			var others uint64
+			for c := range tr.entries {
+				if c != b && tr.live[c] {
+					others += edfAhead(sorted[c], d)
+				}
+			}
+			current := float64(float64(mine+1) * tr.exec[b])                         // CurrentExpFinish
+			retry := float64(float64(float64(others)/float64(nLive)+1) * tr.anti[b]) // RetryExpFinish
 			if float64(float64(current-retry)/current) >= alpha {
 				out[seq] = current
 			}

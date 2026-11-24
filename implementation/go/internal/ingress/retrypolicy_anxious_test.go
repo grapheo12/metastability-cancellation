@@ -1,27 +1,28 @@
-// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.5.0)
+// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.6.0)
 package ingress
 
 import (
+	"sort"
 	"testing"
 	"time"
 )
 
-// trackerWith builds a tracker with B backends, count[b] entries on each (the
-// entry under test gets TicketSeq 1000 and queue q on backend s), and the EWMAs
-// of backend s.
-func trackerWith(b int, count []int, s uint32, q uint64, exec, anti float64, hasExec, hasAnti bool) *anxiousTracker {
+// MAX is NO_DEADLINE in the worked-example tables.
+const MAX = NoDeadline
+
+// trackerWith builds a tracker with B backends holding the given in-flight
+// deadlines (any TicketSeqs) plus the entry under test, TicketSeq 1000 with
+// deadline d on backend s, and backend s's EWMAs.
+func trackerWith(b int, inflight [][]uint64, s uint32, d uint64, exec, anti float64, hasExec, hasAnti bool) *anxiousTracker {
 	tr := newAnxiousTracker(b)
 	seq := uint64(0)
-	for i, n := range count {
-		for k := 0; k < n; k++ {
-			if uint32(i) == s && k == 0 {
-				tr.apply(RetryObservation{Kind: ObsAttemptSent, Seq: 1000, ServerID: s, QueueAtSend: q})
-				continue
-			}
-			tr.apply(RetryObservation{Kind: ObsAttemptSent, Seq: seq, ServerID: uint32(i), QueueAtSend: 99})
+	for c, ds := range inflight {
+		for _, dl := range ds {
+			tr.apply(RetryObservation{Kind: ObsAttemptSent, Seq: seq, ServerID: uint32(c), QueueAtSend: 99, Deadline: dl})
 			seq++
 		}
 	}
+	tr.apply(RetryObservation{Kind: ObsAttemptSent, Seq: 1000, ServerID: s, Deadline: d})
 	x, a := make([]float64, b), make([]float64, b)
 	hx, ha := make([]bool, b), make([]bool, b)
 	x[s], a[s], hx[s], ha[s] = exec, anti, hasExec, hasAnti
@@ -29,43 +30,48 @@ func trackerWith(b int, count []int, s uint32, q uint64, exec, anti float64, has
 	return tr
 }
 
-// The anxious worked example, alpha = 0.3 (ms are written as ns: the ratio is
-// unit-free).
+// The anxious worked example, alpha = 0.3 (ms written as ns: the ratio is
+// unit-free); inflight lists the other entries, the starred one is added by
+// trackerWith.
 //
 // Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 func TestAnxiousWorkedExample(t *testing.T) {
 	cases := []struct {
 		name             string
 		b                int
+		inflight         [][]uint64
 		s                uint32
-		q                uint64
+		d                uint64
 		exec, anti       float64
 		hasExec, hasAnti bool
-		count            []int
+		dead             int // -1: all live
 		want             bool
+		current          float64
 	}{
-		{"long queue", 2, 0, 4, 80, 80, true, true, []int{6, 2}, true},
-		{"exactly alpha", 2, 0, 4, 80, 70, true, true, []int{5, 3}, true},
-		{"short queue", 2, 0, 1, 80, 80, true, true, []int{2, 2}, false},
-		{"three backends", 3, 0, 4, 100, 100, true, true, []int{5, 3, 1}, true},
-		{"no sample", 2, 1, 9, 0, 80, false, true, []int{1, 10}, false},
-		{"one backend", 1, 0, 9, 80, 0, true, false, []int{10}, false},
-		{"other backend dead", 2, 0, 4, 80, 80, true, true, []int{6, 2}, false},
-		{"three, one dead", 3, 0, 4, 100, 100, true, true, []int{5, 3, 1}, false},
+		{"EDF, not FIFO", 2, [][]uint64{{3, 5, 20, 30, 40}, {4, 12, 15}}, 0, 10, 80, 80, true, true, -1, true, 240},
+		{"late deadline", 2, [][]uint64{{3, 5, 20, 30, 40}, {4, 12, 15}}, 0, 50, 80, 80, true, true, -1, true, 480},
+		{"earliest deadline", 2, [][]uint64{{3, 5}, {4, 12, 15}}, 0, 2, 80, 80, true, true, -1, false, 0},
+		{"exactly alpha", 2, [][]uint64{{1, 2, 3, 4}, {5, 6, 7, 20}}, 0, 10, 80, 70, true, true, -1, true, 400},
+		{"tie", 2, [][]uint64{{10}, {10, 10}}, 0, 10, 80, 80, true, true, -1, false, 0},
+		{"no deadline", 2, [][]uint64{{3}, {4, MAX}}, 0, MAX, 80, 80, true, true, -1, false, 0},
+		{"three backends", 3, [][]uint64{{3, 5, 7, 9}, {1, 2, 30}, {50}}, 0, 10, 100, 100, true, true, -1, true, 500},
+		{"three, one dead", 3, [][]uint64{{3, 5, 7, 9}, {1, 2, 30}, {50}}, 0, 10, 100, 100, true, true, 2, true, 500},
+		{"other backend dead", 2, [][]uint64{{3}, {}}, 0, 10, 80, 80, true, true, 1, false, 0},
+		{"no sample", 2, [][]uint64{{1}, {}}, 1, 10, 0, 80, false, true, -1, false, 0},
+		{"one backend", 1, [][]uint64{{}}, 0, 9, 80, 0, true, false, -1, false, 0},
 	}
-	dead := map[string]int{"other backend dead": 1, "three, one dead": 2}
 	for _, c := range cases {
-		tr := trackerWith(c.b, c.count, c.s, c.q, c.exec, c.anti, c.hasExec, c.hasAnti)
-		if d, ok := dead[c.name]; ok {
-			tr.live[d] = false
+		tr := trackerWith(c.b, c.inflight, c.s, c.d, c.exec, c.anti, c.hasExec, c.hasAnti)
+		if c.dead >= 0 {
+			tr.live[c.dead] = false
 		}
-		_, got := tr.anxiousSet(0.3)[1000]
-		if got != c.want {
-			t.Errorf("%s: anxious %v, want %v", c.name, got, c.want)
+		cur, got := tr.anxiousSet(0.3)[1000]
+		if got != c.want || (got && cur != c.current) {
+			t.Errorf("%s: anxious %v current %v, want %v %v", c.name, got, cur, c.want, c.current)
 		}
 	}
 	// alpha = 0 retries when moving is no slower; alpha > 1 never.
-	tr := trackerWith(2, []int{1, 0}, 0, 0, 80, 80, true, true) // current 80, retry (0/1+1)*80 = 80
+	tr := trackerWith(2, [][]uint64{{}, {}}, 0, 5, 80, 80, true, true) // current 80, retry (0/1+1)*80 = 80
 	if _, ok := tr.anxiousSet(0)[1000]; !ok {
 		t.Error("alpha 0, equal estimates: must retry")
 	}
@@ -74,39 +80,43 @@ func TestAnxiousWorkedExample(t *testing.T) {
 	}
 }
 
-// The queue bookkeeping table: a finish lowers every other entry on its
-// backend by one, floored at 0, and removes its own entry.
+// The bookkeeping table: AttemptSent records the deadline, AttemptFinished
+// removes the entry; edfAhead(0, 12) counts deadlines <= 12 whenever sent.
 //
 // Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
-func TestAnxiousQueueBookkeeping(t *testing.T) {
+func TestAnxiousBookkeeping(t *testing.T) {
 	tr := newAnxiousTracker(2)
-	for seq, q := range map[uint64]uint64{9: 1, 10: 2, 11: 3} {
-		tr.apply(RetryObservation{Kind: ObsAttemptSent, Seq: seq, ServerID: 0, QueueAtSend: q})
+	for seq, d := range map[uint64]uint64{9: 5, 10: 8, 11: 12} {
+		tr.apply(RetryObservation{Kind: ObsAttemptSent, Seq: seq, ServerID: 0, Deadline: d})
 	}
-	tr.apply(RetryObservation{Kind: ObsAttemptSent, Seq: 12, ServerID: 1, QueueAtSend: 5}) // other backend: untouched
+	ahead := func() uint64 {
+		var ds []uint64
+		for _, d := range tr.entries[0] {
+			ds = append(ds, d)
+		}
+		sort.Slice(ds, func(i, j int) bool { return ds[i] < ds[j] })
+		return edfAhead(ds, 12)
+	}
 	steps := []struct {
-		finish uint64
-		want   map[uint64]uint64
+		obs  RetryObservation
+		want uint64
 	}{
-		{9, map[uint64]uint64{10: 1, 11: 2}},
-		{10, map[uint64]uint64{11: 1}},
-		{42, map[uint64]uint64{11: 0}},
-		{43, map[uint64]uint64{11: 0}},
+		{RetryObservation{Kind: ObsEwmaChanged}, 3}, // start (no entry change)
+		{RetryObservation{Kind: ObsAttemptSent, Seq: 12, ServerID: 0, Deadline: 20}, 3},
+		{RetryObservation{Kind: ObsAttemptSent, Seq: 13, ServerID: 0, Deadline: 1}, 4},
+		{RetryObservation{Kind: ObsAttemptFinished, Seq: 9, ServerID: 0}, 3},
+		{RetryObservation{Kind: ObsAttemptFinished, Seq: 42, ServerID: 0}, 3},
 	}
 	for i, st := range steps {
-		tr.apply(RetryObservation{Kind: ObsAttemptFinished, Seq: st.finish, ServerID: 0})
-		m := tr.entries[0]
-		if len(m) != len(st.want) {
-			t.Fatalf("step %d: count %d, want %d", i, len(m), len(st.want))
+		if st.obs.Kind != ObsEwmaChanged {
+			tr.apply(st.obs)
 		}
-		for seq, q := range st.want {
-			if e, ok := m[seq]; !ok || e.queue != q {
-				t.Fatalf("step %d: seq %d = %+v, want %d", i, seq, e, q)
-			}
+		if got := ahead(); got != st.want {
+			t.Fatalf("step %d: edfAhead %d, want %d", i, got, st.want)
 		}
 	}
-	if e := tr.entries[1][12]; e == nil || e.queue != 5 {
-		t.Fatalf("backend 1 changed: %+v", e)
+	if edfAhead(nil, 5) != 0 || edfAhead([]uint64{1, MAX}, MAX) != 2 {
+		t.Fatal("edfAhead edges")
 	}
 }
 
@@ -117,9 +127,9 @@ func TestAnxiousQueueBookkeeping(t *testing.T) {
 // Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 func TestAnxiousPolicyDecide(t *testing.T) {
 	p := newAnxiousPolicy(0.3, 2, time.Millisecond)
-	// Backend 0: TicketSeqs 0..5 with queues 0..5; backend 1 empty; both EWMAs 80.
+	// Backend 0: TicketSeqs 0..5 with deadlines 0..5 (seq q has q ahead of it); backend 1 empty; both EWMAs 80.
 	for q := uint64(0); q < 6; q++ {
-		p.Observe(RetryObservation{Kind: ObsAttemptSent, Seq: q, ServerID: 0, QueueAtSend: q})
+		p.Observe(RetryObservation{Kind: ObsAttemptSent, Seq: q, ServerID: 0, Deadline: q})
 	}
 	p.Observe(RetryObservation{Kind: ObsEwmaChanged, Exec: []float64{80, 80}, Anti: []float64{80, 80},
 		HasExec: []bool{true, true}, HasAnti: []bool{true, true}})
@@ -197,7 +207,7 @@ func TestAnxiousRegistryAndConfig(t *testing.T) {
 //
 // Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 func TestAnxiousEvaluateOnlyOnChange(t *testing.T) {
-	tr := trackerWith(2, []int{1, 0}, 0, 4, 80, 80, true, true) // current 400, retry 80: anxious
+	tr := trackerWith(2, [][]uint64{{1, 2, 3, 4}, {}}, 0, 10, 80, 80, true, true) // current 400, retry 80: anxious
 	if !tr.dirty {
 		t.Fatal("observations must mark the tracker dirty")
 	}
@@ -216,7 +226,9 @@ func TestAnxiousEvaluateOnlyOnChange(t *testing.T) {
 	// out while nothing changes; a new observation brings it back.
 	p := newAnxiousPolicy(0.3, 2, time.Millisecond)
 	defer p.Stop()
-	p.Observe(RetryObservation{Kind: ObsAttemptSent, Seq: 7, ServerID: 0, QueueAtSend: 4})
+	for seq, d := range map[uint64]uint64{1: 1, 2: 2, 3: 3, 4: 4, 7: 10} { // 4 ahead of seq 7 by deadline
+		p.Observe(RetryObservation{Kind: ObsAttemptSent, Seq: seq, ServerID: 0, Deadline: d})
+	}
 	p.Observe(RetryObservation{Kind: ObsEwmaChanged, Exec: []float64{80, 80}, Anti: []float64{80, 80},
 		HasExec: []bool{true, true}, HasAnti: []bool{true, true}})
 	has := func() bool { _, ok := (*p.anxious.Load())[7]; return ok }
@@ -236,8 +248,8 @@ func TestAnxiousEvaluateOnlyOnChange(t *testing.T) {
 	if has() {
 		t.Fatal("re-evaluated without a change")
 	}
-	p.Observe(RetryObservation{Kind: ObsAttemptSent, Seq: 8, ServerID: 1, QueueAtSend: 0})
-	waitFor(true, "after a new observation") // retry = (1/1+1)*80 = 160 < 400*0.7
+	p.Observe(RetryObservation{Kind: ObsAttemptSent, Seq: 8, ServerID: 1, Deadline: 5})
+	waitFor(true, "after a new observation") // retry = (1/1+1)*80 = 160 <= 400*0.7
 	// Attach: backend 1 goes down -> no live other backend -> 7 leaves the set.
 	down1 := func(s uint32) bool { return s != 1 }
 	p.Attach(down1)
