@@ -68,7 +68,7 @@ func (fb *fakeBackend) addr() string { return fb.ln.Addr().String() }
 func startRetryIngress(t *testing.T, backends []string, policy, maxRetries string) *Ingress {
 	t.Helper()
 	cfg, err := Validate(Params{ListenAddr: "127.0.0.1:0", Backends: joinComma(backends), NumClients: "4",
-		LbPolicy: PolicyRoundRobin, LbFilter: FilterNone, LbRetryPolicy: policy, LbMaxRetries: maxRetries, LbRetryTimeoutMs: "50", LbRetryAnxietyRatio: "0.3",
+		LbPolicy: PolicyRoundRobin, LbFilter: FilterNone, LbRetryPolicy: policy, LbMaxRetries: maxRetries, LbRetryTimeoutMs: "50", LbRetryAnxietyRatio: "0.3", LbRetryLateFactor: "1", // beta 1: the anxious e2e needs beta <= 3
 		EwmaBeta: "0.7", CancelRate: "0", DurationS: "5", Seed: "1", InitialStallMs: "0", HeartbeatTimeoutMs: "0",
 		OutputPath: filepath.Join(t.TempDir(), "ingress")})
 	if err != nil {
@@ -297,7 +297,7 @@ func startFilterIngress(t *testing.T, backends []string) *Ingress {
 	t.Helper()
 	cfg, err := Validate(Params{ListenAddr: "127.0.0.1:0", Backends: joinComma(backends), NumClients: "4",
 		LbPolicy: PolicyRoundRobin, LbFilter: FilterDeadlineMean, LbRetryPolicy: RetryPolicyNone, LbMaxRetries: "0",
-		LbRetryTimeoutMs: "150", LbRetryAnxietyRatio: "0.3", EwmaBeta: "0.7", CancelRate: "0", DurationS: "5", Seed: "1", InitialStallMs: "0",
+		LbRetryTimeoutMs: "150", LbRetryAnxietyRatio: "0.3", LbRetryLateFactor: "10", EwmaBeta: "0.7", CancelRate: "0", DurationS: "5", Seed: "1", InitialStallMs: "0",
 		HeartbeatTimeoutMs: "0", OutputPath: filepath.Join(t.TempDir(), "ingress")})
 	if err != nil {
 		t.Fatal(err)

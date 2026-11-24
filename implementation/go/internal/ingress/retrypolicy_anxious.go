@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.6.0)
+// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.7.0)
 package ingress
 
 import (
@@ -26,7 +26,7 @@ const (
 // Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 func init() {
 	RegisterRetryPolicy(RetryPolicyAnxious, func(cfg Config) RetryPolicy {
-		return newAnxiousPolicy(cfg.LbRetryAnxietyRatio, len(cfg.Backends), AnxiousTick)
+		return newAnxiousPolicy(cfg.LbRetryAnxietyRatio, cfg.LbRetryLateFactor, len(cfg.Backends), AnxiousTick)
 	})
 }
 
@@ -36,6 +36,7 @@ func init() {
 // Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 type anxiousPolicy struct {
 	alpha    float64
+	beta     float64 // ExpectedLate factor (lb_retry_late_factor)
 	b        int
 	inbox    chan RetryObservation
 	stopped  chan struct{} // closed by Stop
@@ -52,8 +53,8 @@ func (p *anxiousPolicy) Attach(isLive func(s uint32) bool) {
 	p.isLive.Store(&isLive)
 }
 
-func newAnxiousPolicy(alpha float64, b int, tick time.Duration) *anxiousPolicy {
-	p := &anxiousPolicy{alpha: alpha, b: b, inbox: make(chan RetryObservation, AnxiousBuffer),
+func newAnxiousPolicy(alpha, beta float64, b int, tick time.Duration) *anxiousPolicy {
+	p := &anxiousPolicy{alpha: alpha, beta: beta, b: b, inbox: make(chan RetryObservation, AnxiousBuffer),
 		stopped: make(chan struct{}), done: make(chan struct{})}
 	empty := map[uint64]float64{}
 	p.anxious.Store(&empty)
@@ -62,7 +63,7 @@ func newAnxiousPolicy(alpha float64, b int, tick time.Duration) *anxiousPolicy {
 }
 
 // Decide is anxious_decide: RetryElsewhere for an anxious running newest
-// attempt that is ExpectedLate (CurrentExpFinish > RemainingNs, strict; no
+// attempt that is ExpectedLate (CurrentExpFinish > beta x RemainingNs, strict; no
 // deadline: never) on a Tick; AttemptEnded is Wait (the 502 is relayed).
 //
 // Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
@@ -75,7 +76,7 @@ func (p *anxiousPolicy) Decide(s RetryState, e RetryEvent) RetryDecision {
 	if !ok || !s.HasDeadline {
 		return Wait
 	}
-	if c > float64(s.RemainingNs) { // ExpectedLate
+	if c > float64(p.beta*float64(s.RemainingNs)) { // ExpectedLate: product rounded first, no FMA
 		return RetryElsewhere
 	}
 	return Wait

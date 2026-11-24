@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.6.0)
+// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.7.0)
 package ingress
 
 import (
@@ -126,7 +126,7 @@ func TestAnxiousBookkeeping(t *testing.T) {
 //
 // Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 func TestAnxiousPolicyDecide(t *testing.T) {
-	p := newAnxiousPolicy(0.3, 2, time.Millisecond)
+	p := newAnxiousPolicy(0.3, 1, 2, time.Millisecond)
 	// Backend 0: TicketSeqs 0..5 with deadlines 0..5 (seq q has q ahead of it); backend 1 empty; both EWMAs 80.
 	for q := uint64(0); q < 6; q++ {
 		p.Observe(RetryObservation{Kind: ObsAttemptSent, Seq: q, ServerID: 0, Deadline: q})
@@ -178,15 +178,15 @@ func TestAnxiousRegistryAndConfig(t *testing.T) {
 	p := DefaultParams()
 	p.Backends, p.NumClients, p.LbRetryPolicy = "a:1,b:2", "1", RetryPolicyAnxious
 	c, err := Validate(p)
-	if err != nil || c.LbRetryAnxietyRatio != 0.3 {
-		t.Fatalf("default: %v %v", c.LbRetryAnxietyRatio, err)
+	if err != nil || c.LbRetryAnxietyRatio != 0.3 || c.LbRetryLateFactor != 10 {
+		t.Fatalf("default: %v %v %v", c.LbRetryAnxietyRatio, c.LbRetryLateFactor, err)
 	}
 	pol, err := NewRetryPolicy(RetryPolicyAnxious, c)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ap, ok := pol.(*anxiousPolicy)
-	if !ok || ap.alpha != 0.3 || ap.b != 2 {
+	if !ok || ap.alpha != 0.3 || ap.beta != 10 || ap.b != 2 {
 		t.Fatalf("built %+v", pol)
 	}
 	ap.Stop()
@@ -199,6 +199,16 @@ func TestAnxiousRegistryAndConfig(t *testing.T) {
 	p.LbRetryAnxietyRatio = "0"
 	if c, err := Validate(p); err != nil || c.LbRetryAnxietyRatio != 0 {
 		t.Errorf("0 rejected: %v", err)
+	}
+	for _, bad := range []string{"-1", "inf", "NaN", "x", ""} {
+		p.LbRetryLateFactor = bad
+		if _, err := Validate(p); err == nil {
+			t.Errorf("lb_retry_late_factor %q accepted", bad)
+		}
+	}
+	p.LbRetryLateFactor = "0"
+	if c, err := Validate(p); err != nil || c.LbRetryLateFactor != 0 {
+		t.Errorf("late factor 0 rejected: %v", err)
 	}
 }
 
@@ -224,7 +234,7 @@ func TestAnxiousEvaluateOnlyOnChange(t *testing.T) {
 
 	// Through the policy: the set appears, a refusal removes it, and it stays
 	// out while nothing changes; a new observation brings it back.
-	p := newAnxiousPolicy(0.3, 2, time.Millisecond)
+	p := newAnxiousPolicy(0.3, 1, 2, time.Millisecond)
 	defer p.Stop()
 	for seq, d := range map[uint64]uint64{1: 1, 2: 2, 3: 3, 4: 4, 7: 10} { // 4 ahead of seq 7 by deadline
 		p.Observe(RetryObservation{Kind: ObsAttemptSent, Seq: seq, ServerID: 0, Deadline: d})
@@ -262,29 +272,34 @@ func TestAnxiousEvaluateOnlyOnChange(t *testing.T) {
 //
 // Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 func TestAnxiousDecideRemaining(t *testing.T) {
-	p := &anxiousPolicy{}
 	m := map[uint64]float64{7: 400}
-	p.anxious.Store(&m)
 	cases := []struct {
+		beta      float64
 		seq       uint64
 		remaining int64
 		has       bool
 		want      RetryDecision
 	}{
-		{7, 150, true, RetryElsewhere},
-		{7, 400, true, Wait},
-		{7, 4000, true, Wait},
-		{7, -20, true, RetryElsewhere},
-		{7, 0, false, Wait},
-		{8, 10, true, Wait},
+		{10, 7, 30, true, RetryElsewhere}, // 400 > 300
+		{10, 7, 40, true, Wait},           // tie: 400 > 400 is false
+		{10, 7, 150, true, Wait},          // 400 < 1500
+		{10, 7, -20, true, RetryElsewhere},
+		{10, 7, 0, false, Wait},
+		{10, 8, 10, true, Wait},
+		{1, 7, 150, true, RetryElsewhere},
+		{0, 7, 4000, true, RetryElsewhere},
 	}
 	for i, c := range cases {
+		p := &anxiousPolicy{beta: c.beta}
+		p.anxious.Store(&m)
 		s := RetryState{MaxRetries: 1, Attempts: []AttemptView{{TicketSeq: c.seq, Running: true}}, RemainingNs: c.remaining, HasDeadline: c.has}
 		if got := p.Decide(s, RetryEvent{Kind: EventTick}); got != c.want {
 			t.Errorf("case %d (%+v): %v, want %v", i, c, got, c.want)
 		}
 	}
 	// AttemptEnded and a finished newest attempt always wait.
+	p := &anxiousPolicy{beta: 10}
+	p.anxious.Store(&m)
 	s := RetryState{MaxRetries: 1, Attempts: []AttemptView{{TicketSeq: 7, Running: true}}, RemainingNs: 1, HasDeadline: true}
 	if p.Decide(s, RetryEvent{Kind: EventAttemptEnded, Outcome: OutcomeBadGateway}) != Wait {
 		t.Error("AttemptEnded must wait")
