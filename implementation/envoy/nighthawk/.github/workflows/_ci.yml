@@ -1,0 +1,88 @@
+name: Reusable CI Workflow
+
+permissions:
+  contents: read
+on:
+  workflow_call:
+    inputs:
+      task:
+        description: "CI task to run"
+        required: true
+        type: string
+      bazel-extra:
+        description: "Extra bazel args"
+        required: false
+        type: string
+      docker-in-docker:
+        description: "Enable Docker in Docker"
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      dockerhub-username:
+        description: "DockerHub username"
+        required: false
+      dockerhub-password:
+        description: "DockerHub password"
+        required: false
+
+jobs:
+  ci:
+    name: "./ci/do_ci.sh ${{ inputs.task }}"
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    steps:
+    - uses: actions/checkout@v7.0.1
+    - name: Set gcc
+      run: |
+        if [[ "${{ inputs.task }}" == *"gcc"* ]]; then
+          echo "build --config=gcc" >> user.bazelrc
+          echo "build:gcc --copt=-g0" >> user.bazelrc
+          echo "build --linkopt=-Wl,--threads=1" >> user.bazelrc
+        else
+          echo "common --config=clang" >> user.bazelrc
+          echo "build --copt=-g1" >> user.bazelrc
+          echo "build --linkopt=-Wl,--threads=1" >> user.bazelrc
+        fi
+        echo "common --jobs=2" >> user.bazelrc
+        echo "common --local_resources=memory=3000" >> user.bazelrc
+        echo "test --local_test_jobs=1" >> user.bazelrc
+        echo "build --strip=always" >> user.bazelrc
+        echo "build --config=bes" >> user.bazelrc
+        echo "build --experimental_reuse_sandbox_directories=true" >> user.bazelrc
+    - name: Bind mount spare disk for build artifacts
+      uses: envoyproxy/toolshed/actions/bind-mounts@actions-v0.4.33
+      with:
+        mounts: |
+          - src: /mnt/envoy-docker-build
+            target: /tmp/envoy-docker-build
+            chown: runner:runner
+          - src: /mnt/bazel-shared
+            target: /tmp/bazel-shared
+            chown: runner:runner
+    - name: Cache Bazel build output
+      uses: actions/cache@v4
+      with:
+        path: |
+          /mnt/envoy-docker-build
+          /mnt/bazel-shared
+        key: bazel-cache-${{ runner.os }}-${{ inputs.task }}-${{ github.sha }}
+        restore-keys: |
+          bazel-cache-${{ runner.os }}-${{ inputs.task }}-
+          bazel-cache-${{ runner.os }}-
+    - name: Run CI script
+      timeout-minutes: 180
+      run: |
+        export BAZEL_BUILD_EXTRA_OPTIONS="--config=remote-ci --config=rbe ${{ inputs.bazel-extra }}"
+        ./ci/run_envoy_docker.sh './ci/do_ci.sh ${{ inputs.task }}'
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        GH_BRANCH: ${{ github.ref }}
+        GH_SHA1: ${{ github.sha }}
+        ENVOY_DOCKER_DEVTOOLS: '1'
+        ENVOY_DOCKER_IN_DOCKER: ${{ inputs.docker-in-docker && '1' || '' }}
+        DOCKERHUB_USERNAME: ${{ secrets.dockerhub-username }}
+        DOCKERHUB_PASSWORD: ${{ secrets.dockerhub-password }}

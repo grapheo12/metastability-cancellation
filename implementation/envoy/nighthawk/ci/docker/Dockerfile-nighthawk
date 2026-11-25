@@ -1,0 +1,19 @@
+FROM ubuntu:26.04@sha256:d66b366dac61b575bee2aef07e9c26e8070096fbe84a3d4d3eb0da069b5d76db
+
+RUN apt -y update && apt -y install libatomic1 curl
+
+ADD nighthawk_client /usr/local/bin/nighthawk_client
+ADD nighthawk_test_server /usr/local/bin/nighthawk_test_server
+ADD nighthawk_output_transform /usr/local/bin/nighthawk_output_transform
+ADD nighthawk_service /usr/local/bin/nighthawk_service
+ADD nighthawk_adaptive_load_client /usr/local/bin/nighthawk_adaptive_load_client
+
+ADD default-config.yaml /etc/nighthawk/nighthawk.yaml
+
+# Ports for nighthawk_test_server, see default-config.yaml
+EXPOSE 10001 10080
+# The default port for nighthawk_service
+EXPOSE 8443
+
+ENTRYPOINT ["/usr/local/bin/nighthawk_test_server"]
+CMD ["-c", "/etc/nighthawk/nighthawk.yaml"]
