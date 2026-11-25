@@ -85,13 +85,16 @@ load it is about to add. That narrows, but does not close, the race described be
 ## EstimatedFinish
 
 At each pick the LoadBalancer records, on the ForwardTicket, the time it expects the forward to take: the
-**EstimatedFinish** `(queue_at_send + 1) × EwmaExecTime` of the chosen backend, the same quantity as the
-`deadline_mean` DeadlineFilter's `(n + 1) × e`.
+**EstimatedFinish** `(queue_at_send + 1) × EwmaExecTime / k` of the chosen backend, where `k` is its WorkerCount
+(read as 1 while unknown, i.e. 0): the `deadline_mean` DeadlineFilter's `(n + 1) × e`, divided by the number of
+requests the backend serves in parallel (as `deadline_mean_per_worker`).
 
 ```
 function estimated_finish(lb, s, q):                 # binary64 ns, or none
     e = exec_value(lb, s)                            # EwmaExecTime as read now; none before the first sample
-    return none if e is none else float(q + 1) * e   # binary64, round to nearest
+    if e is none: return none
+    k = lb.stats[s].worker_count.load(); if k == 0: k = 1    # WorkerCount; unknown before the first answer
+    return (float(q + 1) * e) / float(k)             # binary64: the product rounded, then the quotient rounded
 ```
 
 - **What it is compared with.** The ForwardRecord carries it to the ForwardLog (`estimate_ns` in `forwards.csv`),
@@ -105,11 +108,19 @@ function estimated_finish(lb, s, q):                 # binary64 ns, or none
 
 Worked example: backend with EwmaExecTime 400 ms (`400_000_000` ns).
 
-| `queue_at_send` | `estimate_ns` | Check |
-|---|---|---|
-| 0 | 400_000_000 | `1 × 400 ms` |
-| 3 | 1_600_000_000 | `4 × 400 ms` |
-| any, no EwmaExecTime yet | none | empty in `forwards.csv` |
+| `queue_at_send` | WorkerCount `k` | `estimate_ns` | Check |
+|---|---|---|---|
+| 0 | 1 | 400_000_000 | `1 × 400 ms / 1` |
+| 3 | 1 | 1_600_000_000 | `4 × 400 ms / 1` |
+| 3 | 4 | 400_000_000 | `4 × 400 ms / 4` |
+| 15 | 40 | 160_000_000 | `16 × 400 ms / 40` |
+| 3 | 0 (unknown) | 1_600_000_000 | `k` read as 1 |
+| any | any, no EwmaExecTime yet | none | empty in `forwards.csv` |
+
+- **Why divide by `k`.** A backend with `k` workers serves `k` requests at once, so `q` requests ahead take about
+  `q / k` service times. Without the division the estimate was about 19× the real latency on a 40-worker backend at
+  40% load (median EstimateError −18), see the EstimateErrorHistogram. It is still an approximation: with
+  `q + 1 <= k` the request starts at once and takes about one `e`, which `(q + 1) × e / k` underestimates.
 
 ## EwmaLatency
 

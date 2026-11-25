@@ -99,7 +99,7 @@ t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns,attempt,e
 | `exec_ns` | u64, ns, or empty | The ExecutionTime the backend reported in the relayed body's ExecReport; empty unless `ok` or `rejected` with a valid one |
 | `ewma_exec_ns` | float, ns, or empty | The backend's EwmaExecTime right after this forward; empty before its first sample |
 | `attempt` | u32 | Which attempt of its ForwardTask this forward was: `0` for the first, `k` for the k-th LbRetry |
-| `estimate_ns` | float, ns, or empty | EstimatedFinish `(queue_at_send + 1) × EwmaExecTime` at the forward's pick; empty before the backend's first ExecutionTime sample ([load_balancer/design.md](load_balancer/design.md#estimatedfinish)) |
+| `estimate_ns` | float, ns, or empty | EstimatedFinish `(queue_at_send + 1) × EwmaExecTime / k` (k: the backend's WorkerCount, 1 while unknown) at the forward's pick; empty before the backend's first ExecutionTime sample ([load_balancer/design.md](load_balancer/design.md#estimatedfinish)) |
 
 Rows are sorted by `t_ns`; rows with equal `t_ns` keep their ForwardLog order. Integers are decimal. `ewma_latency_ns`,
 `ewma_exec_ns` and `estimate_ns` are written in decimal without an exponent, as the shortest string that reads back as the same binary64 (for example

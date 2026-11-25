@@ -50,3 +50,4 @@
 | 0.12.3 | 2026-11-24T00:00:00Z | Child bump: frontend 0.10.0 (AttemptSent deadline) |
 | 0.13.0 | 2026-11-24T00:00:00Z | Parameter `lb_retry_late_factor` (default 10), validation. Child bump: retry_policy 0.7.0 |
 | 0.13.1 | 2026-11-24T00:00:00Z | `forwards.csv` column `estimate_ns`. Child bump: load_balancer 0.16.0 |
+| 0.13.2 | 2026-11-24T00:00:00Z | `forwards.csv` `estimate_ns` text. Child bump: load_balancer 0.17.0 |
