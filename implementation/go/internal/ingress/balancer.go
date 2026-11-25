@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.16.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.17.0)
 package ingress
 
 import (
@@ -422,8 +422,9 @@ func (lb *LoadBalancer) antiValue(b uint32) (float64, bool) {
 	return math.Float64frombits(bits), true
 }
 
-// estimatedFinish is estimated_finish: (q + 1) * EwmaExecTime of backend s,
-// rounded once (no FMA risk: a single product); ok is false before a sample.
+// estimatedFinish is estimated_finish: (q + 1) * EwmaExecTime / k of backend s,
+// k its WorkerCount (1 while unknown); the product is rounded before the
+// division; ok is false before a sample.
 //
 // Design: abstraction/ingress/load_balancer/design.md#estimatedfinish
 func (lb *LoadBalancer) estimatedFinish(s uint32, q uint64) (float64, bool) {
@@ -431,7 +432,11 @@ func (lb *LoadBalancer) estimatedFinish(s uint32, q uint64) (float64, bool) {
 	if !ok {
 		return 0, false
 	}
-	return float64(q+1) * e, true
+	k := lb.stats[s].WorkerCount.Load()
+	if k == 0 {
+		k = 1 // WorkerCount unknown before the backend's first answer
+	}
+	return float64(float64(q+1)*e) / float64(k), true
 }
 
 // ewmaScore is (outstanding + 1) * EwmaLatency.

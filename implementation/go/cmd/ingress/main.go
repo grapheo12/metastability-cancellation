@@ -1,7 +1,7 @@
 // Command ingress runs the Ingress: a load-balancing /ping proxy with an
 // in-process LoadCanceller.
 //
-// Source: abstraction/ingress/api.md (ingress v0.13.1)
+// Source: abstraction/ingress/api.md (ingress v0.13.2)
 package main
 
 import (

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.16.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.17.0)
 package ingress
 
 import (
@@ -574,7 +574,7 @@ func TestPickExcluding(t *testing.T) {
 	}
 }
 
-// EstimatedFinish: (QueueAtSend + 1) * EwmaExecTime at the pick, none before a
+// EstimatedFinish: (QueueAtSend + 1) * EwmaExecTime / WorkerCount at the pick, none before a
 // sample; Finish copies it into the ForwardRecord.
 //
 // Design: abstraction/ingress/load_balancer/design.md#estimatedfinish
@@ -595,6 +595,16 @@ func TestEstimatedFinish(t *testing.T) {
 		}
 	}
 	lb.Finish(c, OutcomeOK, 0, false, 0)
+	// WorkerCount k divides it: q = 3, k = 4 -> 4 x 400 ms / 4; q = 15, k = 40 -> 160 ms.
+	for _, w := range []struct {
+		q, k uint64
+		want float64
+	}{{3, 4, 400_000_000}, {15, 40, 160_000_000}, {3, 0, 1_600_000_000}} {
+		lb.stats[0].WorkerCount.Store(w.k)
+		if got, ok := lb.estimatedFinish(0, w.q); !ok || got != w.want {
+			t.Fatalf("q %d k %d: %v %v, want %v", w.q, w.k, got, ok, w.want)
+		}
+	}
 	log := lb.ForwardLog()
 	if r := log[len(log)-1]; !r.HasEstimate || r.EstimateNs != 1_200_000_000 || log[0].HasEstimate {
 		t.Fatalf("ForwardRecord estimate: %+v / first %+v", r, log[0])
