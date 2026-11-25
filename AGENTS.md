@@ -29,6 +29,11 @@ For a high-level markdown file, it will contain links to lower level files.
 There will be different branches for implementations called `impl/<lang>`. For example, a C implementation will be in branch `impl/c`, a Rust implementation in `impl/rust`, etc.
 There should never be two language implementations on the same branch. Even when you want to make changes in lang_1 and backport those changes to lang_2. (In such cases: commit and backport the changes as much as possible in `abstraction`, but don't copy back `Design specific to <lang>` sections (see below)).
 
+**Exception: `impl/envoy`.** That branch replaces the Ingress and the LoadGenerator with vendored Envoy and Nighthawk
+(C++, in `implementation/envoy/`) and keeps the Go `/ping` server: a copy of the server packages of `impl/go`
+(`implementation/go/`, server, protocol and sampling only) with their `Design specific to Go` sections. Changes to that
+Go server are made on `impl/go` and copied over, never the other way around.
+
 
 Stick to this folder structure:
 

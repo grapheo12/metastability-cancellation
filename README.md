@@ -55,7 +55,7 @@ Start with [abstraction/description.md](abstraction/description.md) (problem and
 | `main` | `abstraction/`, `AGENTS.md` and `README.md`. No code, ever |
 | `impl/<lang>` | Everything on `main`, plus `implementation/<lang>/`, the shared tools, and a `Design specific to <Lang>` section at the end of each leaf `design.md` that maps every design subsection to exact code lines |
 
-Currently there is one implementation: **`impl/go`**.
+Currently there are two implementations: **`impl/go`** (everything in Go) and **`impl/envoy`** (Envoy as the Ingress, Nighthawk as the load generator, and the Go server copied from `impl/go`).
 
 The spec and the code link to each other. Code carries `Design: abstraction/...design.md#anchor` comments,
 and `tracegen` turns them into the tables in each `Design specific to <Lang>` section. `AGENTS.md` defines
