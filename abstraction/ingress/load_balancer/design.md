@@ -100,8 +100,8 @@ function estimated_finish(lb, s, q):                 # binary64 ns, or none
 - **What it is compared with.** The ForwardRecord carries it to the ForwardLog (`estimate_ns` in `forwards.csv`),
   next to the forward's `latency_ns` (pick to answer). The **EstimateError** of a forward is
   `(latency_ns − estimate_ns) / latency_ns`: `0` is exact, positive means the forward took longer than estimated,
-  negative shorter. The ResultPlotter draws its histogram
-  ([../../benchmark_runner/result_plotter/design.md](../../benchmark_runner/result_plotter/design.md), EstimateErrorHistogram).
+  negative shorter. The ResultPlotter draws its CDF
+  ([../../benchmark_runner/result_plotter/design.md](../../benchmark_runner/result_plotter/design.md), EstimateErrorCdf).
 - **Not used to choose.** Recording it changes no pick: `choose` already ran.
 - **Races.** `exec_value` is read after the pick's increment; a concurrent `finish` may update EwmaExecTime in between,
   as for every LoadBalancer heuristic.
@@ -119,7 +119,7 @@ Worked example: backend with EwmaExecTime 400 ms (`400_000_000` ns).
 
 - **Why divide by `k`.** A backend with `k` workers serves `k` requests at once, so `q` requests ahead take about
   `q / k` service times. Without the division the estimate was about 19× the real latency on a 40-worker backend at
-  40% load (median EstimateError −18), see the EstimateErrorHistogram. It is still an approximation: with
+  40% load (median EstimateError −18), see the EstimateErrorCdf. It is still an approximation: with
   `q + 1 <= k` the request starts at once and takes about one `e`, which `(q + 1) × e / k` underestimates.
 
 ## EwmaLatency

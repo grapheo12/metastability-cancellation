@@ -19,3 +19,4 @@
 | 0.15.0 | 2026-11-24T00:00:00Z | ExcludedBackend: `pick(…, exclude)` / `choose(…, exclude)` remove one backend from the LiveSet after the all-silent fallback; `Dropped` if none is left |
 | 0.16.0 | 2026-11-24T00:00:00Z | EstimatedFinish `(queue_at_send + 1) × EwmaExecTime` at each pick, on the ForwardTicket and ForwardRecord (`estimate_ns`); EstimateError defined; worked example |
 | 0.17.0 | 2026-11-24T00:00:00Z | EstimatedFinish divided by the backend's WorkerCount `k` (1 while unknown): `(queue_at_send + 1) × EwmaExecTime / k`; worked example with k |
+| 0.17.1 | 2026-11-24T00:00:00Z | Wording: the ResultPlotter draws the EstimateError as a CDF (EstimateErrorCdf) |
