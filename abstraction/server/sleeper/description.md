@@ -1,7 +1,7 @@
 # Sleeper — Description
 
 Leaf component. Makes a worker wait out a given number of microseconds of wall-clock time **without using CPU**
-(`workload = sleep`). It sleeps the thread in quanta of at most `SLEEP_QUANTUM_US` (20 ms), measured against one
+(`workload = sleep` or `sleep_constant`). It sleeps the thread in quanta of at most `SLEEP_QUANTUM_US` (20 ms), measured against one
 monotonic deadline, so the last quantum may be shorter (**QuantumSleep**). It watches the same two cancellation
 sources as the CPU Burner, but only when the thread wakes up between quanta:
 
