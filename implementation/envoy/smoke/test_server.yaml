@@ -1,0 +1,32 @@
+# Upstream for the smoke test: Nighthawk's test server (an Envoy build with the test-server filter) answering
+# every request with 200 and a 128-byte body. Adapted from
+# nighthawk/test/integration/configurations/nighthawk_http_origin.yaml.
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: 10091 }
+static_resources:
+  listeners:
+  - address:
+      socket_address: { address: 127.0.0.1, port_value: 10001 }
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          generate_request_id: false
+          codec_type: AUTO
+          stat_prefix: ingress_http
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: service
+              domains: ["*"]
+          http_filters:
+          - name: test-server
+            typed_config:
+              "@type": type.googleapis.com/nighthawk.server.ResponseOptions
+              response_body_size: 128
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+              dynamic_stats: false
