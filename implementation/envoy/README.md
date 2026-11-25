@@ -38,10 +38,31 @@ Nighthawk reports at least 900 `benchmark.http_2xx`, no other status class or fa
 `cluster.servers.upstream_rq_2xx` is at least that count. First run: 1000 2xx at 100.00/s, Envoy upstream 2xx 1001
 (one extra from the readiness probe).
 
+## Experiments
+
+`bin/ingress` and `bin/loadgen` are drop-in replacements for the Go Ingress and LoadGenerator: they take the Go
+programs' flags, run Envoy and Nighthawk, and write the Go programs' output files (`wrappers/convert.py`), so
+`implementation/scripts/bench.py run|plot` works unchanged with `benchmark_manifest.toml`. Configs are in
+`experiments/`. The `/ping` server is the Go one (`../go`).
+
+`--lb_policy` maps to Envoy's `round_robin`, `least_outstanding` (LEAST_REQUEST over all hosts), `power_of_two`
+(LEAST_REQUEST, 2 choices) and `ewma` (the contrib Peak EWMA policy and its RTT filter, built into
+`build/envoy-static` from `@envoy//contrib/exe:envoy-static-peak-ewma`).
+
+### Peak EWMA trace
+
+With `--lb_policy ewma`, the ingress wrapper sets `PEAK_EWMA_TRACE_PREFIX` and Envoy's Peak EWMA (vendored change,
+see `VENDORED.md`) logs every EWMA update and every pick. The wrapper merges them into
+`ingress.peak_ewma_updates.csv` (`t_ns,server_id,rtt_ms,dt_ns,alpha,ewma_before_ms,ewma_after_ms`) and
+`ingress.peak_ewma_picks.csv` (`t_ns,server_a,active_a,ewma_a_ms,cost_a,server_b,active_b,ewma_b_ms,cost_b,chosen`),
+with `t_ns` on the `forwards.csv` time base. Plot them (needs plotly, as `bench.py plot` does):
+
+```
+python3 implementation/envoy/wrappers/plot_peak_ewma.py <results dir>   # writes plots/peak_ewma.html
+```
+
 ## Not done yet
 
-- Nothing here realizes a spec component yet: Envoy and Nighthawk still have to be configured as the Ingress and the
-  LoadGenerator of `abstraction/` (DeadlineFilter, LbRetries, Heartbeat Monitor, the Requests CSV, …), with
-  `Design specific to C++` sections.
-- Our servers expect each `/ping` body to be a PaddedJsonBody with a unique RequestId; Nighthawk sends fixed bodies.
-  Planned: a Nighthawk RequestSource plugin that generates the body.
+- Ingress: DeadlineFilter, LbRetries, Heartbeat Monitor, LoadCanceller (the wrapper rejects their flags).
+- LoadGenerator: client retries (RequestCopies) and SLO cancellation.
+- No `Design specific to C++` sections yet: the wrappers and Nighthawk changes are not traced to `abstraction/`.

@@ -141,8 +141,12 @@ def main():
     cfg_path = out + ".envoy.json"
     convert.write_json(envoy_config(args, backends, admin_port, access_log), cfg_path)
     concurrency = os.environ.get("GOMAXPROCS") or str(os.cpu_count() or 1)
+    env = dict(os.environ)
+    trace_prefix = out + ".peak_ewma"
+    if LB_POLICIES[args.lb_policy][0] == "PEAK_EWMA":  # Envoy's Peak EWMA trace (convert.merge_peak_ewma)
+        env["PEAK_EWMA_TRACE_PREFIX"] = trace_prefix
     envoy = subprocess.Popen([ENVOY, "--config-path", cfg_path, "--concurrency", concurrency,
-                              "--use-dynamic-base-id", "-l", "warning", "--log-path", out + ".envoy.log"])
+                              "--use-dynamic-base-id", "-l", "warning", "--log-path", out + ".envoy.log"], env=env)
     stop = {"now": False}
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.update(now=True))
@@ -175,6 +179,9 @@ def main():
         envoy.wait()
     rows = convert.parse_access_log(access_log) if os.path.exists(access_log) else []
     run_start = convert.write_forwards(rows, backends, out + ".forwards.csv", float(args.ewma_beta))
+    updates, picks = convert.merge_peak_ewma(trace_prefix, backends, run_start, out)
+    if updates or picks:
+        print(f"ingress: Peak EWMA trace: {updates} EWMA updates, {picks} picks", flush=True)
     config = {k: getattr(args, k) for k in vars(args)}
     config["backends"] = backends
     convert.write_json(convert.ingress_summary(rows, backends, config, run_start, time.monotonic() - started),

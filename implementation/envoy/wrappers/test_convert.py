@@ -50,6 +50,43 @@ class IngressConversion(unittest.TestCase):
             self.assertEqual(s["lb_retries"], 0)
 
 
+class PeakEwmaTraceMerge(unittest.TestCase):
+    def test_merge(self):
+        backends = ["10.0.0.1:8080", "10.0.0.2:8080"]
+        with tempfile.TemporaryDirectory() as d:
+            pre = os.path.join(d, "ing.peak_ewma")
+            open(pre + ".ewma.0.csv", "w").write(
+                "t_unix_ns,host,rtt_ms,dt_ns,alpha,ewma_before_ms,ewma_after_ms\n"
+                "1000000300,10.0.0.2:8080,400,25000000,0.0025,0,400\n"
+                "1000000100,10.0.0.1:8080,390,-5,1,401,390\n"
+                "1000000200,9.9.9.9:1,1,1,1,1,1\n"          # not a backend: dropped
+                "1000000400,10.0.0.1:8080,3")                # truncated last line: dropped
+            open(pre + ".ewma.1.csv", "w").write(
+                "t_unix_ns,host,rtt_ms,dt_ns,alpha,ewma_before_ms,ewma_after_ms\n"
+                "1000000200,10.0.0.1:8080,410,100,1e-08,390,390.000004\n")
+            open(pre + ".picks.0.csv", "w").write(
+                "t_unix_ns,host_a,active_a,ewma_a_ms,cost_a,host_b,active_b,ewma_b_ms,cost_b,chosen\n"
+                "1000000500,10.0.0.2:8080,3,400,1600,10.0.0.1:8080,1,390,780,b\n")
+            open(pre + ".picks.1.csv", "w").write(
+                "t_unix_ns,host_a,active_a,ewma_a_ms,cost_a,host_b,active_b,ewma_b_ms,cost_b,chosen\n")
+            out = os.path.join(d, "ing")
+            self.assertEqual(convert.merge_peak_ewma(pre, backends, 1_000_000_000, out), (3, 1))
+            up = open(out + ".peak_ewma_updates.csv").read().splitlines()
+            self.assertEqual(up, [convert.PEAK_EWMA_UPDATES_HEADER,
+                                  "100,0,390,-5,1,401,390",
+                                  "200,0,410,100,1e-08,390,390.000004",
+                                  "300,1,400,25000000,0.0025,0,400"])
+            pk = open(out + ".peak_ewma_picks.csv").read().splitlines()
+            self.assertEqual(pk, [convert.PEAK_EWMA_PICKS_HEADER, "500,1,3,400,1600,0,1,390,780,b"])
+            self.assertEqual(sorted(f for f in os.listdir(d) if ".peak_ewma." in f), [])  # raw files removed
+
+    def test_no_trace(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "ing")
+            self.assertEqual(convert.merge_peak_ewma(out + ".peak_ewma", ["a:1"], 0, out), (0, 0))
+            self.assertEqual(os.listdir(d), [])  # no outputs without trace files
+
+
 class LoadgenConversion(unittest.TestCase):
     def write_logs(self, d):
         header = "id,result,http_status,scheduled_unix_ns,send_unix_ns,end_unix_ns,exec_ns,start_slack_ns\n"

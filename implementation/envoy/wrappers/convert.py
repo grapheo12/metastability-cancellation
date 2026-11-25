@@ -3,11 +3,13 @@ output files (no I/O beyond reading and writing the given paths, so they are uni
 
 Formats produced:
   ingress  <out>.forwards.csv, <out>.summary.json   abstraction/ingress/api.md#outputs
+           <out>.peak_ewma_updates.csv, <out>.peak_ewma_picks.csv   impl/envoy only: Envoy's Peak EWMA trace
   loadgen  <out>.requests.csv, <out>.summary.json   abstraction/load_generator/metrics/api.md
 """
 import csv
 import glob
 import json
+import os
 
 # ---------------------------------------------------------------- ingress
 
@@ -105,6 +107,64 @@ def ingress_summary(rows, backends, config, run_start_unix_ns, run_end_s):
             "counts": zero_counts, "rates_per_s": {"offered": 0.0, "sent": 0.0, "accepted": 0.0},
             "clients_targeted": 0, "filter_dropped": 0, "filter_queued": 0, "filter_sent_from_queue": 0,
             "filter_queue_max": 0, "lb_retry_refused": 0, "lb_retries": 0, "backends": per}
+
+
+# ---------------------------------------------------------------- Peak EWMA trace (impl/envoy only)
+
+# Envoy's vendored Peak EWMA writes, with PEAK_EWMA_TRACE_PREFIX=<prefix>, one pair of files per balancer instance
+# (envoy/contrib/peak_ewma/load_balancing_policies/source/peak_ewma_lb.h, PeakEwmaTrace):
+#   <prefix>.ewma.<n>.csv   t_unix_ns,host,rtt_ms,dt_ns,alpha,ewma_before_ms,ewma_after_ms
+#   <prefix>.picks.<n>.csv  t_unix_ns,host_a,active_a,ewma_a_ms,cost_a,host_b,active_b,ewma_b_ms,cost_b,chosen
+# The merged outputs replace hosts by server ids (--backends order) and Unix times by t_ns since run_start_unix_ns
+# (the forwards.csv time base), sorted by t_ns (stable).
+PEAK_EWMA_UPDATES_HEADER = "t_ns,server_id,rtt_ms,dt_ns,alpha,ewma_before_ms,ewma_after_ms"
+PEAK_EWMA_PICKS_HEADER = "t_ns,server_a,active_a,ewma_a_ms,cost_a,server_b,active_b,ewma_b_ms,cost_b,chosen"
+
+
+def _trace_rows(prefix, kind):
+    """(paths, rows as lists of strings) of every <prefix>.<kind>.<n>.csv, header lines and malformed lines
+    (e.g. a truncated last line) dropped."""
+    paths = sorted(glob.glob(f"{glob.escape(prefix)}.{kind}.*.csv"))
+    width = len((PEAK_EWMA_UPDATES_HEADER if kind == "ewma" else PEAK_EWMA_PICKS_HEADER).split(","))
+    rows = []
+    for path in paths:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            next(f, None)
+            for line in f:
+                parts = line.rstrip("\n").split(",")
+                if len(parts) == width and parts[0].lstrip("-").isdigit():
+                    rows.append(parts)
+    return paths, rows
+
+
+def merge_peak_ewma(prefix, backends, run_start_unix_ns, out_prefix, remove=True):
+    """Writes <out_prefix>.peak_ewma_updates.csv and <out_prefix>.peak_ewma_picks.csv from the per-instance
+    trace files (nothing when there are none); returns (update rows, pick rows) written. Rows whose host is not a
+    backend are dropped. The per-instance files are deleted when remove is true."""
+    index = {b: i for i, b in enumerate(backends)}
+    counts = []
+    for kind, header, out, host_cols in (("ewma", PEAK_EWMA_UPDATES_HEADER, "peak_ewma_updates", (1,)),
+                                          ("picks", PEAK_EWMA_PICKS_HEADER, "peak_ewma_picks", (1, 5))):
+        paths, rows = _trace_rows(prefix, kind)
+        merged = []
+        for parts in rows:
+            if any(parts[c] not in index for c in host_cols):
+                continue
+            row = [str(int(parts[0]) - run_start_unix_ns)] + parts[1:]
+            for c in host_cols:
+                row[c] = str(index[parts[c]])
+            merged.append(row)
+        merged.sort(key=lambda r: int(r[0]))
+        if paths:
+            with open(f"{out_prefix}.{out}.csv", "w", newline="") as f:
+                f.write(header + "\n")
+                for row in merged:
+                    f.write(",".join(row) + "\n")
+        if remove:
+            for path in paths:
+                os.remove(path)
+        counts.append(len(merged))
+    return tuple(counts)
 
 
 # ---------------------------------------------------------------- loadgen
