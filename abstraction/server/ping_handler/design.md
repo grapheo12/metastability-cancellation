@@ -30,6 +30,8 @@ function admit_ping(task, config, rng, conn_state):
     service_us = 0
     if config.workload in {cpu_burn, sleep}:
         service_us = sampling.exponential_us(rng, config.response_rate)  # see Sampling order
+    else if config.workload == sleep_constant:
+        service_us = constant_service_us(config.response_rate)         # ConstantServiceTime: no draw
     deadline = protocol.parse_deadline(task.body)          # RequestDeadline; none if missing or malformed
     if deadline is none: deadline = NO_DEADLINE            # 2^64 - 1: after every deadline under edf
     return PingJob(task = task, request_id = id, client_id = client_id,
@@ -72,7 +74,7 @@ function run_ping(job, config, registry, counters, buf, queue):  # buf: MessageB
         if config.workload == cpu_burn:
             outcome = cpu_burner.burn(job.service_us, job.task.cancelled, config.cancel_check_interval_us,
                                       id_check, CHECK_ITER)
-        else if config.workload == sleep:
+        else if config.workload in {sleep, sleep_constant}:
             outcome = sleeper.sleep(job.service_us, job.task.cancelled, id_check)        # QuantumSleep
         else:
             outcome = fill_messages(job, config, buf, job.task.cancelled, id_check)        # MessageWork
@@ -88,7 +90,7 @@ function run_ping(job, config, registry, counters, buf, queue):  # buf: MessageB
         freeze_check = (() -> { freeze(); return false }) if config.freeze_after_ms is set else NONE
         if config.workload == cpu_burn:
             cpu_burner.burn(job.service_us, NONE, config.cancel_check_interval_us, freeze_check, CHECK_ITER)
-        else if config.workload == sleep:
+        else if config.workload in {sleep, sleep_constant}:
             sleeper.sleep(job.service_us, NONE, freeze_check)                              # always COMPLETED
         else:
             fill_messages(job, config, buf, NONE, freeze_check)                            # always COMPLETED
@@ -242,10 +244,31 @@ change the state.
 
 With `workload = cpu_burn` or `sleep`, `exponential_us` is called **exactly once for each request that parses and matches
 the binding, before it is queued and before any cancellation check**, in both modes, inside `admit_ping`. With
-`workload = message_buffer` it is never called, and the connection's `rng` is not used. A connection admits
+`workload = message_buffer` or `sleep_constant` it is never called, and the connection's `rng` is not used. A connection admits
 its requests one at a time in the order they were fully received. The `k`-th such request on connection `c`
 therefore always gets the `k`-th sample of that connection's stream, whatever the cancellation timing, whatever
 `n_worker_threads` is, and whichever worker runs it. A `400` request draws no sample.
+
+## ConstantServiceTime
+
+With `workload = sleep_constant` every request's ServiceTime is the same, the **ConstantServiceTime**:
+
+```
+function constant_service_us(response_rate):      # -> u64 µs
+    return floor(1_000_000 / response_rate + 0.5)  # binary64 division, then round half up
+```
+
+It is the mean of the `sleep` workload's exponential ServiceTime, without its variance, so the two workloads compare
+at the same load. Validation (`response_rate > 0`) keeps it finite; a rate above 2,000,000 per s gives 0 µs, a
+request that is answered at once.
+
+| `response_rate` | `1_000_000 / response_rate` | ConstantServiceTime (µs) |
+|---|---|---|
+| 2.5 | 400000 | 400_000 |
+| 3 | 333333.33… | 333_333 |
+| 25 | 40000 | 40_000 |
+| 1.6 | 625000 | 625_000 |
+| 3_000_000 | 0.333… | 0 |
 
 ## CancelCheckPoints
 

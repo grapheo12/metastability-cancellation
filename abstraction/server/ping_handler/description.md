@@ -5,7 +5,8 @@ Leaf component. Handles one routed `POST /ping` in two steps.
 On the Connection Handler, when the request is fully received (**admit**):
 
 - Parse the RequestId and bind the connection to its client id (`id >> 32`) on the first `/ping`.
-- Sample a ServiceTime from the connection's Rng (`workload = cpu_burn` or `sleep`).
+- Sample a ServiceTime from the connection's Rng (`workload = cpu_burn` or `sleep`), or use the ConstantServiceTime
+  (`workload = sleep_constant`).
 - Package the request as a **PingJob** for the WorkQueue, or answer `400` straight away.
 
 On a worker of the WorkerPool (**run**):
