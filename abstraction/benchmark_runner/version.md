@@ -74,3 +74,4 @@
 | 0.12.0 | 2026-11-24T00:00:00Z | Child bump: result_plotter 0.21.0 (linear availability axis again) |
 | 0.13.0 | 2026-11-24T00:00:00Z | Child bump: result_plotter 0.22.0 (availability by send time) |
 | 0.14.0 | 2026-11-24T00:00:00Z | Child bump: result_plotter 0.23.0 (EstimateErrorHistogram) |
+| 0.14.1 | 2026-11-24T00:00:00Z | Child bump: result_plotter 0.23.1 |
