@@ -13,6 +13,10 @@ Both trees are checked in directly (not submodules) so they can be modified here
 | File | Change | Why |
 |---|---|---|
 | `nighthawk/MODULE.bazel` | `git_override` of `envoy` and `envoy_api` replaced by `local_path_override` to `../envoy` and `../envoy/api` | Nighthawk builds against this repository's Envoy copy, so edits to it take effect |
+| `nighthawk/source/request_source/ping_request_source_plugin*` (new), `BUILD`, `source/client/BUILD` | `nighthawk.request_source.ping` RequestSource: `POST /ping` with the testbed's PingRequestBody (`{"id","deadline","payload"}`, exactly `request_bytes`); one instance per worker, client id = `client_id_base` + instance, `seq` 0, 1, … | Drive the Go `/ping` server, which needs a unique RequestId and a RequestDeadline per request |
+| `nighthawk/source/client/request_log.{h,cc}` (new), `stream_decoder.{h,cc}`, `source/client/BUILD` | With `NH_REQUEST_LOG_PREFIX` set, each worker thread writes `<prefix>.<n>.csv`: request id, result (response, reset, pool failure), status, scheduled/send/end wall times, and the response's ExecReport | The testbed's per-request Requests CSV; the loadgen wrapper converts it |
+| `nighthawk/source/common/rate_limiter_impl.{h,cc}`, `source/client/factories_impl.cc` | `PoissonRateLimiter`; `NH_POISSON_RATE` (per-worker rate) selects it, `NH_POISSON_SEED` seeds worker k with seed + k | Open-loop Poisson arrivals like the Go load generator (Nighthawk only paces linearly) |
+| `nighthawk/test/request_source/ping_request_source_plugin_test.cc` (new), `test/request_source/BUILD`, `test/rate_limiter_test.cc` | Tests for the body format, the log's field parsing and the Poisson limiter | |
 
 Upstream stores 72 files under `envoy/test/common/http/http1/http1_connection_corpus/` with CRLF line endings although
 Envoy's `.gitattributes` says `* text=auto eol=lf`; they were added with `git hash-object --no-filters` so the stored

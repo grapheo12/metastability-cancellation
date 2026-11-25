@@ -67,6 +67,27 @@ protected:
 };
 
 /**
+ * impl/envoy: open-loop Poisson arrivals. Releases at exponentially distributed gaps with mean 1 / rate_per_s,
+ * so the superposition of the workers' processes is a Poisson process at the sum of their rates, matching the
+ * testbed's load generator (abstraction/load_generator/design.md). Like LinearRateLimiter, releases that fell
+ * due while the caller was busy are made acquireable at once (no catch-up is skipped).
+ */
+class PoissonRateLimiter : public RateLimiterBaseImpl,
+                           public Envoy::Logger::Loggable<Envoy::Logger::Id::main> {
+public:
+  PoissonRateLimiter(Envoy::TimeSource& time_source, double rate_per_s, uint64_t seed);
+  bool tryAcquireOne() override;
+  void releaseOne() override;
+
+private:
+  std::chrono::nanoseconds nextGap();
+  int64_t acquireable_count_{0};
+  std::chrono::nanoseconds next_release_{0};
+  std::mt19937_64 rng_;
+  std::exponential_distribution<double> gap_s_;
+};
+
+/**
  * A rate limiter which linearly ramps up to the desired frequency over the specified ramp_time.
  */
 class LinearRampingRateLimiterImpl : public RateLimiterBaseImpl,

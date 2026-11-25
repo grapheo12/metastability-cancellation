@@ -119,6 +119,33 @@ bool LinearRateLimiter::tryAcquireOne() {
   return acquireable_count_ > 0 ? tryAcquireOne() : false;
 }
 
+PoissonRateLimiter::PoissonRateLimiter(Envoy::TimeSource& time_source, double rate_per_s, uint64_t seed)
+    : RateLimiterBaseImpl(time_source), rng_(seed), gap_s_(rate_per_s) {
+  if (!(rate_per_s > 0)) {
+    throw NighthawkException(fmt::format("poisson rate must be > 0, value: {}", rate_per_s));
+  }
+  next_release_ = nextGap();
+}
+
+std::chrono::nanoseconds PoissonRateLimiter::nextGap() {
+  return std::chrono::nanoseconds(static_cast<int64_t>(gap_s_(rng_) * 1e9));
+}
+
+bool PoissonRateLimiter::tryAcquireOne() {
+  if (acquireable_count_ > 0) {
+    acquireable_count_--;
+    return true;
+  }
+  const std::chrono::nanoseconds now = elapsed();
+  while (next_release_ <= now) {
+    acquireable_count_++;
+    next_release_ += nextGap();
+  }
+  return acquireable_count_ > 0 ? tryAcquireOne() : false;
+}
+
+void PoissonRateLimiter::releaseOne() { acquireable_count_++; }
+
 void LinearRateLimiter::releaseOne() {
   acquireable_count_++;
   acquired_count_--;

@@ -1,0 +1,39 @@
+// impl/envoy: tests for the ping RequestSource's body format (abstraction/protocol/design.md#pingrequestbody)
+// and the per-request log's field parsing (source/client/request_log.h).
+
+#include <string>
+
+#include "source/client/request_log.h"
+#include "source/request_source/ping_request_source_plugin_impl.h"
+
+#include "gtest/gtest.h"
+
+namespace Nighthawk {
+namespace {
+
+TEST(PingRequestBody, MatchesGoBuildRequestBody) {
+  // Go: protocol.BuildRequestBody(MakeRequestID(1, 1), 5, 76): 36 fixed + 10 id digits + 1 deadline digit
+  // + 29 payload bytes.
+  const std::string body = BuildPingRequestBody((1ULL << 32) | 1, 5, 76);
+  EXPECT_EQ(body, R"({"id":"4294967297","deadline":"5","payload":")" + std::string(29, 'x') + R"("})");
+  EXPECT_EQ(body.size(), 76u);
+}
+
+TEST(PingRequestBody, LongestIdAndDeadlineNeed76Bytes) {
+  EXPECT_EQ(BuildPingRequestBody(~0ULL, ~0ULL, 76).size(), 76u); // 36 + 20 + 20, empty payload
+  EXPECT_EQ(BuildPingRequestBody(~0ULL, ~0ULL, 75), "");
+}
+
+TEST(RequestLog, ParsesIdAndExecReport) {
+  EXPECT_EQ(Client::RequestLog::requestId(R"({"id":"42","deadline":"7","payload":"xx"})"), "42");
+  const std::string reply = R"({"id":"42","exec_ns":"400000000","start_slack_ns":"-12","payload":"x"})";
+  EXPECT_EQ(Client::RequestLog::stringField(reply, "exec_ns"), "400000000");
+  EXPECT_EQ(Client::RequestLog::stringField(reply, "start_slack_ns"), "-12");
+  EXPECT_EQ(Client::RequestLog::stringField(R"({"id":"1","start_slack_ns":"","payload":"x"})", "start_slack_ns"),
+            "");
+  EXPECT_EQ(Client::RequestLog::stringField("not json", "exec_ns"), "");
+  EXPECT_EQ(Client::RequestLog::stringField(R"({"exec_ns":"12)", "exec_ns"), ""); // truncated prefix
+}
+
+} // namespace
+} // namespace Nighthawk

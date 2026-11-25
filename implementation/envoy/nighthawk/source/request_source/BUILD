@@ -74,3 +74,33 @@ envoy_cc_library(
         "@envoy//source/exe:platform_impl_lib",
     ],
 )
+
+# impl/envoy: requests in the testbed's PingRequestBody format (abstraction/protocol/design.md#pingrequestbody).
+api_cc_py_proto_library(
+    name = "ping_request_source_plugin",
+    srcs = [
+        "ping_request_source_plugin.proto",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+envoy_cc_library(
+    name = "ping_request_source_plugin_impl",
+    srcs = [
+        "ping_request_source_plugin_impl.cc",
+    ],
+    hdrs = [
+        "ping_request_source_plugin_impl.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":ping_request_source_plugin_cc_proto",
+        "//include/nighthawk/request_source:request_source_plugin_config_factory_lib",
+        "//source/common:nighthawk_common_lib",
+        "//source/common:request_impl_lib",
+        "//source/common:request_source_impl_lib",
+        "@com_google_absl//absl/strings",
+        "@envoy//source/common/protobuf:protobuf_with_external_headers",
+        "@envoy//source/common/protobuf:utility_lib_with_external_headers",
+    ],
+)

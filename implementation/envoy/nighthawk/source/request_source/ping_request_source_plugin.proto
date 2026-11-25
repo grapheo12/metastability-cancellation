@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package nighthawk;
+
+// Config for `PingRequestSourcePlugin` (impl/envoy): requests in the testbed's PingRequestBody format,
+// {"id":"<dec>","deadline":"<unix ns>","payload":"xxx..."} of exactly request_bytes bytes
+// (abstraction/protocol/design.md#pingrequestbody).
+message PingRequestSourcePluginConfig {
+  // Client id of the first plugin instance; each further instance (one per worker) takes the next id.
+  uint32 client_id_base = 1;
+  // Total body size in bytes; must hold the 36 fixed bytes plus the id and deadline digits.
+  uint32 request_bytes = 2;
+  // RequestDeadline = wall clock when the request is generated + slo_ms.
+  uint64 slo_ms = 3;
+  // Request path; defaults to "/ping".
+  string path = 4;
+}

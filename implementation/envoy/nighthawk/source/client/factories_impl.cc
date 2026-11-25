@@ -1,4 +1,8 @@
 #include "source/client/factories_impl.h"
+
+#include <cstdlib>
+
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -100,8 +104,20 @@ SequencerPtr SequencerFactoryImpl::create(Envoy::TimeSource& time_source,
     // If no rate limiter plugin is set, use the default linear rate limiter.
   } else {
     Frequency frequency(options_.requestsPerSecond());
-    rate_limiter = std::make_unique<ScheduledStartingRateLimiter>(
-        std::make_unique<LinearRateLimiter>(time_source, frequency), scheduled_starting_time);
+    // impl/envoy: NH_POISSON_RATE (per-worker requests/s, a decimal) selects Poisson arrivals in place of the
+    // linear pace; NH_POISSON_SEED (default 0) seeds worker k's stream with seed + k.
+    const char* poisson_rate = std::getenv("NH_POISSON_RATE");
+    if (poisson_rate != nullptr && poisson_rate[0] != '\0') {
+      static std::atomic<uint64_t> poisson_worker{0};
+      const char* seed_env = std::getenv("NH_POISSON_SEED");
+      const uint64_t seed = (seed_env != nullptr ? std::strtoull(seed_env, nullptr, 10) : 0) + poisson_worker++;
+      rate_limiter = std::make_unique<ScheduledStartingRateLimiter>(
+          std::make_unique<PoissonRateLimiter>(time_source, std::strtod(poisson_rate, nullptr), seed),
+          scheduled_starting_time);
+    } else {
+      rate_limiter = std::make_unique<ScheduledStartingRateLimiter>(
+          std::make_unique<LinearRateLimiter>(time_source, frequency), scheduled_starting_time);
+    }
     const uint64_t burst_size = options_.burstSize();
 
     if (burst_size) {

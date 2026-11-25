@@ -67,6 +67,7 @@ envoy_cc_library(
         "flush_worker_impl.cc",
         "process_impl.cc",
         "remote_process_impl.cc",
+        "request_log.cc",
         "stream_decoder.cc",
     ],
     hdrs = [
@@ -77,6 +78,7 @@ envoy_cc_library(
         "flush_worker_impl.h",
         "process_impl.h",
         "remote_process_impl.h",
+        "request_log.h",
         "stream_decoder.h",
     ],
     copts = select({
@@ -98,6 +100,8 @@ envoy_cc_library(
         "//source/common:request_source_impl_lib",
         "//source/request_source:llm_request_source_plugin_cc_proto",
         "//source/request_source:llm_request_source_plugin_impl",
+        "//source/request_source:ping_request_source_plugin_cc_proto",
+        "//source/request_source:ping_request_source_plugin_impl",
         "//source/request_source:request_options_list_plugin_impl",
         "//source/user_defined_output:user_defined_output_plugin_creator",
         "@envoy//envoy/config:xds_manager_interface",

@@ -37,6 +37,33 @@ TEST_F(RateLimiterTest, LinearRateLimiterTest) {
   EXPECT_FALSE(rate_limiter.tryAcquireOne());
 }
 
+// impl/envoy: Poisson arrivals average the configured rate and are reproducible for a seed.
+TEST_F(RateLimiterTest, PoissonRateLimiterTest) {
+  Envoy::Event::SimulatedTimeSystem time_system;
+  PoissonRateLimiter rate_limiter(time_system, 100.0, 7);
+  EXPECT_FALSE(rate_limiter.tryAcquireOne()); // the first gap has not elapsed
+  int acquired = 0;
+  for (int i = 0; i < 1000; i++) { // 100 s in 100 ms steps
+    time_system.advanceTimeWait(100ms);
+    while (rate_limiter.tryAcquireOne()) {
+      acquired++;
+    }
+  }
+  EXPECT_NEAR(acquired, 10000, 400); // Poisson(10000): sd 100
+  rate_limiter.releaseOne();
+  EXPECT_TRUE(rate_limiter.tryAcquireOne());
+
+  Envoy::Event::SimulatedTimeSystem t1, t2;
+  PoissonRateLimiter a(t1, 50.0, 3), b(t2, 50.0, 3);
+  t1.advanceTimeWait(2s);
+  t2.advanceTimeWait(2s);
+  int na = 0, nb = 0;
+  while (a.tryAcquireOne()) na++;
+  while (b.tryAcquireOne()) nb++;
+  EXPECT_EQ(na, nb);
+  EXPECT_THROW(PoissonRateLimiter(t1, 0.0, 1), NighthawkException);
+}
+
 TEST_F(RateLimiterTest, LinearRateLimiterInvalidArgumentTest) {
   Envoy::Event::SimulatedTimeSystem time_system;
   EXPECT_THROW(LinearRateLimiter rate_limiter(time_system, 0_Hz), NighthawkException);

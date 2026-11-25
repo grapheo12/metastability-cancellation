@@ -1,5 +1,6 @@
 #include "source/client/stream_decoder.h"
 
+#include <algorithm>
 #include <memory>
 
 #include "source/common/http/header_map_impl.h"
@@ -55,6 +56,10 @@ void StreamDecoder::decodeData(Envoy::Buffer::Instance& data, bool end_stream) {
   // This will show up in the zipkin UI as 'response_size'. In Envoy this tracks bytes send by Envoy
   // to the downstream.
   stream_info_.addBytesSent(data.length());
+  if (RequestLog::enabled() && log_response_prefix_.size() < 512) {
+    const uint64_t n = std::min<uint64_t>(data.length(), 512 - log_response_prefix_.size());
+    log_response_prefix_.append(static_cast<const char*>(data.linearize(n)), n);
+  }
   if (complete_) {
     onComplete(true);
   }
@@ -85,6 +90,11 @@ void StreamDecoder::onComplete(bool success) {
     }
   }
   stream_info_.upstreamInfo()->upstreamTiming().onLastUpstreamRxByteReceived(time_source_);
+  if (RequestLog::enabled()) {
+    RequestLog::record(request_body_, response_headers_ != nullptr ? "response" : "reset",
+                       stream_info_.responseCode().value_or(0), log_scheduled_unix_ns_, log_send_unix_ns_,
+                       RequestLog::wallNowNs(), log_response_prefix_);
+  }
   response_body_sizes_statistic_.addValue(stream_info_.bytesSent());
   stream_info_.onRequestComplete();
   if (response_headers_ != nullptr) {
@@ -110,6 +120,10 @@ void StreamDecoder::onPoolFailure(Envoy::Http::ConnectionPool::PoolFailureReason
                                   absl::string_view /* transport_failure_reason */,
                                   Envoy::Upstream::HostDescriptionConstSharedPtr) {
   decoder_completion_callback_.onPoolFailure(reason);
+  if (RequestLog::enabled()) {
+    RequestLog::record(request_body_, "pool_failure", 0, log_scheduled_unix_ns_, 0, RequestLog::wallNowNs(),
+                       "");
+  }
   stream_info_.setResponseFlag(Envoy::StreamInfo::CoreResponseFlag::UpstreamConnectionFailure);
   finalizeActiveSpan();
   caller_completion_callback_(false, false);
@@ -121,6 +135,9 @@ void StreamDecoder::onPoolReady(Envoy::Http::RequestEncoder& encoder,
                                 Envoy::StreamInfo::StreamInfo&,
                                 std::optional<Envoy::Http::Protocol>) {
   encoder.getStream().addCallbacks(*this);
+  if (RequestLog::enabled()) {
+    log_send_unix_ns_ = RequestLog::wallNowNs();
+  }
   stream_info_.upstreamInfo()->upstreamTiming().onFirstUpstreamTxByteSent(
       time_source_); // XXX(oschaaf): is this correct?
   const bool end_stream = request_body_size_ == 0 && request_body_.empty();

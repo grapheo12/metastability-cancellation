@@ -2,6 +2,7 @@
 
 #include <functional>
 
+#include "source/client/request_log.h"
 #include "envoy/common/time.h"
 #include "envoy/event/deferred_deletable.h"
 #include "envoy/event/dispatcher.h"
@@ -138,6 +139,10 @@ private:
   Envoy::Tracing::TracerSharedPtr& tracer_;
   Envoy::Tracing::SpanPtr active_span_;
   const std::string latency_response_header_name_;
+  // impl/envoy per-request log (request_log.h): wall-clock times and the response body's first bytes.
+  const int64_t log_scheduled_unix_ns_{RequestLog::enabled() ? RequestLog::wallNowNs() : 0};
+  int64_t log_send_unix_ns_{0};
+  std::string log_response_prefix_;
 };
 
 } // namespace Client

@@ -73,3 +73,13 @@ envoy_cc_test(
         "@envoy//test/mocks/api:api_mocks",
     ],
 )
+
+# impl/envoy: ping RequestSource body format and per-request log parsing.
+envoy_cc_test(
+    name = "ping_request_source_plugin_test",
+    srcs = ["ping_request_source_plugin_test.cc"],
+    deps = [
+        "//source/client:nighthawk_client_lib",
+        "//source/request_source:ping_request_source_plugin_impl",
+    ],
+)
