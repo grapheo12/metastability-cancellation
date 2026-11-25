@@ -116,3 +116,32 @@ Worked examples:
 | 1 | 4 | 4 | 0 | Power of two: never rejects, result `1 + (x mod 4)` |
 | 0 | 2 | 3 | 1 | `2^64 mod 3 = 1`: rejects only `x = 0` |
 | 0 | 0 | 1 | 0 | Always returns `0` and still uses one draw |
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- Package `internal/sampling`. `Rng` is a struct holding `[4]uint64`. Go's `uint64` arithmetic wraps modulo 2^64, as the design requires.
+- `rotl` is `math/bits.RotateLeft64`. `ln` is `math.Log`. Rounding is `math.Floor(x + 0.5)`.
+- The `exponential_*` and `uniform_int` functions are methods on `*Rng` (`rng.ExponentialNs(rate)` and so on).
+- Tests: `sampling_test.go` covers the xoshiro256** reference step (state {1,2,3,4} → 11520), determinism, `UniformInt` range and threshold examples, and the exponential mean.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [SplitMix64](#splitmix64) | [sampling.go:23](../../implementation/go/internal/sampling/sampling.go#L23), [sampling.go:28](../../implementation/go/internal/sampling/sampling.go#L28), [sampling.go:35](../../implementation/go/internal/sampling/sampling.go#L35) |
+| [SeedDerivation](#seedderivation) | [sampling.go:43](../../implementation/go/internal/sampling/sampling.go#L43), [sampling_test.go:19](../../implementation/go/internal/sampling/sampling_test.go#L19) |
+| [Generator](#generator) | [sampling.go:51](../../implementation/go/internal/sampling/sampling.go#L51), [sampling.go:58](../../implementation/go/internal/sampling/sampling.go#L58), [sampling.go:70](../../implementation/go/internal/sampling/sampling.go#L70), [sampling_test.go:10](../../implementation/go/internal/sampling/sampling_test.go#L10) |
+| [Uniform](#uniform) | [sampling.go:86](../../implementation/go/internal/sampling/sampling.go#L86) |
+| [ExponentialSampler](#exponentialsampler) | [sampling.go:93](../../implementation/go/internal/sampling/sampling.go#L93), [sampling.go:101](../../implementation/go/internal/sampling/sampling.go#L101), [sampling.go:108](../../implementation/go/internal/sampling/sampling.go#L108), [sampling_test.go:57](../../implementation/go/internal/sampling/sampling_test.go#L57) |
+| [UniformIntSampler](#uniformintsampler) | [sampling.go:116](../../implementation/go/internal/sampling/sampling.go#L116), [sampling_test.go:32](../../implementation/go/internal/sampling/sampling_test.go#L32) |
+<!-- trace:end -->

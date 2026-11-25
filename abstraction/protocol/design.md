@@ -360,3 +360,44 @@ function parse_heartbeat_line(line):                 # line: the bytes before on
 | `503` | `rejected` (registry full) |
 | `400` | `bad_request` |
 | any other status | `error` |
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- Package `internal/protocol`, file `protocol.go`. Constants are untyped Go constants named in CamelCase after the API names.
+- `ParseError` is the sentinel `protocol.ErrParse`. `ParseBody` unmarshals into `map[string]json.RawMessage` (not a struct), so keys match case-sensitively as the design requires. Then it decodes `id` as a `string`. A JSON `null` decodes to `""` and is rejected by the empty check.
+- `BuildBody(id, execNs, startSlackNs *int64, totalBytes)` panics if `k < 0`. This cannot happen once `ValidateBodySize` has passed. A nil `startSlackNs` is the design's none and writes an empty field; `signed_decimal_string` is `strconv.FormatInt`, which already writes no `+` and no leading zeros.
+- `ParseExecReport(body) (execNs, execOK, startSlackNs, slackOK)` stands for `(u64 | none, i64 | none)`. `exec_ns` reuses `parseDecimalString`; `start_slack_ns` goes through `parseSignedDecimalString`, which strips one `-`, checks 1 to 19 ASCII digits by hand, parses them as a u64 and range-checks against `2^63 - 1` (positive) or `2^63` (negative, where `int64(-u)` wraps to exactly `-2^63`). `TestParseExecReportWorkedExamples` checks the design's table plus `2^63 - 1` and non-JSON input.
+- Call sites that only need a valid response body (tests sending a `/ping` with a PaddedJsonBody) pass `exec_ns = 0` and a nil slack.
+- `BuildCancelReply(finished, ok)` and `ParseCancelReply(body) (finished, ok, err)` stand for `u64 | none`: `ok == false` is none. `ParseCancelReply` detects `null` by the raw JSON value `null`. The digit-string checks are shared with `ParseBody` in the helper `parseDecimalString`.
+- `BuildRequestBody` mirrors `BuildBody` with the 36-byte overhead and panics if `k < 0`, which `ValidateRequestBodySize` rules out. `ParseDeadline(body) (deadline, ok)` stands for `u64 | none` (`ok == false` is none) and reuses `parseDecimalString`; it unmarshals the body separately from `ParseBody`, so the server parses a `/ping` body twice (small bodies, accepted cost).
+- WorkerCount: constant `WorkerThreadsHeader`; `ParseWorkerCount(value string) (uint32, bool)` checks 1 to 10 ASCII digits by hand, then `strconv.ParseUint` and the range `1 ..= 2^32-1`. An absent header is the empty string (Go's `Header.Get`), which gives none. `TestParseWorkerCount` covers the design's table.
+- HeartbeatLine: `BuildHeartbeatLine(seq)` uses `strconv.FormatUint`; `ParseHeartbeatLine(line)` checks the `hb ` prefix and 1 to 20 ASCII digits by hand, then `strconv.ParseUint(…, 10, 64)`, whose range error rejects 2^64. Both return `ErrParse` for every rejection. `TestHeartbeatLine` checks the worked examples.
+- Tests: `protocol_test.go` checks every worked example (including the CancelReplyBody byte lengths) the parse rejection cases, and the PingRequestBody examples and `parse_deadline` table.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [RequestId](#requestid) | [protocol.go:42](../../implementation/go/internal/protocol/protocol.go#L42), [protocol.go:49](../../implementation/go/internal/protocol/protocol.go#L49), [protocol_test.go:10](../../implementation/go/internal/protocol/protocol_test.go#L10) |
+| [PaddedJsonBody](#paddedjsonbody) | [protocol.go:57](../../implementation/go/internal/protocol/protocol.go#L57), [protocol.go:65](../../implementation/go/internal/protocol/protocol.go#L65), [protocol_test.go:32](../../implementation/go/internal/protocol/protocol_test.go#L32) |
+| [ExecReport](#execreport) | [protocol.go:244](../../implementation/go/internal/protocol/protocol.go#L244), [protocol_test.go:63](../../implementation/go/internal/protocol/protocol_test.go#L63) |
+| [WorkerCount](#workercount) | [protocol.go:302](../../implementation/go/internal/protocol/protocol.go#L302), [protocol_test.go:232](../../implementation/go/internal/protocol/protocol_test.go#L232) |
+| [PingRequestBody](#pingrequestbody) | [protocol.go:108](../../implementation/go/internal/protocol/protocol.go#L108), [protocol_test.go:159](../../implementation/go/internal/protocol/protocol_test.go#L159) |
+| [Minimum body size](#minimum-body-size) | [protocol.go:94](../../implementation/go/internal/protocol/protocol.go#L94), [protocol.go:131](../../implementation/go/internal/protocol/protocol.go#L131), [protocol_test.go:96](../../implementation/go/internal/protocol/protocol_test.go#L96), [protocol_test.go:182](../../implementation/go/internal/protocol/protocol_test.go#L182) |
+| [CancelBody](#cancelbody) | [protocol.go:141](../../implementation/go/internal/protocol/protocol.go#L141), [protocol_test.go:88](../../implementation/go/internal/protocol/protocol_test.go#L88) |
+| [CancelReplyBody](#cancelreplybody) | [protocol.go:149](../../implementation/go/internal/protocol/protocol.go#L149), [protocol.go:160](../../implementation/go/internal/protocol/protocol.go#L160), [protocol_test.go:119](../../implementation/go/internal/protocol/protocol_test.go#L119), [protocol_test.go:144](../../implementation/go/internal/protocol/protocol_test.go#L144) |
+| [Parsing](#parsing) | [protocol.go:182](../../implementation/go/internal/protocol/protocol.go#L182), [protocol.go:206](../../implementation/go/internal/protocol/protocol.go#L206), [protocol.go:223](../../implementation/go/internal/protocol/protocol.go#L223), [protocol.go:244](../../implementation/go/internal/protocol/protocol.go#L244), [protocol.go:264](../../implementation/go/internal/protocol/protocol.go#L264), [protocol_test.go:63](../../implementation/go/internal/protocol/protocol_test.go#L63), [protocol_test.go:103](../../implementation/go/internal/protocol/protocol_test.go#L103), [protocol_test.go:189](../../implementation/go/internal/protocol/protocol_test.go#L189) |
+| [HeartbeatLine](#heartbeatline) | [protocol.go:321](../../implementation/go/internal/protocol/protocol.go#L321), [protocol.go:329](../../implementation/go/internal/protocol/protocol.go#L329), [protocol_test.go:215](../../implementation/go/internal/protocol/protocol_test.go#L215) |
+| [Status classification (load-generator client)](#status-classification-load-generator-client) |  |
+| [Status classification (load canceller)](#status-classification-load-canceller) |  |
+<!-- trace:end -->

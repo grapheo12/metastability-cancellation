@@ -1,0 +1,348 @@
+// Package protocol implements the /ping, /cancel and /heartbeat wire formats shared by
+// the server, the load generator and the load canceller.
+//
+// Source: abstraction/protocol/design.md (protocol v0.7.0)
+package protocol
+
+import (
+	"encoding/json"
+	"errors"
+	"strconv"
+)
+
+// API: abstraction/protocol/api.md#constants
+const (
+	PingPath               = "/ping"
+	PingMethod             = "POST"
+	CancelPath             = "/cancel"
+	CancelMethod           = "DELETE"
+	HeartbeatPath          = "/heartbeat"
+	HeartbeatMethod        = "GET"
+	ContentTypeJSON        = "application/json"
+	WorkerThreadsHeader    = "x-worker-threads" // WorkerCount on /ping 202 and 503
+	ContentTypeText        = "text/plain"
+	StatusStreamOK         = 200 // /heartbeat: the HeartbeatStream follows
+	StatusOK               = 202
+	StatusRejected         = 503
+	StatusBadRequest       = 400
+	StatusNotFound         = 404
+	StatusMethodNotAllowed = 405
+	StatusBadGateway       = 502 // sent only by an Ingress
+	RSTCodeCancel          = 0x8
+	MinBodyBytes           = 115 // PaddedJsonBody: 55 fixed + 20-digit id + 20-digit exec_ns + 20-byte start_slack_ns
+	MinRequestBodyBytes    = 76  // PingRequestBody: 36 fixed + 20-digit id + 20-digit deadline
+)
+
+// ErrParse is returned by ParseBody for any body that does not carry a valid RequestId.
+var ErrParse = errors.New("protocol: unparseable body")
+
+// MakeRequestID packs a client id (high 32 bits) and a sequence number (low 32 bits).
+//
+// Design: abstraction/protocol/design.md#requestid
+func MakeRequestID(seq, clientID uint32) uint64 {
+	return uint64(clientID)<<32 | uint64(seq)
+}
+
+// SplitRequestID is the inverse of MakeRequestID.
+//
+// Design: abstraction/protocol/design.md#requestid
+func SplitRequestID(id uint64) (seq, clientID uint32) {
+	return uint32(id & 0xFFFFFFFF), uint32(id >> 32)
+}
+
+// bodyFixedOverhead is len(`{"id":"`) + len(`","exec_ns":"`) + len(`","start_slack_ns":"`) +
+// len(`","payload":"`) + len(`"}`) = 7 + 13 + 20 + 13 + 2.
+//
+// Design: abstraction/protocol/design.md#paddedjsonbody
+const bodyFixedOverhead = 55
+
+// BuildBody returns the PaddedJsonBody
+// {"id":"<dec>","exec_ns":"<ex>","start_slack_ns":"<sl>","payload":"xxx..."} of exactly
+// totalBytes bytes, carrying the ExecReport. startSlackNs nil (no RequestDeadline)
+// writes an empty start_slack_ns.
+//
+// Design: abstraction/protocol/design.md#paddedjsonbody
+func BuildBody(id, execNs uint64, startSlackNs *int64, totalBytes int) []byte {
+	dec := strconv.FormatUint(id, 10)
+	ex := strconv.FormatUint(execNs, 10)
+	sl := ""
+	if startSlackNs != nil {
+		sl = strconv.FormatInt(*startSlackNs, 10) // signed_decimal_string: "-" only when negative
+	}
+	k := totalBytes - bodyFixedOverhead - len(dec) - len(ex) - len(sl)
+	if k < 0 {
+		panic("protocol: body size below MinBodyBytes")
+	}
+	b := make([]byte, 0, totalBytes)
+	b = append(b, `{"id":"`...)
+	b = append(b, dec...)
+	b = append(b, `","exec_ns":"`...)
+	b = append(b, ex...)
+	b = append(b, `","start_slack_ns":"`...)
+	b = append(b, sl...)
+	b = append(b, `","payload":"`...)
+	for i := 0; i < k; i++ {
+		b = append(b, 'x')
+	}
+	b = append(b, `"}`...)
+	return b
+}
+
+// ValidateBodySize rejects sizes that cannot hold the longest (20-digit) id.
+//
+// Design: abstraction/protocol/design.md#minimum-body-size
+func ValidateBodySize(totalBytes int) error {
+	if totalBytes < MinBodyBytes {
+		return errors.New("body size must be >= 115 bytes")
+	}
+	return nil
+}
+
+// requestBodyFixedOverhead is {"id":"  ","deadline":"  ","payload":"  "}: 7 + 14 + 13 + 2.
+const requestBodyFixedOverhead = 36
+
+// BuildRequestBody returns {"id":"<dec>","deadline":"<dl>","payload":"xxx..."} of
+// exactly totalBytes bytes: the PingRequestBody carrying the RequestDeadline.
+//
+// Design: abstraction/protocol/design.md#pingrequestbody
+func BuildRequestBody(id, deadlineUnixNs uint64, totalBytes int) []byte {
+	dec := strconv.FormatUint(id, 10)
+	dl := strconv.FormatUint(deadlineUnixNs, 10)
+	k := totalBytes - requestBodyFixedOverhead - len(dec) - len(dl)
+	if k < 0 {
+		panic("protocol: request body size below MinRequestBodyBytes")
+	}
+	b := make([]byte, 0, totalBytes)
+	b = append(b, `{"id":"`...)
+	b = append(b, dec...)
+	b = append(b, `","deadline":"`...)
+	b = append(b, dl...)
+	b = append(b, `","payload":"`...)
+	for i := 0; i < k; i++ {
+		b = append(b, 'x')
+	}
+	b = append(b, `"}`...)
+	return b
+}
+
+// ValidateRequestBodySize rejects request_bytes that cannot hold the longest id and deadline.
+//
+// Design: abstraction/protocol/design.md#minimum-body-size
+func ValidateRequestBodySize(totalBytes int) error {
+	if totalBytes < MinRequestBodyBytes {
+		return errors.New("request body size must be >= 76 bytes")
+	}
+	return nil
+}
+
+// BuildCancelBody returns the unpadded /cancel body {"id":"<dec>"}.
+//
+// Design: abstraction/protocol/design.md#cancelbody
+func BuildCancelBody(id uint64) []byte {
+	return []byte(`{"id":"` + strconv.FormatUint(id, 10) + `"}`)
+}
+
+// BuildCancelReply returns the CancelReplyBody of a 202 answer to /cancel:
+// {"finished":"<dec>"} when ok is true, {"finished":null} otherwise.
+//
+// Design: abstraction/protocol/design.md#cancelreplybody
+func BuildCancelReply(finished uint64, ok bool) []byte {
+	if !ok {
+		return []byte(`{"finished":null}`)
+	}
+	return []byte(`{"finished":"` + strconv.FormatUint(finished, 10) + `"}`)
+}
+
+// ParseCancelReply extracts the FinishedWatermark from a CancelReplyBody.
+// ok is false for a JSON null; err is ErrParse for anything else that is not a decimal string.
+//
+// Design: abstraction/protocol/design.md#cancelreplybody
+func ParseCancelReply(body []byte) (finished uint64, ok bool, err error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(body, &obj); err != nil || obj == nil {
+		return 0, false, ErrParse
+	}
+	raw, present := obj["finished"]
+	if !present {
+		return 0, false, ErrParse
+	}
+	if string(raw) == "null" {
+		return 0, false, nil
+	}
+	n, err := parseDecimalString(raw)
+	if err != nil {
+		return 0, false, ErrParse
+	}
+	return n, true, nil
+}
+
+// parseDecimalString decodes a JSON string of 1..20 ASCII digits that fits in a u64.
+//
+// Design: abstraction/protocol/design.md#parsing
+func parseDecimalString(raw json.RawMessage) (uint64, error) {
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return 0, ErrParse
+	}
+	if len(s) == 0 || len(s) > 20 {
+		return 0, ErrParse
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return 0, ErrParse
+		}
+	}
+	n, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return 0, ErrParse
+	}
+	return n, nil
+}
+
+// ParseBody leniently extracts the RequestId from a PaddedJsonBody or a CancelBody.
+// Keys are matched case-sensitively; "payload" and any other field are ignored.
+//
+// Design: abstraction/protocol/design.md#parsing
+func ParseBody(body []byte) (uint64, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(body, &obj); err != nil || obj == nil {
+		return 0, ErrParse
+	}
+	raw, ok := obj["id"]
+	if !ok {
+		return 0, ErrParse
+	}
+	return parseDecimalString(raw)
+}
+
+// ParseDeadline leniently extracts the RequestDeadline from a PingRequestBody.
+// ok is false when the body is not a JSON object or "deadline" is missing or
+// malformed (the design's none); it never fails the request.
+//
+// Design: abstraction/protocol/design.md#parsing
+func ParseDeadline(body []byte) (deadline uint64, ok bool) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(body, &obj); err != nil || obj == nil {
+		return 0, false
+	}
+	raw, present := obj["deadline"]
+	if !present {
+		return 0, false
+	}
+	n, err := parseDecimalString(raw)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// ParseExecReport leniently extracts the ExecReport from a PaddedJsonBody. Each
+// field has its own ok flag (false is the design's none); it never fails.
+//
+// Design: abstraction/protocol/design.md#parsing
+// Design: abstraction/protocol/design.md#execreport
+func ParseExecReport(body []byte) (execNs uint64, execOK bool, startSlackNs int64, slackOK bool) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(body, &obj); err != nil || obj == nil {
+		return 0, false, 0, false
+	}
+	if raw, present := obj["exec_ns"]; present {
+		if n, err := parseDecimalString(raw); err == nil {
+			execNs, execOK = n, true
+		}
+	}
+	if raw, present := obj["start_slack_ns"]; present {
+		startSlackNs, slackOK = parseSignedDecimalString(raw)
+	}
+	return execNs, execOK, startSlackNs, slackOK
+}
+
+// parseSignedDecimalString decodes a JSON string of an optional "-" and 1..19 ASCII
+// digits whose value fits in an i64; ok is false otherwise (including "").
+//
+// Design: abstraction/protocol/design.md#parsing
+func parseSignedDecimalString(raw json.RawMessage) (int64, bool) {
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return 0, false
+	}
+	neg := len(s) > 0 && s[0] == '-'
+	d := s
+	if neg {
+		d = s[1:]
+	}
+	if len(d) == 0 || len(d) > 19 {
+		return 0, false
+	}
+	for i := 0; i < len(d); i++ {
+		if d[i] < '0' || d[i] > '9' {
+			return 0, false
+		}
+	}
+	u, err := strconv.ParseUint(d, 10, 64) // 19 digits always fit in a u64
+	if err != nil {
+		return 0, false
+	}
+	if neg {
+		if u > 1<<63 {
+			return 0, false
+		}
+		return int64(-u), true // wraps to -2^63 exactly when u == 2^63
+	}
+	if u > 1<<63-1 {
+		return 0, false
+	}
+	return int64(u), true
+}
+
+// ParseWorkerCount reads the WorkerCount from an x-worker-threads header
+// value: 1 ..= 2^32-1 in decimal; ok is false (none) otherwise, never an error.
+//
+// Design: abstraction/protocol/design.md#workercount
+func ParseWorkerCount(value string) (uint32, bool) {
+	if len(value) == 0 || len(value) > 10 {
+		return 0, false
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] < '0' || value[i] > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.ParseUint(value, 10, 64)
+	if err != nil || n < 1 || n > 1<<32-1 {
+		return 0, false
+	}
+	return uint32(n), true
+}
+
+// BuildHeartbeatLine returns the HeartbeatLine "hb <seq>\n".
+//
+// Design: abstraction/protocol/design.md#heartbeatline
+func BuildHeartbeatLine(seq uint64) []byte {
+	return []byte("hb " + strconv.FormatUint(seq, 10) + "\n")
+}
+
+// ParseHeartbeatLine returns the seq of one HeartbeatStream line (without its
+// "\n"), or ErrParse.
+//
+// Design: abstraction/protocol/design.md#heartbeatline
+func ParseHeartbeatLine(line []byte) (uint64, error) {
+	const prefix = "hb "
+	if len(line) < len(prefix) || string(line[:len(prefix)]) != prefix {
+		return 0, ErrParse
+	}
+	s := line[len(prefix):]
+	if len(s) == 0 || len(s) > 20 {
+		return 0, ErrParse
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, ErrParse
+		}
+	}
+	n, err := strconv.ParseUint(string(s), 10, 64) // fails above 2^64 - 1
+	if err != nil {
+		return 0, ErrParse
+	}
+	return n, nil
+}

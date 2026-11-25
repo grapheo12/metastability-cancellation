@@ -295,3 +295,40 @@ nothing is pushed, but the reply still carries the watermark: workers publish it
 | `cooperative` | yes | full, client new | `503`, empty |
 | `cooperative` | yes | has room or client known | `202`, CancelReplyBody |
 | `ignore` | yes | any | `202`, CancelReplyBody (nothing pushed) |
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- File `internal/server/canceltracker.go`.
+- `keys` is `[]atomic.Uint64`, `heads` is `[]atomic.Pointer[inboxNode]`, `finished` is `[]atomic.Uint64`, and `state` is `[]clientCancelState`, all in `CancelRegistry`. Go atomics are sequentially consistent, which is stronger than the acquire/release the design requires.
+- `ClientSlot` is a named `int`; slot `none` is `NoSlot` (`-1`). `registry_client` is `(*CancelRegistry).Client`, `registry_start` is `(*CancelRegistry).Start`.
+- `ClientCancelState` is the unexported struct `clientCancelState` with a `sync.Mutex`. `pending` is a `map[uint64]uint64` (id to `finish_count` at drain), `unfinished` a `map[uint64]struct{}`, `recent_index` a `map[uint64]bool`, all created on first use by `init()`. The ring is a slice that grows to `RecentFinished` (4096) and is then overwritten at `recentNext`. On eviction the index entry is deleted only if it still describes the evicted entry, so a reused id is not forgotten too early.
+- `resolve` is a method on `clientCancelState`, called with the lock held. `registry_drain` is the unexported `drain(slot)`.
+- `registry_publish_finished` is `(*CancelRegistry).PublishFinished(slot, id, completed, counters)`, `registry_finished` is `(*CancelRegistry).Finished(clientID) (id, ok)` with `ok == false` for none, `should_cancel` is `ShouldCancel(registry, slot, counters, targetID)`. `handle_cancel` is `HandleCancel` and builds its reply with `protocol.BuildCancelReply`.
+- The garbage collector frees drained nodes, so there is no explicit `free`. There is still no ABA problem, because nodes are never reused while reachable.
+- `ConnectionCancelState` is a struct holding only `bound` and `clientID`.
+- Tests: `canceltracker_test.go` checks the CancelMatching worked examples, the Out-of-order requests table (including ring eviction and the aging sweep after `2·R` finishes), four goroutines matching 400 cancels of one client in descending order (each matched exactly once), concurrent push then drain, a full registry, `HandleCancel` in both modes, and the FinishedWatermark example with an out-of-order finish. The race detector needs cgo, so it cannot run on this macOS setup.
+- `CancelCounters.RejectedPastDeadline` is a fourth `atomic.Uint64`; `Snapshot()` returns `(before, during, completed, pastDeadline)` and the shutdown line in `listener.go` prints `rejected_past_deadline` last.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [CancelRegistry](#cancelregistry) | [canceltracker.go:16](../../../implementation/go/internal/server/canceltracker.go#L16), [canceltracker.go:36](../../../implementation/go/internal/server/canceltracker.go#L36), [canceltracker.go:105](../../../implementation/go/internal/server/canceltracker.go#L105), [canceltracker.go:122](../../../implementation/go/internal/server/canceltracker.go#L122), [canceltracker.go:150](../../../implementation/go/internal/server/canceltracker.go#L150), [canceltracker_test.go:207](../../../implementation/go/internal/server/canceltracker_test.go#L207) |
+| [ClientCancelState](#clientcancelstate) | [canceltracker.go:69](../../../implementation/go/internal/server/canceltracker.go#L69), [canceltracker.go:193](../../../implementation/go/internal/server/canceltracker.go#L193), [canceltracker_test.go:148](../../../implementation/go/internal/server/canceltracker_test.go#L148) |
+| [CancelInbox](#cancelinbox) | [canceltracker.go:24](../../../implementation/go/internal/server/canceltracker.go#L24), [canceltracker.go:162](../../../implementation/go/internal/server/canceltracker.go#L162), [canceltracker.go:182](../../../implementation/go/internal/server/canceltracker.go#L182), [canceltracker_test.go:184](../../../implementation/go/internal/server/canceltracker_test.go#L184) |
+| [FinishedWatermark](#finishedwatermark) | [canceltracker.go:211](../../../implementation/go/internal/server/canceltracker.go#L211), [canceltracker.go:245](../../../implementation/go/internal/server/canceltracker.go#L245), [canceltracker.go:352](../../../implementation/go/internal/server/canceltracker.go#L352), [canceltracker_test.go:253](../../../implementation/go/internal/server/canceltracker_test.go#L253), [canceltracker_test.go:283](../../../implementation/go/internal/server/canceltracker_test.go#L283) |
+| [CancelMatching](#cancelmatching) | [canceltracker.go:293](../../../implementation/go/internal/server/canceltracker.go#L293), [canceltracker.go:312](../../../implementation/go/internal/server/canceltracker.go#L312), [canceltracker_test.go:49](../../../implementation/go/internal/server/canceltracker_test.go#L49) |
+| [Out-of-order requests](#out-of-order-requests) | [canceltracker.go:312](../../../implementation/go/internal/server/canceltracker.go#L312), [canceltracker_test.go:91](../../../implementation/go/internal/server/canceltracker_test.go#L91) |
+| [CancelCounters](#cancelcounters) | [canceltracker.go:260](../../../implementation/go/internal/server/canceltracker.go#L260), [canceltracker.go:270](../../../implementation/go/internal/server/canceltracker.go#L270) |
+| [handle_cancel](#handle_cancel) | [canceltracker.go:340](../../../implementation/go/internal/server/canceltracker.go#L340), [canceltracker_test.go:229](../../../implementation/go/internal/server/canceltracker_test.go#L229) |
+<!-- trace:end -->

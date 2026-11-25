@@ -166,3 +166,39 @@ ended and the socket is closed. Each responder ends when its job's `reply` is fi
 
 The client's registry entry and its ClientCancelState stay (entries are never deleted). They are shared by the
 client, not owned by the connection.
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- Route `Streamed` is `Response{Streamed: true}`. `frameReader` then calls `serveHeartbeat(w, r.Context().Done(), task, cfg, queue)` on the stream's own handler goroutine, which x/net/http2 already gives every stream, so the design's `spawn` needs no extra goroutine; the handler returns when the sender does. `TestHeartbeatStreamAndFreeze` checks the `405` for `POST /heartbeat`.
+- File `internal/server/connhandler.go`.
+- The FrameReader is split in two. The x/net/http2 read loop does the framing, and each stream's `http.Handler` goroutine (`frameReader`) does the rest: it runs once the body is read to END_STREAM, builds the `StreamTask`, routes it, and for a queued `/ping` acts as the stream responder. It turns `r.Context().Done()`, which fires on RST_STREAM or when the connection closes, into the RST flag. Each handler goroutine holds its own `*StreamTask`, which takes the place of `stream_table`.
+- Stream handlers of one connection run concurrently, so Admission takes the per-connection admission lock `mu` around `admitPing` plus `WorkQueue.Push`, as the design requires for per-stream handlers. Go does not promise that handler goroutines reach the lock in exact END_STREAM order. Clients keep one request outstanding, so in practice this does not matter.
+- The router returns `(Response, *PingJob)`; a non-nil job means queued. `/cancel` runs `HandleCancel` on the stream's goroutine and is never queued.
+- The worker sends its `Response` through the job's 1-buffered `reply` channel, and the handler goroutine writes it, because x/net/http2 only allows writes from the handler goroutine. "Write nothing" (`Aborted`, or RST in cooperative mode) is `panic(http.ErrAbortHandler)`. That resets the stream instead of letting the library send an empty 200.
+- Connection close: `close()` sets `closing` under `mu` and closes the socket. `run` then waits on a `sync.WaitGroup` of live stream handlers; `addStream` refuses new ones once `closing` is set, so `Add` never races with `Wait`.
+- WorkerCount: `writeResponse` sets `protocol.WorkerThreadsHeader` to `strconv.FormatUint(cfg.NWorkerThreads)` when `task.Path == "/ping"` and the status is `202` or `503`, before `WriteHeader`. `TestWorkerCountHeader` checks it on `202` and `503` and its absence on `/cancel`, `400` and `405`.
+- The RST flag is `sync/atomic.Bool`. `maxConcurrentStreams` (4096, advertised in SETTINGS) bounds the requests one connection can have admitted at once.
+
+### Traceability
+
+Generated from the `// Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [Shared state](#shared-state) | [connhandler.go:47](../../../implementation/go/internal/server/connhandler.go#L47) |
+| [FrameReader](#framereader) | [connhandler.go:93](../../../implementation/go/internal/server/connhandler.go#L93), [server_test.go:136](../../../implementation/go/internal/server/server_test.go#L136) |
+| [Admission](#admission) | [connhandler.go:160](../../../implementation/go/internal/server/connhandler.go#L160) |
+| [Routing](#routing) | [connhandler.go:135](../../../implementation/go/internal/server/connhandler.go#L135), [heartbeat_test.go:33](../../../implementation/go/internal/server/heartbeat_test.go#L33) |
+| [Response writing](#response-writing) | [connhandler.go:181](../../../implementation/go/internal/server/connhandler.go#L181), [server_test.go:636](../../../implementation/go/internal/server/server_test.go#L636) |
+| [Concurrency requirement](#concurrency-requirement) | [connhandler.go:79](../../../implementation/go/internal/server/connhandler.go#L79) |
+| [State machine (per `/ping` StreamTask)](#state-machine-per-ping-streamtask) | [connhandler.go:93](../../../implementation/go/internal/server/connhandler.go#L93) |
+| [Connection close](#connection-close) | [connhandler.go:205](../../../implementation/go/internal/server/connhandler.go#L205) |
+<!-- trace:end -->

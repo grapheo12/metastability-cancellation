@@ -1,0 +1,61 @@
+// Command server runs the HTTP/2 /ping + /cancel server.
+//
+// Source: abstraction/server/api.md (server v0.14.1)
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"testbed/internal/server"
+)
+
+// API: abstraction/server/api.md#lifecycle
+func main() {
+	// Design: abstraction/server/design.md#processstart
+	fmt.Println(server.ProcessStartLine(time.Now())) // first line, before validation
+	p := server.DefaultParams()
+	fs := flag.NewFlagSet("server", flag.ContinueOnError)
+	fs.StringVar(&p.ListenAddr, "listen_addr", p.ListenAddr, "host:port to accept connections on")
+	fs.StringVar(&p.Workload, "workload", p.Workload, "cpu_burn | message_buffer | sleep | sleep_constant")
+	fs.StringVar(&p.ResponseRate, "response_rate", p.ResponseRate, "service rate in requests/s (required for cpu_burn)")
+	fs.StringVar(&p.ResponseBytes, "response_bytes", p.ResponseBytes, "exact /ping response body size (required, >= 115)")
+	fs.StringVar(&p.CancelMode, "cancel_mode", p.CancelMode, "ignore | cooperative")
+	fs.StringVar(&p.CancelCheckIntervalUs, "cancel_check_interval_us", p.CancelCheckIntervalUs, "RST check interval in µs")
+	fs.StringVar(&p.Seed, "seed", p.Seed, "base seed")
+	fs.StringVar(&p.NWorkerThreads, "n_worker_threads", p.NWorkerThreads, "number of WorkerPool workers (>= 1)")
+	fs.StringVar(&p.InitialStallMs, "initial_stall_ms", p.InitialStallMs, "ms after the first /ping before any /ping runs (>= 0)")
+	fs.StringVar(&p.FreezeAfterMs, "freeze_after_ms", p.FreezeAfterMs, "WorkerFreeze: ms after the first /ping when every worker stops for good (>= 1; empty: never)")
+	fs.StringVar(&p.RejectPastDeadline, "reject_past_deadline", p.RejectPastDeadline, "true: answer 503 to a /ping popped after its RequestDeadline instead of running it (checked once, at the pop)")
+	fs.StringVar(&p.QueueDiscipline, "queue_discipline", p.QueueDiscipline, "WorkQueue order: fifo or edf (earliest RequestDeadline first)")
+	fs.StringVar(&p.QueueLogPath, "queue_log_path", p.QueueLogPath, "QueueLengthLog CSV path (empty: no log)")
+	fs.StringVar(&p.WindowSize, "window_size", p.WindowSize, "MessageBuffer slots (message_buffer)")
+	fs.StringVar(&p.NGCBinaryTreeSize, "n_gc_binary_tree_size", p.NGCBinaryTreeSize, "nodes per MessageTree, 1..=65536 (message_buffer)")
+	fs.StringVar(&p.NMessagesPerRequest, "n_messages_per_request", p.NMessagesPerRequest, "messages per /ping (message_buffer)")
+	fs.StringVar(&p.HeartbeatIntervalMs, "heartbeat_interval_ms", p.HeartbeatIntervalMs, "ms between two HeartbeatLines on GET /heartbeat (>= 1)")
+	fs.StringVar(&p.QueueSampleIntervalMs, "queue_sample_interval_ms", p.QueueSampleIntervalMs, "QueueLengthLog sample interval in ms (>= 1)")
+	if err := fs.Parse(os.Args[1:]); err != nil {
+		os.Exit(2)
+	}
+	cfg, err := server.Validate(p)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error: "+err.Error())
+		os.Exit(1)
+	}
+	s, err := server.Listen(cfg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error: "+err.Error())
+		os.Exit(1)
+	}
+	go s.Serve()
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	<-sig
+	s.Shutdown()
+	os.Exit(0)
+}
