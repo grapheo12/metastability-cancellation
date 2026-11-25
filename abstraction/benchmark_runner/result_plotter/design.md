@@ -39,7 +39,7 @@ function plot(output_dir):
         if figure.x == "forward_time": draw_forward_timelines(output_dir, done, swept_keys); continue   # ForwardTimelinePlots
         if figure.x == "loadgen_time": draw_availability(output_dir, done, swept_keys); continue      # AvailabilityPlot
         if figure.x == "start_slack": draw_start_slack(output_dir, done, swept_keys); continue        # StartSlackHistogram
-        if figure.x == "estimate_error": draw_estimate_error(output_dir, done, swept_keys); continue  # EstimateErrorHistogram
+        if figure.x == "estimate_error": draw_estimate_error(output_dir, done, swept_keys); continue  # EstimateErrorCdf
         if figure.x == "pick_time": draw_expected_wait(output_dir, done, swept_keys); continue        # ExpectedWaitPlot
         if figure.x == "x_key": draw as below
         else: draw as in ThroughputLatencyPlot; continue
@@ -592,31 +592,27 @@ Split worked example, `freeze_after_ms = 60000` (`F = 60_000_000_000`):
 Before: one sample, bin 49, fraction 1. After: bins -20 (`-2_000_000_000 div W`) and -15 (`-1_440_000_000 div W`),
 fraction 1/2 each, with bins -19 ..= -16 at 0. All: the three samples together.
 
-## EstimateErrorHistogram
+## EstimateErrorCdf
 
-The **EstimateErrorHistogram** (`estimate_error.html`) shows, for each done point, how far the LoadBalancer's
-EstimatedFinish `(queue_at_send + 1) × EwmaExecTime / k` was from the time the forward really took. It reads the Ingress's
-`forwards.csv` ([../../ingress/api.md#output_pathforwardscsv](../../ingress/api.md#output_pathforwardscsv)), whose
-`estimate_ns` column is the EstimatedFinish
+The **EstimateErrorCdf** (`estimate_error.html`) shows, for each done point, the cumulative distribution of how far
+the LoadBalancer's EstimatedFinish `(queue_at_send + 1) × EwmaExecTime / k` was from the time the forward really
+took. It reads the Ingress's `forwards.csv` ([../../ingress/api.md#output_pathforwardscsv](../../ingress/api.md#output_pathforwardscsv)),
+whose `estimate_ns` column is the EstimatedFinish
 ([../../ingress/load_balancer/design.md#estimatedfinish](../../ingress/load_balancer/design.md#estimatedfinish)).
 
 - **Samples:** every row with `outcome == ok`, a non-empty `estimate_ns` and `latency_ns > 0`. Its **EstimateError**
   is `err = (latency_ns − estimate_ns) / latency_ns` (binary64): `0` is exact, `0.75` means the estimate was a quarter
   of the real time, `−1` that it was twice the real time. `err <= 1` always; there is no lower bound. Other outcomes
   (a `503`, a reset or failed forward) have no comparable latency and are skipped.
-- **Bins:** `ESTIMATE_ERROR_BINS_PER_UNIT = 10` (width 0.1), bin `b = floor(err × 10)`; multiplying by 10, not
-  dividing by 0.1, keeps values such as `0.3` in their bin (`0.3 / 0.1 = 2.9999999999999996` would fall into bin 2,
-  `0.3 × 10 = 3.0` falls into bin 3). Every bin from the
-  point's smallest to its largest non-empty bin is drawn, empty ones at 0, over the full range of the data (no
-  clipping). `y` is the fraction of the subplot's samples in the bin.
+- **CDF:** the samples sorted ascending; the `i`-th (1-based) of `n` is drawn at `(err_i, i / n)`, as a step line
+  (horizontal, then vertical), so `y` at `x` is the fraction of the subplot's samples with `err <= x`. Every sample is
+  drawn (no binning), over the full range of the data; equal values give a vertical run of steps.
 - **Before and after the failure:** split by the forward's pick time `t_ns − latency_ns` against the FailureTime
   (`failure_time_ms`, as in the [StartSlackHistogram](#startslackhistogram)): all, picked before, picked at or after.
   `t_ns` is on the Ingress's run clock, which starts at the first `/ping`, so the split is approximate by the gap
   between that and the freeze's arming, a few milliseconds.
 
 ```
-ESTIMATE_ERROR_BINS_PER_UNIT = 10
-
 function read_estimate_errors(path):               # -> list of (pick_ns, err) | none
     if path does not exist: return none
     header = first line
@@ -630,34 +626,38 @@ function read_estimate_errors(path):               # -> list of (pick_ns, err) |
         out.append((integer t_ns - lat, (float(lat) - est) / float(lat)))
     return out
 
-function estimate_error_histogram(errs):           # errs: list of binary64, not empty; -> list of (x, fraction)
-    counts = count of errs per floor(err * ESTIMATE_ERROR_BINS_PER_UNIT)
-    lo = smallest key; hi = largest key
-    return [ ((b + 0.5) / ESTIMATE_ERROR_BINS_PER_UNIT, counts.get(b, 0) / len(errs)) for b in lo ..= hi ]
+function estimate_error_cdf(errs):                 # errs: list of binary64, not empty; -> list of (x, fraction)
+    v = errs sorted ascending
+    return [ (v[i - 1], i / len(v)) for i in 1 ..= len(v) ]
 
 function draw_estimate_error(output_dir, done, swept_keys):
     as draw_start_slack, with read_estimate_errors(pdir/ingress.forwards.csv) as the samples (pick_ns as the time of
-    the split), estimate_error_histogram as the histogram, and:
+    the split), estimate_error_cdf in place of the histogram, and:
+    lines drawn as steps (horizontal then vertical), without markers
     subplot titles "all ok forwards", "picked before the failure", "picked after the failure"
     a dashed vertical line at x = 0 (exact estimate) in each subplot
-    x-axis linear, label "(latency − (queue + 1) × EwmaExecTime / k) / latency"; y-axis linear from 0,
-        label "fraction of ok forwards"
+    x-axis linear, label "(latency − (queue + 1) × EwmaExecTime / k) / latency"; y-axis linear 0 to 1,
+        label "fraction of ok forwards with err <= x"
     save as output_dir/plots/estimate_error.html (deleted if no point has samples)
 ```
 
 Worked example, one point, FailureTime 1 s (`F = 1_000_000_000` ns), latency 400 ms for every row:
 
-| `t_ns` | outcome | `estimate_ns` | pick_ns | err | Bin `floor(err × 10)` | Subplot |
-|---|---|---|---|---|---|---|
-| 500_000_000 | ok | 400000000 | 100_000_000 | 0 | 0 | before |
-| 600_000_000 | ok | 800000000 | 200_000_000 | −1 | −10 | before |
-| 1_500_000_000 | ok | 100000000 | 1_100_000_000 | 0.75 | 7 | after |
-| 1_600_000_000 | ok | 420000000 | 1_200_000_000 | −0.05 | −1 (floor) | after |
-| 1_700_000_000 | ok | (empty) | — | — | — | skipped: no estimate |
-| 1_800_000_000 | rejected | 400000000 | — | — | — | skipped: not ok |
+| `t_ns` | outcome | `estimate_ns` | pick_ns | err | Subplot |
+|---|---|---|---|---|---|
+| 500_000_000 | ok | 400000000 | 100_000_000 | 0 | before |
+| 600_000_000 | ok | 800000000 | 200_000_000 | −1 | before |
+| 1_500_000_000 | ok | 100000000 | 1_100_000_000 | 0.75 | after |
+| 1_600_000_000 | ok | 420000000 | 1_200_000_000 | −0.05 | after |
+| 1_700_000_000 | ok | (empty) | — | — | skipped: no estimate |
+| 1_800_000_000 | rejected | 400000000 | — | — | skipped: not ok |
 
-"All" has 4 samples over bins −10 ..= 7: fraction 1/4 at x = −0.95, −0.05, 0.05 and 0.75, and 0 in the 14 bins
-between. "Before": bins −10 ..= 0 with 1/2 at −0.95 and 0.05. "After": bins −1 ..= 7 with 1/2 at −0.05 and 0.75.
+| Subplot | Points `(err, fraction)` | Check |
+|---|---|---|
+| all | (−1, 0.25), (−0.05, 0.5), (0, 0.75), (0.75, 1) | 4 samples, sorted |
+| before | (−1, 0.5), (0, 1) | 2 samples |
+| after | (−0.05, 0.5), (0.75, 1) | 2 samples |
+| a point with errs [0.2, 0.2, 0.5] | (0.2, 1/3), (0.2, 2/3), (0.5, 1) | equal values: a vertical run |
 
 | Situation | Result |
 |---|---|

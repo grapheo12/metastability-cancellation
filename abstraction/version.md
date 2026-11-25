@@ -214,3 +214,4 @@
 | 0.47.0 | 2026-11-24T00:00:00Z | Glossary EstimateErrorHistogram. Child bump: benchmark_runner 0.14.0 (result_plotter 0.23.0) |
 | 0.47.1 | 2026-11-24T00:00:00Z | Glossary EstimatedFinish (/ WorkerCount). Child bump: ingress 0.13.2 (load_balancer 0.17.0) |
 | 0.47.2 | 2026-11-24T00:00:00Z | Child bump: benchmark_runner 0.14.1 (result_plotter 0.23.1) |
+| 0.48.0 | 2026-11-24T00:00:00Z | Glossary EstimateErrorCdf (was EstimateErrorHistogram). Child bump: benchmark_runner 0.15.0 (result_plotter 0.24.0) |

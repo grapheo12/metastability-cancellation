@@ -18,8 +18,8 @@ Leaf component. It reads every point directory of a run and produces:
   every garbage-collection cycle of the server (the **GcOverlay**).
 - the **AvailabilityPlot**: per 1 s window of send times, the share of the client's finished requests that finished under the
   SLO (the **Availability**), one line per done SweepPoint, with the GcOverlay.
-- the **EstimateErrorHistogram**: per done SweepPoint, the distribution of the EstimateError of the LoadBalancer's
-  EstimatedFinish (`(latency − estimate) / latency` of each ok forward), split before and after the failure.
+- the **EstimateErrorCdf**: per done SweepPoint, the cumulative distribution of the EstimateError of the
+  LoadBalancer's EstimatedFinish (`(latency − estimate) / latency` of each ok forward), split before and after the failure.
 - the **StartSlackHistogram**: per done SweepPoint, the distribution of the requests' StartSlack (time left before
   the RequestDeadline when a worker picked the request up), as fractions per 100 ms bin; for a run with a
   WorkerFreeze also split into requests sent before and after the failure (the **FailureTime**).
