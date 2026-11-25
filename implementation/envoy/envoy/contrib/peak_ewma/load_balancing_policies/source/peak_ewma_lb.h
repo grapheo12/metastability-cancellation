@@ -1,7 +1,9 @@
 #pragma once
 
 #include <atomic>
+#include <cstdio>
 #include <cstring>
+#include <string>
 #include <deque>
 #include <limits>
 #include <memory>
@@ -54,6 +56,40 @@ private:
   Stats::Gauge& ewma_rtt_stat_;
   Stats::Gauge& active_requests_stat_;
   Upstream::HostConstSharedPtr host_;
+};
+
+/**
+ * impl/envoy (cancellation testbed): optional trace of the balancer's internals, enabled by the environment
+ * variable PEAK_EWMA_TRACE_PREFIX. Each balancer instance (one per worker thread) that records anything opens
+ * <prefix>.ewma.<n>.csv and <prefix>.picks.<n>.csv (n: 0, 1, ... in the order instances first record), written
+ * only from that instance's thread, line-buffered:
+ *   ewma:  t_unix_ns,host,rtt_ms,dt_ns,alpha,ewma_before_ms,ewma_after_ms   (one row per processed RTT sample;
+ *          t_unix_ns is the sample's timestamp, dt_ns the time since the previous sample, negative when samples
+ *          arrive out of order)
+ *   picks: t_unix_ns,host_a,active_a,ewma_a_ms,cost_a,host_b,active_b,ewma_b_ms,cost_b,chosen   (one row per
+ *          Power of Two Choices decision; chosen is "a" or "b")
+ * Monotonic times are converted to Unix ns with an offset taken once at construction.
+ */
+class PeakEwmaTrace {
+public:
+  explicit PeakEwmaTrace(TimeSource& time_source);
+  ~PeakEwmaTrace();
+  bool enabled() const { return enabled_; }
+  int64_t monoNowNs() const;
+  void update(uint64_t sample_mono_ns, const std::string& host, double rtt_ms, int64_t dt_ns, double alpha,
+              double ewma_before_ms, double ewma_after_ms);
+  void pick(const std::string& host_a, double active_a, double ewma_a_ms, double cost_a,
+            const std::string& host_b, double active_b, double ewma_b_ms, double cost_b, bool chose_a);
+
+private:
+  bool open();
+
+  TimeSource& time_source_;
+  const bool enabled_;
+  int64_t unix_minus_mono_ns_{0};
+  bool opened_{false};
+  std::FILE* updates_{nullptr};
+  std::FILE* picks_{nullptr};
 };
 
 /**
@@ -127,6 +163,9 @@ private:
   // EWMA calculation constants.
   const int64_t tau_nanos_;  // Decay time in nanoseconds.
   const size_t max_samples_; // Configurable ring buffer size per host.
+
+  // impl/envoy: optional trace of EWMA updates and picks (PEAK_EWMA_TRACE_PREFIX).
+  PeakEwmaTrace trace_;
 };
 
 } // namespace PeakEwma

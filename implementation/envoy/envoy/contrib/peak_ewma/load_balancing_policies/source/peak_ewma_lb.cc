@@ -1,5 +1,7 @@
 #include "contrib/peak_ewma/load_balancing_policies/source/peak_ewma_lb.h"
 
+#include <chrono>
+#include <cstdlib>
 #include <memory>
 
 #include "envoy/common/optref.h"
@@ -44,6 +46,82 @@ void GlobalHostStats::setActiveRequestsStat(double active_requests) {
   active_requests_stat_.set(static_cast<uint64_t>(active_requests));
 }
 
+// impl/envoy: PeakEwmaTrace (see peak_ewma_lb.h).
+
+namespace {
+const char* tracePrefix() {
+  static const char* p = std::getenv("PEAK_EWMA_TRACE_PREFIX");
+  return p;
+}
+} // namespace
+
+PeakEwmaTrace::PeakEwmaTrace(TimeSource& time_source)
+    : time_source_(time_source), enabled_(tracePrefix() != nullptr && tracePrefix()[0] != '\0') {
+  if (enabled_) {
+    const int64_t unix_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                time_source_.systemTime().time_since_epoch())
+                                .count();
+    unix_minus_mono_ns_ = unix_ns - monoNowNs();
+  }
+}
+
+PeakEwmaTrace::~PeakEwmaTrace() {
+  if (updates_ != nullptr) {
+    std::fclose(updates_);
+  }
+  if (picks_ != nullptr) {
+    std::fclose(picks_);
+  }
+}
+
+int64_t PeakEwmaTrace::monoNowNs() const {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             time_source_.monotonicTime().time_since_epoch())
+      .count();
+}
+
+bool PeakEwmaTrace::open() {
+  if (!opened_) {
+    opened_ = true;
+    static std::atomic<int> next_index{0};
+    const int n = next_index++;
+    const std::string base = tracePrefix();
+    updates_ = std::fopen((base + ".ewma." + std::to_string(n) + ".csv").c_str(), "w");
+    picks_ = std::fopen((base + ".picks." + std::to_string(n) + ".csv").c_str(), "w");
+    if (updates_ != nullptr) {
+      std::setvbuf(updates_, nullptr, _IOLBF, 1 << 16);
+      std::fputs("t_unix_ns,host,rtt_ms,dt_ns,alpha,ewma_before_ms,ewma_after_ms\n", updates_);
+    }
+    if (picks_ != nullptr) {
+      std::setvbuf(picks_, nullptr, _IOLBF, 1 << 16);
+      std::fputs("t_unix_ns,host_a,active_a,ewma_a_ms,cost_a,host_b,active_b,ewma_b_ms,cost_b,chosen\n",
+                 picks_);
+    }
+  }
+  return updates_ != nullptr && picks_ != nullptr;
+}
+
+void PeakEwmaTrace::update(uint64_t sample_mono_ns, const std::string& host, double rtt_ms, int64_t dt_ns,
+                           double alpha, double ewma_before_ms, double ewma_after_ms) {
+  if (!enabled_ || !open()) {
+    return;
+  }
+  std::fprintf(updates_, "%lld,%s,%.9g,%lld,%.9g,%.9g,%.9g\n",
+               static_cast<long long>(static_cast<int64_t>(sample_mono_ns) + unix_minus_mono_ns_),
+               host.c_str(), rtt_ms, static_cast<long long>(dt_ns), alpha, ewma_before_ms, ewma_after_ms);
+}
+
+void PeakEwmaTrace::pick(const std::string& host_a, double active_a, double ewma_a_ms, double cost_a,
+                         const std::string& host_b, double active_b, double ewma_b_ms, double cost_b,
+                         bool chose_a) {
+  if (!enabled_ || !open()) {
+    return;
+  }
+  std::fprintf(picks_, "%lld,%s,%.9g,%.9g,%.9g,%s,%.9g,%.9g,%.9g,%s\n",
+               static_cast<long long>(monoNowNs() + unix_minus_mono_ns_), host_a.c_str(), active_a,
+               ewma_a_ms, cost_a, host_b.c_str(), active_b, ewma_b_ms, cost_b, chose_a ? "a" : "b");
+}
+
 // Peak EWMA Load Balancer Implementation.
 
 PeakEwmaLoadBalancer::PeakEwmaLoadBalancer(
@@ -68,7 +146,8 @@ PeakEwmaLoadBalancer::PeakEwmaLoadBalancer(
                      : kDefaultDecayTimeSeconds * 1000000000LL),
       max_samples_(config_proto_.has_max_samples_per_host()
                        ? config_proto_.max_samples_per_host().value()
-                       : 1000) {
+                       : 1000),
+      trace_(time_source) {
 
   // Add PeakEwmaHostLbPolicyData to all existing hosts.
   for (const auto& host_set : priority_set_.hostSetsPerPriority()) {
@@ -154,6 +233,17 @@ PeakEwmaLoadBalancer::selectFromTwoCandidates(const Upstream::HostVector& hosts,
   bool prefer_first = costs_equal ? (random_value & 0x1) != 0 : first_cost < second_cost;
 
   auto selected_host = prefer_first ? first_host : second_host;
+
+  // impl/envoy: trace this decision (both candidates' state and the choice).
+  if (trace_.enabled()) {
+    auto* data_a = getPeakEwmaData(first_host);
+    auto* data_b = getPeakEwmaData(second_host);
+    trace_.pick(first_host->address()->asString(),
+                static_cast<double>(first_host->stats().rq_active_.value()),
+                data_a ? data_a->getEwmaRtt() : 0.0, first_cost, second_host->address()->asString(),
+                static_cast<double>(second_host->stats().rq_active_.value()),
+                data_b ? data_b->getEwmaRtt() : 0.0, second_cost, prefer_first);
+  }
 
   // Host selection complete.
 
@@ -268,7 +358,7 @@ double PeakEwmaLoadBalancer::updateEwmaWithSample(double current_ewma, double ne
   return alpha * new_rtt_ms + (1.0 - alpha) * current_ewma;
 }
 
-void PeakEwmaLoadBalancer::processHostSamples(Upstream::HostConstSharedPtr /* host */,
+void PeakEwmaLoadBalancer::processHostSamples(Upstream::HostConstSharedPtr host,
                                               PeakEwmaHostLbPolicyData* data) {
   if (!data) {
     return;
@@ -307,7 +397,13 @@ void PeakEwmaLoadBalancer::processHostSamples(Upstream::HostConstSharedPtr /* ho
     }
 
     double alpha = calculateTimeBasedAlpha(timestamp_ns, reference_time);
+    const double ewma_before = current_ewma;
     current_ewma = updateEwmaWithSample(current_ewma, rtt_ms, alpha);
+    // impl/envoy: trace this EWMA update.
+    if (trace_.enabled()) {
+      trace_.update(timestamp_ns, host->address()->asString(), rtt_ms,
+                    static_cast<int64_t>(timestamp_ns - reference_time), alpha, ewma_before, current_ewma);
+    }
     reference_time = timestamp_ns;
     processed_index++;
   }
