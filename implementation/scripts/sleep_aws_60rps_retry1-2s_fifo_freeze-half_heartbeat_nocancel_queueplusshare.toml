@@ -1,0 +1,61 @@
+# DeadlineStrategy deadline_mean_queue_plus_share at the hardest point: one of two servers freezes at 60 s (WorkerFreeze,
+# FreezeTarget), heartbeats drop it from the Ingress (BackendLiveness), no SLO cancellation (slo_cancel = false,
+# DrainDeadline 60 s), 60 req/s, 1 retry after 2 s, FIFO. The Ingress keeps a backend if
+# (outstanding + 1/WorkerCount) x EwmaExecTime <= the request's time left. 1 point, about 2-3 min.
+# Compare with sleep_aws_60rps_retry1-2s_fifo_freeze-half_heartbeat_nocancel_filters.toml (the other strategies).
+#
+# Meant to be run ON metafail-exp-1 (client = "local"), detached:
+#   python3 implementation/scripts/bench.py run implementation/scripts/sleep_aws_60rps_retry1-2s_fifo_freeze-half_heartbeat_nocancel_queueplusshare.toml
+# exp-1 reaches the servers over their private addresses with its own key ~/.ssh/id_ed25519_bench.
+[repo]
+url = "https://github.com/grapheo12/metastability-cancellation.git"
+
+[[machines.server]]
+host = "172.31.30.174"   # metafail-exp-2
+user = "ubuntu"
+ssh_key = "~/.ssh/id_ed25519_bench"
+data_addr = "172.31.30.174"
+
+[[machines.server]]
+host = "172.31.21.15"    # metafail-exp-3
+user = "ubuntu"
+ssh_key = "~/.ssh/id_ed25519_bench"
+data_addr = "172.31.21.15"
+
+[machines.client]
+host = "local"           # metafail-exp-1, where this runner runs
+
+[server]
+listen_port = 8080
+instances = 1   # per server machine: 2 servers in total
+workload = "sleep"
+response_rate = 5   # per worker: 200 ms mean
+initial_stall_ms = 0
+n_worker_threads = 10
+queue_discipline = "fifo"
+response_bytes = 128
+freeze_after_ms = 60000   # half of load_gen.duration_s
+freeze_instance = 0       # FreezeTarget: only the metafail-exp-2 server freezes
+heartbeat_interval_ms = 500  # Heartbeat: one HeartbeatLine every 500 ms
+
+[load_gen]
+num_clients = 16
+global_rate = 60
+request_bytes = 128
+slo_ms = 5000
+duration_s = 120
+n_waiting_requests = 500
+retry_timeout_ms = 2000
+max_retries = 1
+slo_cancel = false        # late requests run to completion (DrainDeadline instead of SLOCancellation)
+drain_timeout_ms = 60000  # DrainDeadline: 60 s after duration_s; lets the overloaded survivor's backlog drain
+
+[ingress]
+machine = "client"   # Ingress next to the load generator on metafail-exp-1
+listen_port = 9090
+lb_policy = "ewma"
+heartbeat_timeout_ms = 1000  # BackendLiveness: no new requests after 2 missed heartbeats
+lb_filter = "deadline_mean_queue_plus_share"  # DeadlineStrategy: (n + 1/k) x EwmaExecTime <= time left
+
+[run]
+cooldown_s = 2

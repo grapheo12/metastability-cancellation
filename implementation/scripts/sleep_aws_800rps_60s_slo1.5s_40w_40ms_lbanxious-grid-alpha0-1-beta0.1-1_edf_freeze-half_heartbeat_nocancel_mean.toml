@@ -1,0 +1,73 @@
+# Sleep workload, 40 ms mean service time, deadline_mean only: 60 s runs; one of two servers freezes at 30 s (WorkerFreeze,
+# FreezeTarget), heartbeats drop it from the Ingress (BackendLiveness), no SLO cancellation (slo_cancel = false,
+# DrainDeadline 30 s), EDF. The DeadlineFilter waits in the FilterWaitQueue (re-checked every 10 ms, dropped past the
+# SLO).
+# Servers run 40 workers (10x the CPU-burn runs) that sleep for an exponential 40 ms mean (response_rate = 25 per
+# worker), so 1000 req/s per server: 2000 before the freeze, 1000 after. 800 req/s is 40% / 80% of capacity before /
+# after the freeze (the same ratios as 80 req/s with 4 CPU-burn workers).
+# Retries: the client sends one copy (max_retries = 0). The Ingress retries once (lb_max_retries = 1) with the anxious
+# RetryPolicy (retry_policy v0.7.0: EdfAhead; ExpectedLate is CurrentExpFinish > lb_retry_late_factor x time left).
+# SLO 1.5 s.
+# Grid search: lb_retry_anxiety_ratio (alpha) 0.0..1.0 x lb_retry_late_factor (beta) 0.1..1.0, steps of 0.1, at
+# 800 req/s: 110 points, about 1.7 min each (about 3.1 h). Run by ~/grid_pipeline/pipeline.py on exp-1.
+#
+# Meant to be run ON metafail-exp-1 (client = "local"), detached:
+#   python3 implementation/scripts/bench.py run implementation/scripts/sleep_aws_800rps_60s_slo1.5s_40w_40ms_lbanxious-grid-alpha0-1-beta0.1-1_edf_freeze-half_heartbeat_nocancel_mean.toml
+# exp-1 reaches the servers over their private addresses with its own key ~/.ssh/id_ed25519_bench.
+[repo]
+url = "https://github.com/grapheo12/metastability-cancellation.git"
+
+[[machines.server]]
+host = "172.31.30.174"   # metafail-exp-2
+user = "ubuntu"
+ssh_key = "~/.ssh/id_ed25519_bench"
+data_addr = "172.31.30.174"
+
+[[machines.server]]
+host = "172.31.21.15"    # metafail-exp-3
+user = "ubuntu"
+ssh_key = "~/.ssh/id_ed25519_bench"
+data_addr = "172.31.21.15"
+
+[machines.client]
+host = "local"           # metafail-exp-1, where this runner runs
+
+[server]
+listen_port = 8080
+instances = 1   # per server machine: 2 servers in total
+workload = "sleep"
+response_rate = 25   # per worker: 40 ms mean (1000 req/s per 40-worker server)
+initial_stall_ms = 0
+n_worker_threads = 40   # 10x the CPU-burn runs; sleeping workers need no core each
+queue_discipline = "edf"
+response_bytes = 128
+freeze_after_ms = 30000   # half of load_gen.duration_s
+freeze_instance = 0       # FreezeTarget: only the metafail-exp-2 server freezes
+heartbeat_interval_ms = 500  # Heartbeat: one HeartbeatLine every 500 ms
+
+[load_gen]
+num_clients = 16
+global_rate = 800   # 40% of 2 x 1000 req/s before the freeze, 80% of 1000 after
+request_bytes = 128
+slo_ms = 1500
+duration_s = 60
+n_waiting_requests = 500
+retry_timeout_ms = 2000
+max_retries = 0   # client retries off: the Ingress retries instead
+slo_cancel = false        # late requests run to completion (DrainDeadline instead of SLOCancellation)
+drain_timeout_ms = 30000  # DrainDeadline: 30 s after duration_s (shortened for the grid)
+
+[ingress]
+machine = "client"   # Ingress next to the load generator on metafail-exp-1
+listen_port = 9090
+lb_policy = "ewma"
+heartbeat_timeout_ms = 1000  # BackendLiveness: no new requests after 2 missed heartbeats
+lb_retry_policy = "anxious"   # AnxiousRetry
+lb_max_retries = 1
+lb_retry_anxiety_ratio = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]   # alpha
+lb_retry_late_factor = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]   # beta
+lb_filter = "deadline_mean"  # DeadlineStrategy
+
+[run]
+sweep_order = ["ingress.lb_retry_anxiety_ratio", "ingress.lb_retry_late_factor"]
+cooldown_s = 2
