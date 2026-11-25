@@ -595,7 +595,7 @@ fraction 1/2 each, with bins -19 ..= -16 at 0. All: the three samples together.
 ## EstimateErrorHistogram
 
 The **EstimateErrorHistogram** (`estimate_error.html`) shows, for each done point, how far the LoadBalancer's
-EstimatedFinish `(queue_at_send + 1) × EwmaExecTime` was from the time the forward really took. It reads the Ingress's
+EstimatedFinish `(queue_at_send + 1) × EwmaExecTime / k` was from the time the forward really took. It reads the Ingress's
 `forwards.csv` ([../../ingress/api.md#output_pathforwardscsv](../../ingress/api.md#output_pathforwardscsv)), whose
 `estimate_ns` column is the EstimatedFinish
 ([../../ingress/load_balancer/design.md#estimatedfinish](../../ingress/load_balancer/design.md#estimatedfinish)).
@@ -640,7 +640,7 @@ function draw_estimate_error(output_dir, done, swept_keys):
     the split), estimate_error_histogram as the histogram, and:
     subplot titles "all ok forwards", "picked before the failure", "picked after the failure"
     a dashed vertical line at x = 0 (exact estimate) in each subplot
-    x-axis linear, label "(latency − (queue + 1) × EwmaExecTime) / latency"; y-axis linear from 0,
+    x-axis linear, label "(latency − (queue + 1) × EwmaExecTime / k) / latency"; y-axis linear from 0,
         label "fraction of ok forwards"
     save as output_dir/plots/estimate_error.html (deleted if no point has samples)
 ```
