@@ -35,3 +35,4 @@
 | 0.12.1 | 2026-11-20T00:00:00Z | Child bump: connection_handler 0.5.0 (WorkerCount header) |
 | 0.12.2 | 2026-11-23T00:00:00Z | CancelCounters line gains `rejected_past_deadline` (last key). Child bump: cancel_tracker 0.5.0 |
 | 0.13.0 | 2026-11-23T00:00:00Z | Parameter `reject_past_deadline` (`true`/`false`, default `false`), validation. Child bump: ping_handler 0.12.0 |
+| 0.14.0 | 2026-11-25T00:00:00Z | Workload `sleep_constant` (constant ServiceTime, QuantumSleep); validation and `response_rate`. Child bump: ping_handler 0.13.0 |

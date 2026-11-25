@@ -31,7 +31,7 @@ flowchart TD
 | Ping Handler | Admit a `/ping` (parse body, bind client id, sample ServiceTime) and run it (CancelCheckPoints, burn, build response) | [ping_handler/description.md](ping_handler/description.md) |
 | CPU Burner | Busy-loop for an exact time, with optional RST and `/cancel` checks (`workload = cpu_burn`) | [cpu_burner/description.md](cpu_burner/description.md) |
 | Message Buffer | The window of messages filled at startup and the per-client MessageCursors (`workload = message_buffer`) | [message_buffer/description.md](message_buffer/description.md) |
-| Sleeper | Sleep for an exact time in 20 ms quanta, checking RST and `/cancel` at each wake-up (`workload = sleep`) | [sleeper/description.md](sleeper/description.md) |
+| Sleeper | Sleep for an exact time in 20 ms quanta, checking RST and `/cancel` at each wake-up (`workload = sleep` or `sleep_constant`) | [sleeper/description.md](sleeper/description.md) |
 | Cancel Tracker | CancelRegistry, CancelInbox, per-client cancel state, CancelMatching, CancelCounters, `handle_cancel` | [cancel_tracker/description.md](cancel_tracker/description.md) |
 | Heartbeat | Stream a HeartbeatLine every `heartbeat_interval_ms` on `GET /heartbeat`, stopping once the WorkerFreeze has started | [heartbeat/description.md](heartbeat/description.md) |
 
@@ -39,8 +39,8 @@ flowchart TD
 
 ```
 function validate(params):
-    workload in {cpu_burn, message_buffer, sleep}    else error
-    if workload in {cpu_burn, sleep} or response_rate is given:
+    workload in {cpu_burn, message_buffer, sleep, sleep_constant}    else error
+    if workload in {cpu_burn, sleep, sleep_constant} or response_rate is given:
         response_rate > 0                     else error "response_rate must be a number > 0"
     protocol.validate_body_size(response_bytes)
     cancel_mode in {ignore, cooperative}      else error
@@ -169,7 +169,11 @@ request, before it is queued, so the random sequence of a connection depends onl
 not on which worker runs what ([ping_handler/design.md](ping_handler/design.md#sampling-order)). With
 `workload = message_buffer` nothing is drawn.
 
-With `workload = sleep`, "burn" in the tables above means sleeping the ServiceTime in quanta of 20 ms. RST and
+With `workload = sleep_constant` the ServiceTime is not sampled: it is the **ConstantServiceTime**
+`round(1_000_000 / response_rate)` µs for every request, and no random number is drawn
+([ping_handler/design.md](ping_handler/design.md#constantservicetime)).
+
+With `workload = sleep` or `sleep_constant`, "burn" in the tables above means sleeping the ServiceTime in quanta of 20 ms. RST and
 `/cancel` are checked only when the worker wakes up between quanta, so "within one `cancel_check_interval_us`" and
 "within `CHECK_ITER` spin units" become "at the next wake-up, at most one quantum later"
 ([sleeper/design.md](sleeper/design.md#quantumsleep)).
