@@ -3,7 +3,9 @@
 command line (abstraction/ingress/api.md#program-parameters), and writes its outputs (forwards.csv, summary.json)
 from Envoy's access log when interrupted (SIGINT/SIGTERM), as the BenchmarkRunner expects.
 
-Supported: a static cluster of --backends, lb_policy round_robin | least_outstanding | power_of_two, no
+Supported: a static cluster of --backends, lb_policy round_robin | least_outstanding | power_of_two | ewma (Envoy's
+contrib Peak EWMA policy: power of two choices on cost = EWMA RTT x (active requests + 1), defaults; --ewma_beta is
+not used by it), no
 DeadlineFilter, no LB retries, no Heartbeat Monitor, no LoadCanceller. Anything else is a startup error.
 """
 import argparse
@@ -22,7 +24,7 @@ import convert  # noqa: E402
 
 ENVOY = os.path.join(HERE, "..", "build", "envoy-static")
 LB_POLICIES = {"round_robin": ("ROUND_ROBIN", None), "least_outstanding": ("LEAST_REQUEST", "all"),
-               "power_of_two": ("LEAST_REQUEST", 2)}
+               "power_of_two": ("LEAST_REQUEST", 2), "ewma": ("PEAK_EWMA", None)}
 UNLIMITED = 1_000_000  # circuit-breaker limits: the Go Ingress has none
 
 
@@ -73,7 +75,7 @@ def envoy_config(args, backends, admin_port, access_log):
     host, port = args.listen_addr.rsplit(":", 1)
     policy, choice = LB_POLICIES[args.lb_policy]
     cluster = {
-        "name": "servers", "type": "STATIC", "lb_policy": policy,
+        "name": "servers", "type": "STATIC",
         "connect_timeout": "5s",
         # One upstream connection per client connection and backend, so a server sees one client per connection
         # (its client binding, abstraction/server/ping_handler/design.md#client-binding).
@@ -87,9 +89,22 @@ def envoy_config(args, backends, admin_port, access_log):
             {"endpoint": {"address": {"socket_address": {"address": h, "port_value": int(pt)}}}}
             for h, pt in (b.rsplit(":", 1) for b in backends)]}]},
     }
+    if policy == "PEAK_EWMA":  # contrib extension, built into envoy-static by build.sh
+        cluster["load_balancing_policy"] = {"policies": [{"typed_extension_config": {
+            "name": "envoy.load_balancing_policies.peak_ewma",
+            "typed_config": {"@type": "type.googleapis.com/envoy.extensions.load_balancing_policies.peak_ewma.v3alpha."
+                                      "PeakEwma"}}}]}
+    else:
+        cluster["lb_policy"] = policy
     if policy == "LEAST_REQUEST":
         cluster["least_request_lb_config"] = {
             "choice_count": len(backends) if choice == "all" else choice}
+    router = {"name": "envoy.filters.http.router", "typed_config": {
+        "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"}}
+    # Peak EWMA learns RTTs only through its HTTP filter, which must run before the router.
+    http_filters = ([{"name": "envoy.filters.http.peak_ewma", "typed_config": {
+        "@type": "type.googleapis.com/envoy.extensions.filters.http.peak_ewma.v3alpha.PeakEwmaConfig"}}]
+                    if policy == "PEAK_EWMA" else []) + [router]
     hcm = {
         "@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3."
                  "HttpConnectionManager",
@@ -98,8 +113,7 @@ def envoy_config(args, backends, admin_port, access_log):
         "http2_protocol_options": {"max_concurrent_streams": 100000},
         "route_config": {"name": "ping", "virtual_hosts": [{"name": "all", "domains": ["*"], "routes": [
             {"match": {"prefix": "/"}, "route": {"cluster": "servers", "timeout": "0s"}}]}]},
-        "http_filters": [{"name": "envoy.filters.http.router", "typed_config": {
-            "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"}}],
+        "http_filters": http_filters,
         "access_log": [{"name": "envoy.access_loggers.file", "typed_config": {
             "@type": "type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog",
             "path": access_log, "log_format": {"text_format_source": {

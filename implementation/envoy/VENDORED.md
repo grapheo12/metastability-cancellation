@@ -17,6 +17,7 @@ Both trees are checked in directly (not submodules) so they can be modified here
 | `nighthawk/source/client/request_log.{h,cc}` (new), `stream_decoder.{h,cc}`, `source/client/BUILD` | With `NH_REQUEST_LOG_PREFIX` set, each worker thread writes `<prefix>.<n>.csv`: request id, result (response, reset, pool failure), status, scheduled/send/end wall times, and the response's ExecReport | The testbed's per-request Requests CSV; the loadgen wrapper converts it |
 | `nighthawk/source/common/rate_limiter_impl.{h,cc}`, `source/client/factories_impl.cc` | `PoissonRateLimiter`; `NH_POISSON_RATE` (per-worker rate) selects it, `NH_POISSON_SEED` seeds worker k with seed + k | Open-loop Poisson arrivals like the Go load generator (Nighthawk only paces linearly) |
 | `nighthawk/test/request_source/ping_request_source_plugin_test.cc` (new), `test/request_source/BUILD`, `test/rate_limiter_test.cc` | Tests for the body format, the log's field parsing and the Poisson limiter | |
+| `envoy/contrib/exe/BUILD` | New target `envoy-static-peak-ewma`: `envoy-static` plus only the Peak EWMA contrib load balancing policy and its RTT HTTP filter | `--lb_policy ewma` maps to Peak EWMA; the full contrib binary would also pull every other contrib extension's dependencies (hyperscan, Kafka, Go, …) |
 
 Upstream stores 72 files under `envoy/test/common/http/http1/http1_connection_corpus/` with CRLF line endings although
 Envoy's `.gitattributes` says `* text=auto eol=lf`; they were added with `git hash-object --no-filters` so the stored
