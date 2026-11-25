@@ -197,7 +197,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [FrameReader](#framereader) | [connhandler.go:93](../../../implementation/go/internal/server/connhandler.go#L93), [server_test.go:136](../../../implementation/go/internal/server/server_test.go#L136) |
 | [Admission](#admission) | [connhandler.go:160](../../../implementation/go/internal/server/connhandler.go#L160) |
 | [Routing](#routing) | [connhandler.go:135](../../../implementation/go/internal/server/connhandler.go#L135), [heartbeat_test.go:33](../../../implementation/go/internal/server/heartbeat_test.go#L33) |
-| [Response writing](#response-writing) | [connhandler.go:181](../../../implementation/go/internal/server/connhandler.go#L181), [server_test.go:628](../../../implementation/go/internal/server/server_test.go#L628) |
+| [Response writing](#response-writing) | [connhandler.go:181](../../../implementation/go/internal/server/connhandler.go#L181), [server_test.go:636](../../../implementation/go/internal/server/server_test.go#L636) |
 | [Concurrency requirement](#concurrency-requirement) | [connhandler.go:79](../../../implementation/go/internal/server/connhandler.go#L79) |
 | [State machine (per `/ping` StreamTask)](#state-machine-per-ping-streamtask) | [connhandler.go:93](../../../implementation/go/internal/server/connhandler.go#L93) |
 | [Connection close](#connection-close) | [connhandler.go:205](../../../implementation/go/internal/server/connhandler.go#L205) |

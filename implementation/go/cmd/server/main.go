@@ -1,6 +1,6 @@
 // Command server runs the HTTP/2 /ping + /cancel server.
 //
-// Source: abstraction/server/api.md (server v0.13.0)
+// Source: abstraction/server/api.md (server v0.14.1)
 package main
 
 import (
@@ -21,7 +21,7 @@ func main() {
 	p := server.DefaultParams()
 	fs := flag.NewFlagSet("server", flag.ContinueOnError)
 	fs.StringVar(&p.ListenAddr, "listen_addr", p.ListenAddr, "host:port to accept connections on")
-	fs.StringVar(&p.Workload, "workload", p.Workload, "cpu_burn | message_buffer | sleep")
+	fs.StringVar(&p.Workload, "workload", p.Workload, "cpu_burn | message_buffer | sleep | sleep_constant")
 	fs.StringVar(&p.ResponseRate, "response_rate", p.ResponseRate, "service rate in requests/s (required for cpu_burn)")
 	fs.StringVar(&p.ResponseBytes, "response_bytes", p.ResponseBytes, "exact /ping response body size (required, >= 115)")
 	fs.StringVar(&p.CancelMode, "cancel_mode", p.CancelMode, "ignore | cooperative")

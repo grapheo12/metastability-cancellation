@@ -1,7 +1,7 @@
 // Package server implements the HTTP/2 /ping + /cancel server. Each file maps
 // to one component of abstraction/server.
 //
-// Source: abstraction/server/design.md (server v0.13.0)
+// Source: abstraction/server/design.md (server v0.14.1)
 package server
 
 import (
@@ -35,6 +35,8 @@ const (
 	WorkloadCPUBurn Workload = iota // zero value: the default
 	WorkloadMessageBuffer
 	WorkloadSleep // QuantumSleep: sleep the ServiceTime in 20 ms quanta
+	// WorkloadSleepConstant: QuantumSleep the ConstantServiceTime (no random draw).
+	WorkloadSleepConstant
 )
 
 // Config is the validated, immutable ServerConfig shared by all connection handlers and workers.
@@ -116,10 +118,13 @@ func Validate(p Params) (Config, error) {
 		c.Workload = WorkloadMessageBuffer
 	case "sleep":
 		c.Workload = WorkloadSleep
+	case "sleep_constant":
+		c.Workload = WorkloadSleepConstant
 	default:
-		return c, errors.New("workload must be cpu_burn, message_buffer or sleep")
+		return c, errors.New("workload must be cpu_burn, message_buffer, sleep or sleep_constant")
 	}
-	if (c.Workload == WorkloadCPUBurn || c.Workload == WorkloadSleep) && p.ResponseRate == "" {
+	if (c.Workload == WorkloadCPUBurn || c.Workload == WorkloadSleep || c.Workload == WorkloadSleepConstant) &&
+		p.ResponseRate == "" {
 		return c, errors.New("response_rate is required")
 	}
 	if p.ResponseRate != "" { // validated whenever given

@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.13.0)
+// Source: abstraction/server/design.md (server v0.14.1)
 package server
 
 import (
@@ -325,6 +325,14 @@ func TestValidateSleepWorkload(t *testing.T) {
 	p.ResponseBytes, p.Workload, p.ResponseRate = "128", "sleep", "5"
 	if c, err := Validate(p); err != nil || c.Workload != WorkloadSleep || c.ResponseRate != 5 {
 		t.Fatalf("%+v %v", c, err)
+	}
+	p.Workload = "sleep_constant"
+	if c, err := Validate(p); err != nil || c.Workload != WorkloadSleepConstant || c.ResponseRate != 5 {
+		t.Fatalf("sleep_constant: %+v %v", c, err)
+	}
+	p.ResponseRate = ""
+	if _, err := Validate(p); err == nil {
+		t.Fatal("sleep_constant without response_rate accepted")
 	}
 }
 

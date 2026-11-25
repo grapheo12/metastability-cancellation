@@ -1,4 +1,4 @@
-// Source: abstraction/server/ping_handler/design.md (ping_handler v0.12.0)
+// Source: abstraction/server/ping_handler/design.md (ping_handler v0.13.0)
 package server
 
 import (
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"testbed/internal/protocol"
+	"testbed/internal/sampling"
 )
 
 // Design: abstraction/server/ping_handler/design.md#execreport
@@ -141,4 +142,46 @@ func TestValidateRejectPastDeadline(t *testing.T) {
 			t.Fatalf("reject_past_deadline %q must be rejected", bad)
 		}
 	}
+}
+
+// ConstantServiceTime worked example: round(1e6 / response_rate), half up.
+//
+// Design: abstraction/server/ping_handler/design.md#constantservicetime
+func TestConstantServiceUs(t *testing.T) {
+	for _, c := range []struct {
+		rate float64
+		want uint64
+	}{{2.5, 400_000}, {3, 333_333}, {25, 40_000}, {1.6, 625_000}, {3_000_000, 0}} {
+		if got := constantServiceUs(c.rate); got != c.want {
+			t.Errorf("rate %v: %d, want %d", c.rate, got, c.want)
+		}
+	}
+}
+
+// sleep_constant admits every request with the ConstantServiceTime and draws
+// nothing: the rng's next value is what it would have been without the admits.
+//
+// Design: abstraction/server/ping_handler/design.md#sampling-order
+func TestAdmitSleepConstantNoDraw(t *testing.T) {
+	cfg := Config{Workload: WorkloadSleepConstant, ResponseRate: 2.5}
+	rng, ref := sampling.NewRng(9), sampling.NewRng(9)
+	st := &ConnectionCancelState{}
+	for seq := uint32(0); seq < 3; seq++ {
+		job, resp := admitPing(&StreamTask{Body: protocol.BuildBody(protocol.MakeRequestID(seq, 1), 0, nil, 128)}, cfg, rng, st)
+		if job == nil || resp.Status != 0 || job.ServiceUs != 400_000 {
+			t.Fatalf("seq %d: job %+v resp %+v", seq, job, resp)
+		}
+	}
+	if rng.ExponentialUs(1) != ref.ExponentialUs(1) {
+		t.Fatal("sleep_constant advanced the rng")
+	}
+	// A 20 ms constant sleep runs as QuantumSleep and reports about 20 ms.
+	q := NewWorkQueue(0, QueueFIFO, 0)
+	_ = q.Push(newPingJob(&StreamTask{}, protocol.MakeRequestID(0, 0), 0, constantServiceUs(50), NoDeadline))
+	r := runPing(q.Pop(), Config{CancelMode: CancelCooperative, ResponseBytes: 128, Workload: WorkloadSleepConstant},
+		NewCancelRegistry(16), &CancelCounters{}, nil, q)
+	if ex, ok, _, _ := protocol.ParseExecReport(r.Body); r.Status != 202 || !ok || ex < 20_000_000 || ex > 2_000_000_000 {
+		t.Fatalf("status %d exec %d %v", r.Status, ex, ok)
+	}
+	q.Close()
 }

@@ -1,4 +1,4 @@
-// Source: abstraction/server/ping_handler/design.md (ping_handler v0.12.0)
+// Source: abstraction/server/ping_handler/design.md (ping_handler v0.13.0)
 package server
 
 import (
@@ -34,6 +34,9 @@ func admitPing(task *StreamTask, cfg Config, rng *sampling.Rng, st *ConnectionCa
 	// Design: abstraction/server/ping_handler/design.md#sampling-order
 	if cfg.Workload == WorkloadCPUBurn || cfg.Workload == WorkloadSleep {
 		serviceUs = rng.ExponentialUs(cfg.ResponseRate)
+	} else if cfg.Workload == WorkloadSleepConstant {
+		// Design: abstraction/server/ping_handler/design.md#constantservicetime
+		serviceUs = constantServiceUs(cfg.ResponseRate) // no draw: the rng is not advanced
 	}
 	// RequestDeadline for the edf QueueDiscipline; missing or malformed is NoDeadline, never a 400.
 	deadline, ok := protocol.ParseDeadline(task.Body)
@@ -82,7 +85,7 @@ func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *Cance
 		switch cfg.Workload {
 		case WorkloadCPUBurn:
 			outcome = Burn(job.ServiceUs, &job.Task.Cancelled, cfg.CancelCheckIntervalUs, idCheck, CheckIter)
-		case WorkloadSleep:
+		case WorkloadSleep, WorkloadSleepConstant:
 			outcome = Sleep(job.ServiceUs, &job.Task.Cancelled, idCheck) // QuantumSleep
 		default:
 			outcome = fillMessages(job, cfg, buf, &job.Task.Cancelled, idCheck)
@@ -111,7 +114,7 @@ func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *Cance
 		switch cfg.Workload {
 		case WorkloadCPUBurn:
 			Burn(job.ServiceUs, nil, cfg.CancelCheckIntervalUs, freezeCheck, CheckIter)
-		case WorkloadSleep:
+		case WorkloadSleep, WorkloadSleepConstant:
 			Sleep(job.ServiceUs, nil, freezeCheck) // always BurnCompleted
 		default:
 			fillMessages(job, cfg, buf, nil, freezeCheck) // always BurnCompleted
@@ -205,4 +208,12 @@ func fillMessages(job *PingJob, cfg Config, buf *MessageBuffer, cancelled *atomi
 	}
 	buf.Push(job.ClientID, msgs) // created before the lock
 	return BurnCompleted
+}
+
+// constantServiceUs is constant_service_us: round(1e6 / response_rate) µs,
+// half up (binary64 division; rate > 0 is validated).
+//
+// Design: abstraction/server/ping_handler/design.md#constantservicetime
+func constantServiceUs(rate float64) uint64 {
+	return uint64(math.Floor(1_000_000/rate + 0.5))
 }
