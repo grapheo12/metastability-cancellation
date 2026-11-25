@@ -4,6 +4,7 @@
 #include <string>
 
 #include "source/client/request_log.h"
+#include "source/common/http/header_map_impl.h"
 #include "source/request_source/ping_request_source_plugin_impl.h"
 
 #include "gtest/gtest.h"
@@ -22,6 +23,21 @@ TEST(PingRequestBody, MatchesGoBuildRequestBody) {
 TEST(PingRequestBody, LongestIdAndDeadlineNeed76Bytes) {
   EXPECT_EQ(BuildPingRequestBody(~0ULL, ~0ULL, 76).size(), 76u); // 36 + 20 + 20, empty payload
   EXPECT_EQ(BuildPingRequestBody(~0ULL, ~0ULL, 75), "");
+}
+
+TEST(PingRequestSource, DeadlineHeaderMatchesBody) {
+  PingRequestSourcePlugin source(3, 128, 17000, "/ping", Envoy::Http::RequestHeaderMapImpl::create());
+  const auto generate = source.get();
+  for (uint32_t seq = 0; seq < 2; ++seq) {
+    const auto request = generate();
+    const auto values =
+        request->header()->get(Envoy::Http::LowerCaseString(std::string(kPingDeadlineHeader)));
+    ASSERT_EQ(values.size(), 1u);
+    const std::string header_deadline(values[0]->value().getStringView());
+    EXPECT_EQ(Client::RequestLog::stringField(request->body(), "deadline"), header_deadline);
+    EXPECT_EQ(Client::RequestLog::requestId(request->body()), std::to_string((3ULL << 32) | seq));
+    EXPECT_EQ(request->body().size(), 128u);
+  }
 }
 
 TEST(RequestLog, ParsesIdAndExecReport) {

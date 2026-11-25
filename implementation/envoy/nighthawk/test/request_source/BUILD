@@ -81,5 +81,6 @@ envoy_cc_test(
     deps = [
         "//source/client:nighthawk_client_lib",
         "//source/request_source:ping_request_source_plugin_impl",
+        "@envoy//source/common/http:header_map_lib_with_external_headers",
     ],
 )

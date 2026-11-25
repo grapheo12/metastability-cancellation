@@ -4,6 +4,8 @@
 // ({"id":"<dec>","deadline":"<unix ns>","payload":"xxx..."}, abstraction/protocol/design.md#pingrequestbody),
 // so Nighthawk can drive the Go /ping server. One instance per worker; each instance is one client:
 // RequestId = client_id << 32 | seq (abstraction/protocol/design.md#requestid).
+// Each request also carries its RequestDeadline as the header x-request-deadline (decimal Unix ns, the body's
+// "deadline" value), so an Envoy load balancer, which sees only headers, can filter by deadline.
 
 #include <atomic>
 #include <cstdint>
@@ -24,6 +26,8 @@
 namespace Nighthawk {
 
 constexpr inline absl::string_view kPingRequestSourcePluginName = "nighthawk.request_source.ping";
+// The RequestDeadline header (decimal Unix ns), read by Envoy's peak_ewma_deadline load balancer.
+constexpr inline absl::string_view kPingDeadlineHeader = "x-request-deadline";
 
 // BuildPingRequestBody returns {"id":"<id>","deadline":"<deadline>","payload":"xxx..."} of exactly
 // total_bytes bytes (the Go implementation's protocol.BuildRequestBody), or "" if total_bytes is too small.

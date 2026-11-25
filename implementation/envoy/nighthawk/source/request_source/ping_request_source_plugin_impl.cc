@@ -42,7 +42,8 @@ Nighthawk::RequestGenerator PingRequestSourcePlugin::get() {
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::system_clock::now().time_since_epoch())
             .count());
-    std::string body = BuildPingRequestBody(id, now_ns + slo_ns_, request_bytes_);
+    const uint64_t deadline_ns = now_ns + slo_ns_;
+    std::string body = BuildPingRequestBody(id, deadline_ns, request_bytes_);
     Envoy::Http::RequestHeaderMapPtr headers = Envoy::Http::RequestHeaderMapImpl::create();
     Envoy::Http::HeaderMapImpl::copyFrom(*headers, *header_);
     headers->setMethod(
@@ -50,6 +51,7 @@ Nighthawk::RequestGenerator PingRequestSourcePlugin::get() {
     headers->setContentType("application/json");
     headers->setContentLength(body.size());
     headers->setPath(path_);
+    headers->addCopy(Envoy::Http::LowerCaseString(std::string(kPingDeadlineHeader)), absl::StrCat(deadline_ns));
     return std::make_unique<Nighthawk::RequestImpl>(std::move(headers), std::move(body));
   };
 }
