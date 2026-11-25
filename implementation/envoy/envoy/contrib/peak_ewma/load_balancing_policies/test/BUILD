@@ -78,3 +78,21 @@ envoy_cc_test(
         "//test/mocks/upstream:upstream_mocks",
     ],
 )
+
+# impl/envoy (cancellation testbed): the peak_ewma_deadline load balancer.
+envoy_cc_test(
+    name = "deadline_lb_test",
+    srcs = ["deadline_lb_test.cc"],
+    deps = [
+        "//contrib/peak_ewma/load_balancing_policies/source:deadline_lb_lib",
+        "//contrib/peak_ewma/load_balancing_policies/source:peak_ewma_lb_lib",
+        "//source/common/network:address_lib",
+        "//test/common/stats:stat_test_utility_lib",
+        "//test/mocks:common_lib",
+        "//test/mocks/event:event_mocks",
+        "//test/mocks/network:connection_mocks",
+        "//test/mocks/runtime:runtime_mocks",
+        "//test/mocks/upstream:upstream_mocks",
+        "//test/test_common:utility_lib",
+    ],
+)

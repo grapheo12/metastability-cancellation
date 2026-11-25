@@ -66,11 +66,10 @@ PeakEwmaTrace::PeakEwmaTrace(TimeSource& time_source)
 }
 
 PeakEwmaTrace::~PeakEwmaTrace() {
-  if (updates_ != nullptr) {
-    std::fclose(updates_);
-  }
-  if (picks_ != nullptr) {
-    std::fclose(picks_);
+  for (std::FILE* f : {updates_, picks_, evals_, queue_}) {
+    if (f != nullptr) {
+      std::fclose(f);
+    }
   }
 }
 
@@ -80,33 +79,32 @@ int64_t PeakEwmaTrace::monoNowNs() const {
       .count();
 }
 
-bool PeakEwmaTrace::open() {
-  if (!opened_) {
-    opened_ = true;
-    static std::atomic<int> next_index{0};
-    const int n = next_index++;
-    const std::string base = tracePrefix();
-    updates_ = std::fopen((base + ".ewma." + std::to_string(n) + ".csv").c_str(), "w");
-    picks_ = std::fopen((base + ".picks." + std::to_string(n) + ".csv").c_str(), "w");
-    if (updates_ != nullptr) {
-      std::setvbuf(updates_, nullptr, _IOLBF, 1 << 16);
-      std::fputs("t_unix_ns,host,rtt_ms,dt_ns,alpha,ewma_before_ms,ewma_after_ms\n", updates_);
+std::FILE* PeakEwmaTrace::file(std::FILE*& f, const char* kind, const char* header) {
+  if (f == nullptr) {
+    if (index_ < 0) {
+      static std::atomic<int> next_index{0};
+      index_ = next_index++;
     }
-    if (picks_ != nullptr) {
-      std::setvbuf(picks_, nullptr, _IOLBF, 1 << 16);
-      std::fputs("t_unix_ns,host_a,active_a,ewma_a_ms,cost_a,host_b,active_b,ewma_b_ms,cost_b,chosen\n",
-                 picks_);
+    f = std::fopen((std::string(tracePrefix()) + "." + kind + "." + std::to_string(index_) + ".csv").c_str(),
+                   "w");
+    if (f == nullptr) {
+      return nullptr;
     }
+    std::setvbuf(f, nullptr, _IOLBF, 1 << 16);
+    std::fputs(header, f);
   }
-  return updates_ != nullptr && picks_ != nullptr;
+  return f;
 }
 
 void PeakEwmaTrace::update(uint64_t sample_mono_ns, const std::string& host, double rtt_ms, int64_t dt_ns,
                            double alpha, double ewma_before_ms, double ewma_after_ms) {
-  if (!enabled_ || !open()) {
+  std::FILE* f = enabled_ ? file(updates_, "ewma",
+                                 "t_unix_ns,host,rtt_ms,dt_ns,alpha,ewma_before_ms,ewma_after_ms\n")
+                          : nullptr;
+  if (f == nullptr) {
     return;
   }
-  std::fprintf(updates_, "%lld,%s,%.9g,%lld,%.9g,%.9g,%.9g\n",
+  std::fprintf(f, "%lld,%s,%.9g,%lld,%.9g,%.9g,%.9g\n",
                static_cast<long long>(static_cast<int64_t>(sample_mono_ns) + unix_minus_mono_ns_),
                host.c_str(), rtt_ms, static_cast<long long>(dt_ns), alpha, ewma_before_ms, ewma_after_ms);
 }
@@ -114,12 +112,43 @@ void PeakEwmaTrace::update(uint64_t sample_mono_ns, const std::string& host, dou
 void PeakEwmaTrace::pick(const std::string& host_a, double active_a, double ewma_a_ms, double cost_a,
                          const std::string& host_b, double active_b, double ewma_b_ms, double cost_b,
                          bool chose_a) {
-  if (!enabled_ || !open()) {
+  std::FILE* f =
+      enabled_ ? file(picks_, "picks",
+                      "t_unix_ns,host_a,active_a,ewma_a_ms,cost_a,host_b,active_b,ewma_b_ms,cost_b,chosen\n")
+               : nullptr;
+  if (f == nullptr) {
     return;
   }
-  std::fprintf(picks_, "%lld,%s,%.9g,%.9g,%.9g,%s,%.9g,%.9g,%.9g,%s\n",
-               static_cast<long long>(monoNowNs() + unix_minus_mono_ns_), host_a.c_str(), active_a,
-               ewma_a_ms, cost_a, host_b.c_str(), active_b, ewma_b_ms, cost_b, chose_a ? "a" : "b");
+  std::fprintf(f, "%lld,%s,%.9g,%.9g,%.9g,%s,%.9g,%.9g,%.9g,%s\n", static_cast<long long>(unixNowNs()),
+               host_a.c_str(), active_a, ewma_a_ms, cost_a, host_b.c_str(), active_b, ewma_b_ms, cost_b,
+               chose_a ? "a" : "b");
+}
+
+void PeakEwmaTrace::eval(uint64_t decision, const char* kind, const std::string& host, double active,
+                         double ewma_ms, double cost, bool has_remaining, int64_t remaining_ns, bool eligible,
+                         bool chosen) {
+  std::FILE* f =
+      enabled_ ? file(evals_, "evals",
+                      "t_unix_ns,decision,kind,host,active,ewma_ms,cost,remaining_ns,eligible,chosen\n")
+               : nullptr;
+  if (f == nullptr) {
+    return;
+  }
+  const std::string remaining = has_remaining ? std::to_string(remaining_ns) : std::string();
+  std::fprintf(f, "%lld,%llu,%s,%s,%.9g,%.9g,%.9g,%s,%d,%d\n", static_cast<long long>(unixNowNs()),
+               static_cast<unsigned long long>(decision), kind, host.c_str(), active, ewma_ms, cost,
+               remaining.c_str(), eligible ? 1 : 0, chosen ? 1 : 0);
+}
+
+void PeakEwmaTrace::queueEvent(const char* event, int64_t wait_ns, int64_t remaining_ns,
+                               const std::string& host) {
+  std::FILE* f =
+      enabled_ ? file(queue_, "queue", "t_unix_ns,event,wait_ns,remaining_ns,host\n") : nullptr;
+  if (f == nullptr) {
+    return;
+  }
+  std::fprintf(f, "%lld,%s,%lld,%lld,%s\n", static_cast<long long>(unixNowNs()), event,
+               static_cast<long long>(wait_ns), static_cast<long long>(remaining_ns), host.c_str());
 }
 
 // Peak EWMA Load Balancer Implementation.

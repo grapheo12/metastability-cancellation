@@ -68,7 +68,12 @@ private:
  *          arrive out of order)
  *   picks: t_unix_ns,host_a,active_a,ewma_a_ms,cost_a,host_b,active_b,ewma_b_ms,cost_b,chosen   (one row per
  *          Power of Two Choices decision; chosen is "a" or "b")
- * Monotonic times are converted to Unix ns with an offset taken once at construction.
+ * and, for the peak_ewma_deadline policy (deadline_lb.h), <prefix>.evals.<n>.csv and <prefix>.queue.<n>.csv:
+ *   evals: t_unix_ns,decision,kind,host,active,ewma_ms,cost,remaining_ns,eligible,chosen   (one row per host per
+ *          decision; kind is admit, rescan or nofilter; remaining_ns empty for nofilter; eligible/chosen 0 or 1)
+ *   queue: t_unix_ns,event,wait_ns,remaining_ns,host   (event is queued, sent, dropped or gone; host only for sent)
+ * Each file is created on its first row. Monotonic times are converted to Unix ns with an offset taken once at
+ * construction.
  */
 class PeakEwmaTrace {
 public:
@@ -80,16 +85,23 @@ public:
               double ewma_before_ms, double ewma_after_ms);
   void pick(const std::string& host_a, double active_a, double ewma_a_ms, double cost_a,
             const std::string& host_b, double active_b, double ewma_b_ms, double cost_b, bool chose_a);
+  // has_remaining false (a request without a deadline) writes an empty remaining_ns.
+  void eval(uint64_t decision, const char* kind, const std::string& host, double active, double ewma_ms,
+            double cost, bool has_remaining, int64_t remaining_ns, bool eligible, bool chosen);
+  void queueEvent(const char* event, int64_t wait_ns, int64_t remaining_ns, const std::string& host);
+  int64_t unixNowNs() const { return monoNowNs() + unix_minus_mono_ns_; }
 
 private:
-  bool open();
+  std::FILE* file(std::FILE*& f, const char* kind, const char* header);
 
   TimeSource& time_source_;
   const bool enabled_;
   int64_t unix_minus_mono_ns_{0};
-  bool opened_{false};
+  int index_{-1}; // this instance's <n>, taken on its first row
   std::FILE* updates_{nullptr};
   std::FILE* picks_{nullptr};
+  std::FILE* evals_{nullptr};
+  std::FILE* queue_{nullptr};
 };
 
 /**
@@ -118,7 +130,8 @@ public:
   Upstream::HostSelectionResponse chooseHost(Upstream::LoadBalancerContext* context) override;
   Upstream::HostConstSharedPtr peekAnotherHost(Upstream::LoadBalancerContext* context) override;
 
-private:
+// impl/envoy: protected (was private) so PeakEwmaDeadlineLoadBalancer (deadline_lb.h) can reuse it.
+protected:
   friend struct GlobalHostStats;
 
   // Host management - attach atomic data structures to each host.

@@ -49,3 +49,34 @@ envoy_cc_contrib_extension(
         "@envoy_api//contrib/envoy/extensions/load_balancing_policies/peak_ewma/v3alpha:pkg_cc_proto",
     ],
 )
+
+# impl/envoy (cancellation testbed): Peak EWMA with a deadline filter over every host and a FIFO wait queue.
+envoy_cc_library(
+    name = "deadline_lb_lib",
+    srcs = ["deadline_lb.cc"],
+    hdrs = ["deadline_lb.h"],
+    visibility = ["//contrib/peak_ewma/load_balancing_policies/test:__pkg__"],
+    deps = [
+        ":peak_ewma_lb_lib",
+        "//envoy/event:dispatcher_interface",
+        "//envoy/event:timer_interface",
+        "//envoy/http:header_map_interface",
+        "//envoy/network:connection_interface",
+        "//source/common/protobuf:utility_lib",
+        "@abseil-cpp//absl/strings",
+        "@abseil-cpp//absl/types:optional",
+        "@envoy_api//contrib/envoy/extensions/load_balancing_policies/peak_ewma_deadline/v3alpha:pkg_cc_proto",
+    ],
+)
+
+envoy_cc_contrib_extension(
+    name = "deadline_config",
+    srcs = ["deadline_config.cc"],
+    hdrs = ["deadline_config.h"],
+    deps = [
+        ":deadline_lb_lib",
+        "//envoy/registry",
+        "//source/extensions/load_balancing_policies/common:factory_base",
+        "@envoy_api//contrib/envoy/extensions/load_balancing_policies/peak_ewma_deadline/v3alpha:pkg_cc_proto",
+    ],
+)

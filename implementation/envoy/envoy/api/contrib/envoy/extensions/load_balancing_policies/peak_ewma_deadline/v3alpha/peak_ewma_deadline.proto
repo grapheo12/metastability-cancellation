@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package envoy.extensions.load_balancing_policies.peak_ewma_deadline.v3alpha;
+
+import "contrib/envoy/extensions/load_balancing_policies/peak_ewma/v3alpha/peak_ewma.proto";
+
+import "google/protobuf/duration.proto";
+
+import "xds/annotations/v3/status.proto";
+
+import "udpa/annotations/status.proto";
+
+option java_package = "io.envoyproxy.envoy.extensions.load_balancing_policies.peak_ewma_deadline.v3alpha";
+option java_outer_classname = "PeakEwmaDeadlineProto";
+option java_multiple_files = true;
+option go_package = "github.com/envoyproxy/go-control-plane/contrib/envoy/extensions/load_balancing_policies/peak_ewma_deadline/v3alpha";
+option (udpa.annotations.file_status).package_version_status = ACTIVE;
+option (xds.annotations.v3.file_status).work_in_progress = true;
+
+// [#protodoc-title: Peak EWMA with a deadline filter]
+// impl/envoy (cancellation testbed): Peak EWMA's cost, `Cost = RTT_ewma * (active_requests + 1)`, used as a
+// deadline filter over EVERY healthy host, with a FIFO wait queue (the testbed's DeadlineFilter and
+// FilterWaitQueue, abstraction/ingress/load_balancer/design.md).
+//
+// A request carrying the deadline header (decimal Unix ns) is sent only to a host whose cost fits in its remaining
+// time (`cost_ms * 1e6 <= deadline - now`); a host without an RTT sample yet always fits. Among the hosts that fit
+// it takes the lowest cost (ties at random). When none fits, or requests are already waiting, it waits in this
+// worker's FIFO queue, re-checked every `queue_tick`, oldest first; once its deadline has passed it fails with
+// "no healthy upstream" (503). Requests without the header are not filtered and never wait.
+//
+// [#extension: envoy.load_balancing_policies.peak_ewma_deadline]
+message PeakEwmaDeadline {
+  option (xds.annotations.v3.message_status).work_in_progress = true;
+
+  // Peak EWMA settings (decay time, aggregation interval, default RTT, penalty), as for the Peak EWMA policy.
+  peak_ewma.v3alpha.PeakEwma peak_ewma = 1;
+
+  // How often a worker re-checks its waiting requests. Defaults to 10 ms.
+  google.protobuf.Duration queue_tick = 2;
+
+  // The request header carrying the deadline as decimal Unix ns. Defaults to `x-request-deadline`.
+  string deadline_header = 3;
+}
