@@ -26,3 +26,4 @@
 | 0.22.0 | 2026-11-24T00:00:00Z | AvailabilityPlot groups requests by send time (`send_ns div W`) instead of finish time, so a stuck or late request counts when it was sent; worked example updated |
 | 0.23.0 | 2026-11-24T00:00:00Z | EstimateErrorHistogram (`estimate_error.html`): EstimateError of ok forwards from `forwards.csv` `estimate_ns`, bins floor(err × 10) over the full range, split by pick time at the FailureTime; worked example |
 | 0.23.1 | 2026-11-24T00:00:00Z | EstimateErrorHistogram text and x label follow the EstimatedFinish `/ k` |
+| 0.24.0 | 2026-11-24T00:00:00Z | EstimateErrorHistogram becomes the EstimateErrorCdf: `estimate_error.html` draws each subplot's sorted EstimateErrors as a step CDF (`(err_i, i/n)`) instead of 0.1-wide bins; worked example |
