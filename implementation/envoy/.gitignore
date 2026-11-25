@@ -70,3 +70,5 @@ Testing/
 # Bazel output symlinks and local build products (impl/envoy)
 bazel-*
 /build/
+/bin/server
+__pycache__/

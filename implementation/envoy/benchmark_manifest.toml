@@ -1,0 +1,18 @@
+# BuildManifest for impl/envoy: Envoy (ingress) and Nighthawk (load generator), with the Go /ping server.
+# Contract: abstraction/benchmark_runner/remote_setup/design.md#buildmanifest
+lang = "envoy"
+required_tools = ["go"]
+# Go server always; Envoy and Nighthawk only where Docker is available (see bench_build.sh).
+build = "./bench_build.sh"
+# ProcessPlacement threads: the Go server reads GOMAXPROCS; the ingress wrapper passes it to Envoy's --concurrency.
+# (The loadgen wrapper always runs num_clients Nighthawk workers: one per client.)
+thread_env = "GOMAXPROCS"
+
+# GcTraceHook (the Go server): the Go runtime prints one line per GC cycle to stderr.
+gc_trace_env = ["GODEBUG=gctrace=1"]
+gc_trace_regex = '^gc (?P<cycle>\d+) @(?P<start_s>[0-9.]+)s \d+%: (?P<stw_start_ms>[0-9.]+)\+(?P<mark_ms>[0-9.]+)\+(?P<stw_end_ms>[0-9.]+) ms clock'
+
+[binaries]
+server = "bin/server"
+loadgen = "bin/loadgen"
+ingress = "bin/ingress"
