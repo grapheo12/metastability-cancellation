@@ -49,13 +49,29 @@ programs' flags, run Envoy and Nighthawk, and write the Go programs' output file
 (LEAST_REQUEST, 2 choices) and `ewma` (the contrib Peak EWMA policy and its RTT filter, built into
 `build/envoy-static` from `@envoy//contrib/exe:envoy-static-peak-ewma`).
 
+`--lb_filter deadline_mean` with `--lb_policy ewma` selects `peak_ewma_deadline`, a policy added to the vendored
+contrib (`envoy/contrib/peak_ewma/load_balancing_policies/source/deadline_lb.h`): the DeadlineFilter and
+FilterWaitQueue of `abstraction/ingress/load_balancer/design.md` with Peak EWMA's cost as the test.
+- Every backend is evaluated: kept if it has no RTT sample yet or `EWMA RTT × (active + 1) <= time left`; the
+  lowest cost among the kept ones is chosen (ties at random).
+- The time left comes from the `x-request-deadline` header (Unix ns) that the ping RequestSource sends with each
+  request, since Envoy chooses a host before the body arrives.
+- When nothing is kept, or requests are already waiting, the request waits (Envoy's asynchronous host selection)
+  in its worker's FIFO, re-checked every 10 ms; past its deadline it fails with a 503 (`no healthy upstream`).
+- Differences from the Go `deadline_mean`: the EWMA is of the time to first response byte as Envoy measures it,
+  not the server's ExecutionTime (Envoy never parses the ExecReport); and there is one queue per Envoy worker, so
+  FIFO order holds per worker, while `active` and the EWMA are shared by all workers.
+- The ingress summary's `filter_*` counters come from the queue trace.
+
 ### Peak EWMA trace
 
 With `--lb_policy ewma`, the ingress wrapper sets `PEAK_EWMA_TRACE_PREFIX` and Envoy's Peak EWMA (vendored change,
 see `VENDORED.md`) logs every EWMA update and every pick. The wrapper merges them into
 `ingress.peak_ewma_updates.csv` (`t_ns,server_id,rtt_ms,dt_ns,alpha,ewma_before_ms,ewma_after_ms`) and
 `ingress.peak_ewma_picks.csv` (`t_ns,server_a,active_a,ewma_a_ms,cost_a,server_b,active_b,ewma_b_ms,cost_b,chosen`),
-with `t_ns` on the `forwards.csv` time base. Plot them (needs plotly, as `bench.py plot` does):
+with `t_ns` on the `forwards.csv` time base. `peak_ewma_deadline` writes `ingress.peak_ewma_evals.csv`
+(`t_ns,worker,decision,kind,server_id,active,ewma_ms,cost,remaining_ns,eligible,chosen`, every backend at every
+decision) and `ingress.peak_ewma_queue.csv` (`t_ns,worker,event,wait_ns,remaining_ns,server_id`) instead of picks. Plot them (needs plotly, as `bench.py plot` does):
 
 ```
 python3 implementation/envoy/wrappers/plot_peak_ewma.py <results dir>   # writes plots/peak_ewma.html
@@ -63,6 +79,7 @@ python3 implementation/envoy/wrappers/plot_peak_ewma.py <results dir>   # writes
 
 ## Not done yet
 
-- Ingress: DeadlineFilter, LbRetries, Heartbeat Monitor, LoadCanceller (the wrapper rejects their flags).
+- Ingress: DeadlineFilter strategies other than `deadline_mean` with `ewma`, LbRetries, Heartbeat Monitor,
+  LoadCanceller (the wrapper rejects their flags).
 - LoadGenerator: client retries (RequestCopies) and SLO cancellation.
 - No `Design specific to C++` sections yet: the wrappers and Nighthawk changes are not traced to `abstraction/`.

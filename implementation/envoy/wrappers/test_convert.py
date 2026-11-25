@@ -70,7 +70,8 @@ class PeakEwmaTraceMerge(unittest.TestCase):
             open(pre + ".picks.1.csv", "w").write(
                 "t_unix_ns,host_a,active_a,ewma_a_ms,cost_a,host_b,active_b,ewma_b_ms,cost_b,chosen\n")
             out = os.path.join(d, "ing")
-            self.assertEqual(convert.merge_peak_ewma(pre, backends, 1_000_000_000, out), (3, 1))
+            merged = convert.merge_peak_ewma(pre, backends, 1_000_000_000, out)
+            self.assertEqual({k: len(v) for k, v in merged.items()}, {"ewma": 3, "picks": 1, "evals": 0, "queue": 0})
             up = open(out + ".peak_ewma_updates.csv").read().splitlines()
             self.assertEqual(up, [convert.PEAK_EWMA_UPDATES_HEADER,
                                   "100,0,390,-5,1,401,390",
@@ -79,12 +80,52 @@ class PeakEwmaTraceMerge(unittest.TestCase):
             pk = open(out + ".peak_ewma_picks.csv").read().splitlines()
             self.assertEqual(pk, [convert.PEAK_EWMA_PICKS_HEADER, "500,1,3,400,1600,0,1,390,780,b"])
             self.assertEqual(sorted(f for f in os.listdir(d) if ".peak_ewma." in f), [])  # raw files removed
+            self.assertFalse(os.path.exists(out + ".peak_ewma_evals.csv"))  # no evals files: no output
 
     def test_no_trace(self):
         with tempfile.TemporaryDirectory() as d:
             out = os.path.join(d, "ing")
-            self.assertEqual(convert.merge_peak_ewma(out + ".peak_ewma", ["a:1"], 0, out), (0, 0))
+            self.assertEqual(convert.merge_peak_ewma(out + ".peak_ewma", ["a:1"], 0, out),
+                             {"ewma": [], "picks": [], "evals": [], "queue": []})
             self.assertEqual(os.listdir(d), [])  # no outputs without trace files
+
+
+class PeakEwmaDeadlineTrace(unittest.TestCase):
+    def test_evals_and_queue(self):
+        backends = ["10.0.0.1:8080", "10.0.0.2:8080"]
+        with tempfile.TemporaryDirectory() as d:
+            pre = os.path.join(d, "ing.peak_ewma")
+            eh = "t_unix_ns,decision,kind,host,active,ewma_ms,cost,remaining_ns,eligible,chosen\n"
+            open(pre + ".evals.0.csv", "w").write(
+                eh + "1000000100,0,admit,10.0.0.1:8080,9,400,4000,3999999999,0,0\n"
+                     "1000000100,0,admit,10.0.0.2:8080,19,400,8000,3999999999,0,0\n"
+                     "1000000300,1,rescan,10.0.0.2:8080,1,400,800,3999999799,1,1\n")
+            open(pre + ".evals.1.csv", "w").write(eh + "1000000200,0,nofilter,10.0.0.1:8080,0,0,10,,1,1\n")
+            qh = "t_unix_ns,event,wait_ns,remaining_ns,host\n"
+            open(pre + ".queue.0.csv", "w").write(
+                qh + "1000000100,queued,0,3999999999,\n1000000300,sent,200,3999999799,10.0.0.2:8080\n")
+            open(pre + ".queue.1.csv", "w").write(
+                qh + "1000000150,queued,0,10,\n1000000160,queued,0,500,\n"
+                     "1000000250,dropped,100,-90,\n1000000400,gone,240,260,\n")
+            out = os.path.join(d, "ing")
+            merged = convert.merge_peak_ewma(pre, backends, 1_000_000_000, out)
+            ev = open(out + ".peak_ewma_evals.csv").read().splitlines()
+            self.assertEqual(ev, [convert.PEAK_EWMA_EVALS_HEADER,
+                                  "100,0,0,admit,0,9,400,4000,3999999999,0,0",
+                                  "100,0,0,admit,1,19,400,8000,3999999999,0,0",
+                                  "200,1,0,nofilter,0,0,0,10,,1,1",
+                                  "300,0,1,rescan,1,1,400,800,3999999799,1,1"])
+            q = open(out + ".peak_ewma_queue.csv").read().splitlines()
+            self.assertEqual(q, [convert.PEAK_EWMA_QUEUE_HEADER, "100,0,queued,0,3999999999,",
+                                 "150,1,queued,0,10,", "160,1,queued,0,500,", "250,1,dropped,100,-90,",
+                                 "300,0,sent,200,3999999799,1", "400,1,gone,240,260,"])
+            # three queued; the longest total queue is 3 (at t = 160, over both workers)
+            self.assertEqual(convert.filter_counts(merged["queue"]),
+                             {"filter_queued": 3, "filter_sent_from_queue": 1, "filter_dropped": 1,
+                              "filter_queue_max": 3})
+            s = convert.ingress_summary([], backends, {}, 0, 1.0, convert.filter_counts(merged["queue"]))
+            self.assertEqual((s["filter_queued"], s["filter_dropped"], s["filter_queue_max"]), (3, 1, 3))
+            self.assertEqual(convert.ingress_summary([], backends, {}, 0, 1.0)["filter_queued"], 0)
 
 
 class LoadgenConversion(unittest.TestCase):

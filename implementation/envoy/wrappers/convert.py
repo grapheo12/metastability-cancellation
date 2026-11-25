@@ -3,7 +3,7 @@ output files (no I/O beyond reading and writing the given paths, so they are uni
 
 Formats produced:
   ingress  <out>.forwards.csv, <out>.summary.json   abstraction/ingress/api.md#outputs
-           <out>.peak_ewma_updates.csv, <out>.peak_ewma_picks.csv   impl/envoy only: Envoy's Peak EWMA trace
+           <out>.peak_ewma_{updates,picks,evals,queue}.csv          impl/envoy only: Envoy's Peak EWMA trace
   loadgen  <out>.requests.csv, <out>.summary.json   abstraction/load_generator/metrics/api.md
 """
 import csv
@@ -90,9 +90,10 @@ def write_forwards(rows, backends, path, ewma_beta=0.7):
     return run_start
 
 
-def ingress_summary(rows, backends, config, run_start_unix_ns, run_end_s):
+def ingress_summary(rows, backends, config, run_start_unix_ns, run_end_s, filter_counters=None):
     """The Ingress Summary JSON (abstraction/ingress/api.md), with the LoadCanceller and LB-internal fields
-    zero/null (not implemented on impl/envoy)."""
+    zero/null (not implemented on impl/envoy), except the FilterWaitQueue counters given by filter_counters
+    (filter_counts of the peak_ewma_deadline queue trace)."""
     index = {b: i for i, b in enumerate(backends)}
     per = [{"server_id": i, "addr": b, "forwarded": 0, **{o: 0 for o in OUTCOMES}, "ewma_latency_ns": None,
             "ewma_exec_ns": None, "ewma_anti_exec_ns": None, "worker_count": 0} for i, b in enumerate(backends)]
@@ -103,68 +104,110 @@ def ingress_summary(rows, backends, config, run_start_unix_ns, run_end_s):
             per[i][outcome] += 1
     zero_counts = {k: 0 for k in ("scheduled", "sent", "accepted", "rejected", "bad_request", "error",
                                   "timeout", "skipped")}
-    return {"config": config, "run_end_s": run_end_s, "run_start_unix_ns": run_start_unix_ns,
-            "counts": zero_counts, "rates_per_s": {"offered": 0.0, "sent": 0.0, "accepted": 0.0},
-            "clients_targeted": 0, "filter_dropped": 0, "filter_queued": 0, "filter_sent_from_queue": 0,
-            "filter_queue_max": 0, "lb_retry_refused": 0, "lb_retries": 0, "backends": per}
+    summary = {"config": config, "run_end_s": run_end_s, "run_start_unix_ns": run_start_unix_ns,
+               "counts": zero_counts, "rates_per_s": {"offered": 0.0, "sent": 0.0, "accepted": 0.0},
+               "clients_targeted": 0, "filter_dropped": 0, "filter_queued": 0, "filter_sent_from_queue": 0,
+               "filter_queue_max": 0, "lb_retry_refused": 0, "lb_retries": 0, "backends": per}
+    summary.update(filter_counters or {})
+    return summary
 
 
 # ---------------------------------------------------------------- Peak EWMA trace (impl/envoy only)
 
-# Envoy's vendored Peak EWMA writes, with PEAK_EWMA_TRACE_PREFIX=<prefix>, one pair of files per balancer instance
-# (envoy/contrib/peak_ewma/load_balancing_policies/source/peak_ewma_lb.h, PeakEwmaTrace):
+# Envoy's vendored Peak EWMA balancers write, with PEAK_EWMA_TRACE_PREFIX=<prefix>, files per balancer instance n
+# (one instance per worker; envoy/contrib/peak_ewma/load_balancing_policies/source/peak_ewma_lb.h, PeakEwmaTrace):
 #   <prefix>.ewma.<n>.csv   t_unix_ns,host,rtt_ms,dt_ns,alpha,ewma_before_ms,ewma_after_ms
 #   <prefix>.picks.<n>.csv  t_unix_ns,host_a,active_a,ewma_a_ms,cost_a,host_b,active_b,ewma_b_ms,cost_b,chosen
-# The merged outputs replace hosts by server ids (--backends order) and Unix times by t_ns since run_start_unix_ns
-# (the forwards.csv time base), sorted by t_ns (stable).
+#   <prefix>.evals.<n>.csv  t_unix_ns,decision,kind,host,active,ewma_ms,cost,remaining_ns,eligible,chosen
+#   <prefix>.queue.<n>.csv  t_unix_ns,event,wait_ns,remaining_ns,host
+# (picks: Peak EWMA; evals and queue: peak_ewma_deadline). The merged outputs replace hosts by server ids
+# (--backends order; an empty host stays empty) and Unix times by t_ns since run_start_unix_ns (the forwards.csv
+# time base), add the instance number as `worker` where decisions or queues are per worker, and are sorted by t_ns
+# (stable, in instance order).
 PEAK_EWMA_UPDATES_HEADER = "t_ns,server_id,rtt_ms,dt_ns,alpha,ewma_before_ms,ewma_after_ms"
 PEAK_EWMA_PICKS_HEADER = "t_ns,server_a,active_a,ewma_a_ms,cost_a,server_b,active_b,ewma_b_ms,cost_b,chosen"
+PEAK_EWMA_EVALS_HEADER = "t_ns,worker,decision,kind,server_id,active,ewma_ms,cost,remaining_ns,eligible,chosen"
+PEAK_EWMA_QUEUE_HEADER = "t_ns,worker,event,wait_ns,remaining_ns,server_id"
+
+# kind -> (raw width, raw host columns, output file suffix, output header, add the worker column)
+_PEAK_EWMA_KINDS = {
+    "ewma": (7, (1,), "peak_ewma_updates", PEAK_EWMA_UPDATES_HEADER, False),
+    "picks": (10, (1, 5), "peak_ewma_picks", PEAK_EWMA_PICKS_HEADER, False),
+    "evals": (10, (3,), "peak_ewma_evals", PEAK_EWMA_EVALS_HEADER, True),
+    "queue": (5, (4,), "peak_ewma_queue", PEAK_EWMA_QUEUE_HEADER, True),
+}
 
 
 def _trace_rows(prefix, kind):
-    """(paths, rows as lists of strings) of every <prefix>.<kind>.<n>.csv, header lines and malformed lines
-    (e.g. a truncated last line) dropped."""
-    paths = sorted(glob.glob(f"{glob.escape(prefix)}.{kind}.*.csv"))
-    width = len((PEAK_EWMA_UPDATES_HEADER if kind == "ewma" else PEAK_EWMA_PICKS_HEADER).split(","))
+    """(paths, [(instance n, row as a list of strings)]) of every <prefix>.<kind>.<n>.csv in n order, header and
+    malformed lines (e.g. a truncated last line) dropped."""
+    width = _PEAK_EWMA_KINDS[kind][0]
+    found = []
+    for path in glob.glob(f"{glob.escape(prefix)}.{kind}.*.csv"):
+        n = path[len(prefix) + len(kind) + 2:-len(".csv")]
+        if n.isdigit():
+            found.append((int(n), path))
     rows = []
-    for path in paths:
+    for n, path in sorted(found):
         with open(path, encoding="utf-8", errors="replace") as f:
             next(f, None)
             for line in f:
                 parts = line.rstrip("\n").split(",")
                 if len(parts) == width and parts[0].lstrip("-").isdigit():
-                    rows.append(parts)
-    return paths, rows
+                    rows.append((n, parts))
+    return [p for _, p in sorted(found)], rows
 
 
 def merge_peak_ewma(prefix, backends, run_start_unix_ns, out_prefix, remove=True):
-    """Writes <out_prefix>.peak_ewma_updates.csv and <out_prefix>.peak_ewma_picks.csv from the per-instance
-    trace files (nothing when there are none); returns (update rows, pick rows) written. Rows whose host is not a
+    """Writes <out_prefix>.<suffix>.csv for every trace kind that has files (_PEAK_EWMA_KINDS); returns
+    {kind: merged rows (lists of strings)}, empty lists for kinds without files. Rows naming a host that is not a
     backend are dropped. The per-instance files are deleted when remove is true."""
     index = {b: i for i, b in enumerate(backends)}
-    counts = []
-    for kind, header, out, host_cols in (("ewma", PEAK_EWMA_UPDATES_HEADER, "peak_ewma_updates", (1,)),
-                                          ("picks", PEAK_EWMA_PICKS_HEADER, "peak_ewma_picks", (1, 5))):
+    merged_by_kind = {}
+    for kind, (_, host_cols, suffix, header, add_worker) in _PEAK_EWMA_KINDS.items():
         paths, rows = _trace_rows(prefix, kind)
         merged = []
-        for parts in rows:
-            if any(parts[c] not in index for c in host_cols):
+        for n, parts in rows:
+            if any(parts[c] != "" and parts[c] not in index for c in host_cols):
                 continue
             row = [str(int(parts[0]) - run_start_unix_ns)] + parts[1:]
             for c in host_cols:
-                row[c] = str(index[parts[c]])
+                row[c] = str(index[parts[c]]) if parts[c] != "" else ""
+            if add_worker:
+                row.insert(1, str(n))
             merged.append(row)
         merged.sort(key=lambda r: int(r[0]))
         if paths:
-            with open(f"{out_prefix}.{out}.csv", "w", newline="") as f:
+            with open(f"{out_prefix}.{suffix}.csv", "w", newline="") as f:
                 f.write(header + "\n")
                 for row in merged:
                     f.write(",".join(row) + "\n")
         if remove:
             for path in paths:
                 os.remove(path)
-        counts.append(len(merged))
-    return tuple(counts)
+        merged_by_kind[kind] = merged
+    return merged_by_kind
+
+
+def filter_counts(queue_rows):
+    """The Ingress summary's FilterWaitQueue counters from merged queue rows (t_ns,worker,event,...): requests
+    queued, sent from the queue, dropped past their deadline, and the longest total queue over all workers (events
+    replayed in t_ns order: queued +1; sent, dropped, gone -1)."""
+    counts = {"filter_queued": 0, "filter_sent_from_queue": 0, "filter_dropped": 0, "filter_queue_max": 0}
+    length = 0
+    for row in queue_rows:
+        event = row[2]
+        if event == "queued":
+            counts["filter_queued"] += 1
+            length += 1
+            counts["filter_queue_max"] = max(counts["filter_queue_max"], length)
+        elif event in ("sent", "dropped", "gone"):
+            length -= 1
+            if event == "sent":
+                counts["filter_sent_from_queue"] += 1
+            elif event == "dropped":
+                counts["filter_dropped"] += 1
+    return counts
 
 
 # ---------------------------------------------------------------- loadgen

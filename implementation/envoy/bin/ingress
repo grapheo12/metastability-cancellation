@@ -5,8 +5,11 @@ from Envoy's access log when interrupted (SIGINT/SIGTERM), as the BenchmarkRunne
 
 Supported: a static cluster of --backends, lb_policy round_robin | least_outstanding | power_of_two | ewma (Envoy's
 contrib Peak EWMA policy: power of two choices on cost = EWMA RTT x (active requests + 1), defaults; --ewma_beta is
-not used by it), no
-DeadlineFilter, no LB retries, no Heartbeat Monitor, no LoadCanceller. Anything else is a startup error.
+not used by it). lb_filter none, or deadline_mean with lb_policy ewma: the testbed's peak_ewma_deadline policy (the
+DeadlineFilter over every backend with cost = EWMA RTT x (active + 1) <= time left, lowest cost among those kept,
+and a per-worker FilterWaitQueue re-checked every 10 ms; vendored envoy/contrib/peak_ewma/.../deadline_lb.h); it
+reads the RequestDeadline from the x-request-deadline header that the impl/envoy load generator sends. No LB
+retries, no Heartbeat Monitor, no LoadCanceller. Anything else is a startup error.
 """
 import argparse
 import json
@@ -52,8 +55,9 @@ def parse(argv):
     unsupported = []
     if args.lb_policy not in LB_POLICIES:
         unsupported.append(f"lb_policy={args.lb_policy} (supported: {', '.join(LB_POLICIES)})")
-    if args.lb_filter != "none":
-        unsupported.append(f"lb_filter={args.lb_filter}")
+    if args.lb_filter != "none" and not (args.lb_filter == "deadline_mean" and args.lb_policy == "ewma"):
+        unsupported.append(f"lb_filter={args.lb_filter} with lb_policy={args.lb_policy} "
+                           "(supported: none, or deadline_mean with ewma)")
     if args.lb_retry_policy != "none" and args.lb_max_retries > 0:
         unsupported.append(f"lb_retry_policy={args.lb_retry_policy} with lb_max_retries={args.lb_max_retries}")
     if args.heartbeat_timeout_ms > 0:
@@ -65,6 +69,13 @@ def parse(argv):
     return args
 
 
+def cluster_policy(args):
+    """(Envoy policy, LEAST_REQUEST choice count or None) for the parsed flags."""
+    if args.lb_policy == "ewma" and args.lb_filter == "deadline_mean":
+        return "PEAK_EWMA_DEADLINE", None
+    return LB_POLICIES[args.lb_policy]
+
+
 def free_port():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -73,7 +84,7 @@ def free_port():
 
 def envoy_config(args, backends, admin_port, access_log):
     host, port = args.listen_addr.rsplit(":", 1)
-    policy, choice = LB_POLICIES[args.lb_policy]
+    policy, choice = cluster_policy(args)
     cluster = {
         "name": "servers", "type": "STATIC",
         "connect_timeout": "5s",
@@ -94,6 +105,11 @@ def envoy_config(args, backends, admin_port, access_log):
             "name": "envoy.load_balancing_policies.peak_ewma",
             "typed_config": {"@type": "type.googleapis.com/envoy.extensions.load_balancing_policies.peak_ewma.v3alpha."
                                       "PeakEwma"}}}]}
+    elif policy == "PEAK_EWMA_DEADLINE":  # the testbed's contrib extension, same binary (deadline_lb.h)
+        cluster["load_balancing_policy"] = {"policies": [{"typed_extension_config": {
+            "name": "envoy.load_balancing_policies.peak_ewma_deadline",
+            "typed_config": {"@type": "type.googleapis.com/envoy.extensions.load_balancing_policies."
+                                      "peak_ewma_deadline.v3alpha.PeakEwmaDeadline"}}}]}
     else:
         cluster["lb_policy"] = policy
     if policy == "LEAST_REQUEST":
@@ -104,7 +120,7 @@ def envoy_config(args, backends, admin_port, access_log):
     # Peak EWMA learns RTTs only through its HTTP filter, which must run before the router.
     http_filters = ([{"name": "envoy.filters.http.peak_ewma", "typed_config": {
         "@type": "type.googleapis.com/envoy.extensions.filters.http.peak_ewma.v3alpha.PeakEwmaConfig"}}]
-                    if policy == "PEAK_EWMA" else []) + [router]
+                    if policy in ("PEAK_EWMA", "PEAK_EWMA_DEADLINE") else []) + [router]
     hcm = {
         "@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3."
                  "HttpConnectionManager",
@@ -143,7 +159,7 @@ def main():
     concurrency = os.environ.get("GOMAXPROCS") or str(os.cpu_count() or 1)
     env = dict(os.environ)
     trace_prefix = out + ".peak_ewma"
-    if LB_POLICIES[args.lb_policy][0] == "PEAK_EWMA":  # Envoy's Peak EWMA trace (convert.merge_peak_ewma)
+    if cluster_policy(args)[0] in ("PEAK_EWMA", "PEAK_EWMA_DEADLINE"):  # Peak EWMA trace (convert.merge_peak_ewma)
         env["PEAK_EWMA_TRACE_PREFIX"] = trace_prefix
     envoy = subprocess.Popen([ENVOY, "--config-path", cfg_path, "--concurrency", concurrency,
                               "--use-dynamic-base-id", "-l", "warning", "--log-path", out + ".envoy.log"], env=env)
@@ -179,13 +195,14 @@ def main():
         envoy.wait()
     rows = convert.parse_access_log(access_log) if os.path.exists(access_log) else []
     run_start = convert.write_forwards(rows, backends, out + ".forwards.csv", float(args.ewma_beta))
-    updates, picks = convert.merge_peak_ewma(trace_prefix, backends, run_start, out)
-    if updates or picks:
-        print(f"ingress: Peak EWMA trace: {updates} EWMA updates, {picks} picks", flush=True)
+    trace = convert.merge_peak_ewma(trace_prefix, backends, run_start, out)
+    if any(trace.values()):
+        print("ingress: Peak EWMA trace: " + ", ".join(f"{len(v)} {k}" for k, v in trace.items() if v), flush=True)
+    counters = convert.filter_counts(trace["queue"]) if cluster_policy(args)[0] == "PEAK_EWMA_DEADLINE" else None
     config = {k: getattr(args, k) for k in vars(args)}
     config["backends"] = backends
-    convert.write_json(convert.ingress_summary(rows, backends, config, run_start, time.monotonic() - started),
-                       out + ".summary.json")
+    convert.write_json(convert.ingress_summary(rows, backends, config, run_start, time.monotonic() - started,
+                                               counters), out + ".summary.json")
     for name in ("cancels", "liveness", "picks"):  # outputs of components not implemented here: header only
         header = {"cancels": "arrival,cancel_id,client_id,server_id,target_seq,outcome,http_status,scheduled_ns,send_ns,end_ns",
                   "liveness": "t_ns,server_id,live",

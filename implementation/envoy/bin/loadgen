@@ -86,6 +86,9 @@ def main():
            "--max-pending-requests", str(args.n_waiting_requests),
            "--timeout", str(max(1, math.ceil(args.drain_timeout_ms / 1000))),
            "--request-source-plugin-config", json.dumps(source),
+           # The Go load generator never stops early: drop Nighthawk's default failure predicates (they end the run
+           # at the first 4xx/5xx, e.g. a DeadlineFilter drop's 503, or at the first pool failure or overflow).
+           "--no-default-failure-predicates",
            "--output-format", "json", "--verbosity", "warn"]
     env = dict(os.environ, NH_REQUEST_LOG_PREFIX=prefix, NH_POISSON_RATE=repr(args.global_rate / n),
                NH_POISSON_SEED=str(args.seed))
