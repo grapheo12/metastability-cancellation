@@ -37,6 +37,9 @@ class IngressConversion(unittest.TestCase):
             got = list(csv.reader(open(out)))
             self.assertEqual(",".join(got[0]), convert.FORWARDS_HEADER)
             # sorted by end time: server 0's ok ends at 0.5 s, server 1's rejected at 0.5 s too (stable), reset last
+            # EwmaLatency (beta 0.7, start 1 ms): server 0's ok moves it, the rejected and the reset do not
+            self.assertEqual([r[4] for r in got[1:]], [repr(1e6 * 0.7 + 399e6 * (1 - 0.7)), "1000000.0",
+                                                       repr(1e6 * 0.7 + 399e6 * (1 - 0.7))])
             self.assertEqual([(r[0], r[1], r[2], r[3]) for r in got[1:]],
                              [("500000000", "0", "ok", "399000000"), ("500000000", "1", "rejected", "498000000"),
                               ("2007000000", "0", "reset", "6000000")])

@@ -160,7 +160,7 @@ def main():
         envoy.kill()
         envoy.wait()
     rows = convert.parse_access_log(access_log) if os.path.exists(access_log) else []
-    run_start = convert.write_forwards(rows, backends, out + ".forwards.csv")
+    run_start = convert.write_forwards(rows, backends, out + ".forwards.csv", float(args.ewma_beta))
     config = {k: getattr(args, k) for k in vars(args)}
     config["backends"] = backends
     convert.write_json(convert.ingress_summary(rows, backends, config, run_start, time.monotonic() - started),

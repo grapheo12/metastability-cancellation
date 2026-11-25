@@ -60,9 +60,15 @@ def parse_access_log(path):
     return rows
 
 
-def write_forwards(rows, backends, path):
+EWMA_INITIAL_LATENCY_NS = 1_000_000  # abstraction/ingress/load_balancer/api.md#constants
+
+
+def write_forwards(rows, backends, path, ewma_beta=0.7):
     """forwards.csv (Go column order); returns run_start_unix_ns (the first request's start, 0 if none).
-    EWMA, exec and estimate columns are empty (no Envoy equivalent yet); attempt is 0 (no LbRetries)."""
+    ewma_latency_ns is the backend's EwmaLatency right after each forward, computed here from the log in end-time
+    order exactly as defined (abstraction/ingress/load_balancer/design.md#ewmalatency: ok forwards only, start
+    1 ms, weight ewma_beta on the old value); Envoy's own balancer does not use it. exec, ewma_exec and estimate
+    columns are empty (no ExecReport in Envoy's access log); attempt is 0 (no LbRetries)."""
     run_start = min((r[0] for r in rows), default=0)
     index = {b: i for i, b in enumerate(backends)}
     out = []
@@ -72,10 +78,13 @@ def write_forwards(rows, backends, path):
             continue
         out.append((end - run_start, sid, outcome, lat if lat is not None else end - start))
     out.sort(key=lambda r: r[0])
+    ewma = [float(EWMA_INITIAL_LATENCY_NS)] * len(backends)
     with open(path, "w", newline="") as f:
         f.write(FORWARDS_HEADER + "\n")
         for t, sid, outcome, lat in out:
-            f.write(f"{t},{sid},{outcome},{lat},,,,0,\n")
+            if outcome == "ok":
+                ewma[sid] = float(float(ewma[sid] * ewma_beta) + float(float(lat) * (1 - ewma_beta)))
+            f.write(f"{t},{sid},{outcome},{lat},{repr(ewma[sid])},,,0,\n")
     return run_start
 
 
