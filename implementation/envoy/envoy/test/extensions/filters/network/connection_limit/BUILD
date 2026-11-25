@@ -1,0 +1,47 @@
+load(
+    "//bazel:envoy_build_system.bzl",
+    "envoy_package",
+)
+load(
+    "//test/extensions:extensions_build_system.bzl",
+    "envoy_extension_cc_test",
+)
+
+licenses(["notice"])  # Apache 2
+
+envoy_package()
+
+envoy_extension_cc_test(
+    name = "connection_limit_test",
+    srcs = ["connection_limit_test.cc"],
+    extension_names = ["envoy.filters.network.connection_limit"],
+    rbe_pool = {"gcc": {"build": "linux_x64_small"}},
+    deps = [
+        "//source/extensions/filters/network/connection_limit:connection_limit_lib",
+        "//test/mocks/event:event_mocks",
+        "//test/mocks/network:network_mocks",
+        "//test/mocks/runtime:runtime_mocks",
+        "//test/test_common:utility_lib",
+        "@envoy_api//envoy/extensions/filters/network/connection_limit/v3:pkg_cc_proto",
+    ],
+)
+
+envoy_extension_cc_test(
+    name = "connection_limit_integration_test",
+    size = "large",
+    srcs = ["connection_limit_integration_test.cc"],
+    extension_names = ["envoy.filters.network.connection_limit"],
+    rbe_pool = {
+        "tsan": {"build": "linux_x64_small"},
+        "gcc": {"build": "linux_x64_small"},
+    },
+    deps = [
+        "//source/common/config:well_known_names",
+        "//source/common/runtime:runtime_features_lib",
+        "//source/common/stats:thread_local_store_lib",
+        "//source/extensions/filters/network/connection_limit:config",
+        "//source/extensions/filters/network/tcp_proxy:config",
+        "//test/integration:integration_lib",
+        "//test/test_common:simulated_time_system_lib",
+    ],
+)

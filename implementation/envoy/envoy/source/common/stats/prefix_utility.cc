@@ -1,0 +1,118 @@
+#include "source/common/stats/prefix_utility.h"
+
+#include <initializer_list>
+#include <optional>
+#include <string>
+
+#include "source/common/common/assert.h"
+#include "source/common/config/well_known_names.h"
+
+#include "absl/container/inlined_vector.h"
+#include "absl/strings/match.h"
+#include "absl/strings/str_cat.h"
+
+namespace Envoy {
+namespace Stats {
+
+namespace {
+
+constexpr absl::string_view HTTP_PREFIX = "http.";
+constexpr absl::string_view CLUSTER_PREFIX = "cluster.";
+constexpr absl::string_view THRIFT_PREFIX = "thrift.";
+constexpr absl::string_view REDIS_PREFIX = "redis.";
+
+// Extracts the parent prefix's single tag: "http.<x>." -> {HTTP_CONN_MANAGER_PREFIX, x},
+// "cluster.<x>." -> {CLUSTER_NAME, x}, "thrift.<x>." -> {THRIFT_PREFIX, x}, "redis.<x>." ->
+// {REDIS_PREFIX, x}, anything else -> none. The trailing dot is stripped first. `prefix` must
+// outlive the returned value.
+std::optional<TagStringView> extractParentTag(absl::string_view prefix) {
+  if (!absl::EndsWith(prefix, ".")) {
+    return std::nullopt;
+  }
+  prefix.remove_suffix(1);
+
+  if (absl::StartsWith(prefix, HTTP_PREFIX)) {
+    return TagStringView{Envoy::Config::TagNames::get().HTTP_CONN_MANAGER_PREFIX,
+                         prefix.substr(HTTP_PREFIX.size())};
+  }
+  if (absl::StartsWith(prefix, CLUSTER_PREFIX)) {
+    return TagStringView{Envoy::Config::TagNames::get().CLUSTER_NAME,
+                         prefix.substr(CLUSTER_PREFIX.size())};
+  }
+  if (absl::StartsWith(prefix, REDIS_PREFIX)) {
+    return TagStringView{Envoy::Config::TagNames::get().REDIS_PREFIX,
+                         prefix.substr(REDIS_PREFIX.size())};
+  }
+  if (absl::StartsWith(prefix, THRIFT_PREFIX)) {
+    return TagStringView{Envoy::Config::TagNames::get().THRIFT_PREFIX,
+                         prefix.substr(THRIFT_PREFIX.size())};
+  }
+  return std::nullopt;
+}
+
+} // namespace
+
+TaggedStatName mergeStatPrefix(SymbolTable& symbol_table, absl::string_view prefix,
+                               absl::string_view base_name, TagStringViewSpan tags,
+                               absl::string_view name, bool sanitize) {
+  // With no own tags the own prefix has no variable segment, so its tagged and tag-extracted forms
+  // are identical; callers need only supply base_name.
+  if (tags.empty()) {
+    name = base_name;
+  } else {
+    ASSERT(!name.empty(), "When tags are supplied, the caller must supply the tagged name with the "
+                          "tag values interleaved.");
+  }
+
+  absl::InlinedVector<TagStringView, 2> merged_tags;
+
+  // The parent (HCM/cluster) prefix contributes at most one tag; the tag-extracted base then uses
+  // just its root ("http"/"cluster"). An unrecognized parent is kept verbatim and untagged.
+  absl::string_view base_prefix = prefix;
+  const std::optional<TagStringView> prefix_tag = extractParentTag(prefix);
+  if (prefix_tag.has_value()) {
+    merged_tags.push_back(*prefix_tag);
+    ASSERT(prefix.find('.') != absl::string_view::npos);
+    // Keep the trailing dot of the base part of the parent prefix, so that the final base is
+    // "<base_prefix><base_name>".
+    base_prefix = prefix.substr(0, prefix.find('.') + 1);
+  }
+  merged_tags.insert(merged_tags.end(), tags.begin(), tags.end());
+
+  // This helper function assumes the caller has already handled the dot correctly and then we can
+  // concatenate the two prefixes directly. When sanitizing, the TaggedStatName also removes any
+  // leading or trailing dot of the name, base, and tags.
+  const std::string tagged = absl::StrCat(prefix, name);
+
+  // When no tag is contributed (neither the parent prefix nor the input tags), base_prefix is the
+  // full parent prefix and name equals base_name, so the base and tagged forms are identical; reuse
+  // the tagged name instead of building an identical base string.
+  if (merged_tags.empty()) {
+    ASSERT(tagged == absl::StrCat(base_prefix, base_name));
+    return {symbol_table, tagged, merged_tags, tagged, sanitize};
+  }
+  const std::string base = absl::StrCat(base_prefix, base_name);
+  return {symbol_table, base, merged_tags, tagged, sanitize};
+}
+
+TaggedStatName workerStatPrefix(SymbolTable& symbol_table, absl::string_view prefix,
+                                absl::string_view name, absl::string_view suffix) {
+  static constexpr absl::string_view worker_prefix = "worker_";
+  if (!absl::StartsWith(name, worker_prefix)) {
+    // Not a worker thread: the name stays a plain segment of the untagged prefix.
+    return {symbol_table,
+            name.empty() ? absl::StrCat(prefix, suffix) : absl::StrCat(prefix, name, ".", suffix),
+            {},
+            {}};
+  }
+
+  absl::string_view worker_id_value = name.substr(worker_prefix.size());
+  const TagStringView tag{Envoy::Config::TagNames::get().WORKER_ID, worker_id_value};
+  return {symbol_table,
+          absl::StrCat(prefix, "worker", ".", suffix),
+          {tag},
+          absl::StrCat(prefix, name, ".", suffix)};
+}
+
+} // namespace Stats
+} // namespace Envoy

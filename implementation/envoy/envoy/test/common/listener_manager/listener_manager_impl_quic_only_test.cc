@@ -1,0 +1,1155 @@
+#include "envoy/config/core/v3/base.pb.h"
+#include "envoy/config/listener/v3/listener.pb.h"
+
+#include "source/common/protobuf/protobuf.h"
+#include "source/common/quic/quic_packet_writer_interface.h"
+#include "source/common/quic/quic_server_transport_socket_factory.h"
+
+#include "test/common/listener_manager/listener_manager_impl_test.h"
+#include "test/common/quic/mock_quic_connection_id_generator_factory.h"
+#include "test/integration/filters/test_listener_filter.h"
+#include "test/mocks/init/mocks.h"
+#include "test/mocks/network/mocks.h"
+#include "test/server/utility.h"
+#include "test/test_common/registry.h"
+#include "test/test_common/threadsafe_singleton_injector.h"
+
+namespace Envoy {
+namespace Server {
+namespace {
+
+using ::testing::Return;
+
+class FakeQuicPacketWriterFactory : public Quic::QuicPacketWriterFactory {
+public:
+  Quic::QuicPacketWriterPtr createQuicPacketWriter(Network::IoHandle&, Stats::Scope&,
+                                                   Event::Dispatcher&, absl::AnyInvocable<void()>,
+                                                   uint32_t) override {
+    return nullptr;
+  }
+};
+
+class FakeQuicPacketWriterFactoryFactory : public Quic::QuicPacketWriterFactoryFactory {
+public:
+  Quic::QuicPacketWriterFactoryPtr
+  createQuicPacketWriterFactory(const envoy::config::core::v3::TypedExtensionConfig&,
+                                Server::Configuration::ListenerFactoryContext&) override {
+    return std::make_unique<FakeQuicPacketWriterFactory>();
+  }
+
+  ProtobufTypes::MessagePtr createEmptyConfigProto() override {
+    return std::make_unique<Protobuf::Struct>();
+  }
+
+  std::string name() const override { return "envoy.test.quic_packet_writer"; }
+};
+
+class MockSupportsUdpGso : public Api::OsSysCallsImpl {
+public:
+  MOCK_METHOD(bool, supportsUdpGso, (), (const));
+};
+
+class ListenerManagerImplQuicOnlyTest : public ListenerManagerImplTest {
+public:
+  size_t expectedNumSocketOptions() {
+    // SO_REUSEPORT and IP_PKTINFO.
+    const size_t num_platform_independent_socket_options = 2;
+    size_t num_platform_dependent_socket_options = 0;
+#if defined(ENVOY_IP_DONTFRAG) || defined(ENVOY_IP_MTU_DISCOVER)
+    // IP_DONTFRAG or IP_MTU_DISCOVER.
+    if (Runtime::runtimeFeatureEnabled("envoy.reloadable_features.udp_set_do_not_fragment")) {
+      ++num_platform_dependent_socket_options;
+    }
+#endif
+#ifdef SO_RXQ_OVFL
+    ++num_platform_dependent_socket_options;
+#endif
+    if (Api::OsSysCallsSingleton::get().supportsUdpGro()) {
+      // SO_REUSEPORT
+      ++num_platform_dependent_socket_options;
+    }
+    return num_platform_dependent_socket_options + num_platform_independent_socket_options;
+  }
+
+  NiceMock<MockSupportsUdpGso> udp_gso_syscall_;
+  TestThreadsafeSingletonInjector<Api::OsSysCallsImpl> os_calls{&udp_gso_syscall_};
+  Api::OsSysCallsImpl os_sys_calls_actual_;
+};
+
+#if defined(ENVOY_ENABLE_QUIC)
+std::string getBasicConfig() {
+  std::string yaml = TestEnvironment::substitute(R"EOF(
+address:
+  socket_address:
+    address: 127.0.0.1
+    protocol: UDP
+    port_value: 1234
+filter_chains:
+- filter_chain_match:
+    transport_protocol: "quic"
+  name: foo
+  filters:
+  - name: envoy.filters.network.http_connection_manager
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+      codec_type: HTTP3
+      stat_prefix: hcm
+      route_config:
+        name: local_route
+      http_filters:
+        - name: envoy.filters.http.router
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  transport_socket:
+    name: envoy.transport_sockets.quic
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.transport_sockets.quic.v3.QuicDownstreamTransport
+      downstream_tls_context:
+        common_tls_context:
+          tls_certificates:
+          - certificate_chain:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/san_uri_cert.pem"
+            private_key:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/san_uri_key.pem"
+          validation_context:
+            trusted_ca:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/ca_cert.pem"
+            match_typed_subject_alt_names:
+            - matcher:
+                exact: localhost
+              san_type: URI
+            - matcher:
+                exact: 127.0.0.1
+              san_type: IP_ADDRESS
+udp_listener_config:
+  quic_options: {}
+  )EOF",
+                                                 Network::Address::IpVersion::v4);
+  return yaml;
+}
+TEST_P(ListenerManagerImplQuicOnlyTest, QuicListenerFactoryAndSslContext) {
+  std::string yaml = getBasicConfig();
+  if (use_matcher_) {
+    yaml = yaml + R"EOF(
+filter_chain_matcher:
+  matcher_tree:
+    input:
+      name: transport
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.matching.common_inputs.network.v3.TransportProtocolInput
+    exact_match_map:
+      map:
+        "quic":
+          action:
+            name: foo
+            typed_config:
+              "@type": type.googleapis.com/google.protobuf.StringValue
+              value: foo
+    )EOF";
+  }
+
+  envoy::config::listener::v3::Listener listener_proto = parseListenerFromV3Yaml(yaml);
+  listener_proto.mutable_udp_listener_config()
+      ->mutable_downstream_socket_config()
+      ->mutable_prefer_gro()
+      ->set_value(true);
+  ON_CALL(udp_gso_syscall_, supportsUdpGso())
+      .WillByDefault(Return(os_sys_calls_actual_.supportsUdpGso()));
+  EXPECT_CALL(server_.api_.random_, uuid());
+  expectCreateListenSocket(envoy::config::core::v3::SocketOption::STATE_PREBIND,
+                           expectedNumSocketOptions(),
+                           ListenerComponentFactory::BindType::ReusePort);
+
+  expectSetsockopt(/* expected_sockopt_level */ IPPROTO_IP,
+                   /* expected_sockopt_name */ ENVOY_IP_PKTINFO,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#ifdef SO_RXQ_OVFL
+  expectSetsockopt(/* expected_sockopt_level */ SOL_SOCKET,
+                   /* expected_sockopt_name */ SO_RXQ_OVFL,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#endif
+  expectSetsockopt(/* expected_sockopt_level */ SOL_SOCKET,
+                   /* expected_sockopt_name */ SO_REUSEPORT,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#ifdef UDP_GRO
+  if (Api::OsSysCallsSingleton::get().supportsUdpGro()) {
+    expectSetsockopt(/* expected_sockopt_level */ SOL_UDP,
+                     /* expected_sockopt_name */ UDP_GRO,
+                     /* expected_value */ 1,
+                     /* expected_num_calls */ 1);
+  }
+#endif
+
+#ifdef ENVOY_IP_DONTFRAG
+  expectSetsockopt(/* expected_sockopt_level */ IPPROTO_IP,
+                   /* expected_sockopt_name */ IP_DONTFRAG,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#elif defined(ENVOY_IP_MTU_DISCOVER)
+  expectSetsockopt(/* expected_sockopt_level */ IPPROTO_IP,
+                   /* expected_sockopt_name */ IP_MTU_DISCOVER,
+                   /* expected_value */ IP_PMTUDISC_DO,
+                   /* expected_num_calls */ 1);
+#endif
+
+  addOrUpdateListener(listener_proto);
+  EXPECT_EQ(1u, manager_->listeners().size());
+  EXPECT_FALSE(manager_->listeners()[0]
+                   .get()
+                   .udpListenerConfig()
+                   ->listenerFactory()
+                   .isTransportConnectionless());
+  Network::SocketSharedPtr listen_socket =
+      manager_->listeners().front().get().listenSocketFactories()[0]->getListenSocket(0);
+
+  Network::UdpPacketWriterPtr udp_packet_writer =
+      manager_->listeners()
+          .front()
+          .get()
+          .udpListenerConfig()
+          ->packetWriterFactory()
+          .createUdpPacketWriter(listen_socket->ioHandle(),
+                                 manager_->listeners()[0].get().listenerScope(),
+                                 server_.dispatcher_, []() {});
+  EXPECT_EQ(udp_packet_writer->isBatchMode(), Api::OsSysCallsSingleton::get().supportsUdpGso());
+
+  // No filter chain found with non-matching transport protocol.
+  EXPECT_EQ(nullptr, findFilterChain(1234, "127.0.0.1", "", "tls", {}, "8.8.8.8", 111));
+
+  auto filter_chain = findFilterChain(1234, "127.0.0.1", "", "quic", {}, "8.8.8.8", 111);
+  ASSERT_NE(nullptr, filter_chain);
+  auto& quic_socket_factory = dynamic_cast<const Quic::QuicServerTransportSocketFactory&>(
+      filter_chain->transportSocketFactory());
+  EXPECT_TRUE(quic_socket_factory.implementsSecureTransport());
+  auto [cert, key] = quic_socket_factory.getTlsCertificateAndKey("", nullptr);
+  EXPECT_TRUE(cert != nullptr);
+  EXPECT_TRUE(key != nullptr);
+  EXPECT_TRUE(listener_factory_.socket_->socket_is_open_);
+
+  // Stop listening shouldn't close the socket.
+  EXPECT_CALL(server_.dispatcher_, post(_)).WillOnce([](Event::PostCb callback) { callback(); });
+  EXPECT_CALL(*worker_, stopListener(_, _, _))
+      .WillOnce([](Network::ListenerConfig&, const Network::ExtraShutdownListenerOptions&,
+                   std::function<void()> completion) { completion(); });
+  manager_->stopListeners(ListenerManager::StopListenersType::All, {});
+  EXPECT_CALL(*listener_factory_.socket_, close()).Times(0u);
+  EXPECT_TRUE(listener_factory_.socket_->socket_is_open_);
+}
+
+TEST_P(ListenerManagerImplQuicOnlyTest, QuicWriterFromConfig) {
+  std::string yaml = getBasicConfig();
+  yaml = yaml + R"EOF(
+  udp_packet_packet_writer_config:
+    name: envoy.udp_packet_writer.default
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.udp_packet_writer.v3.UdpDefaultWriterFactory
+  )EOF";
+
+  envoy::config::listener::v3::Listener listener_proto = parseListenerFromV3Yaml(yaml);
+  // Configure GSO support but later verify that the default writer is used instead.
+  ON_CALL(udp_gso_syscall_, supportsUdpGso()).WillByDefault(Return(true));
+  EXPECT_CALL(server_.api_.random_, uuid());
+  expectCreateListenSocket(envoy::config::core::v3::SocketOption::STATE_PREBIND,
+                           expectedNumSocketOptions(),
+                           ListenerComponentFactory::BindType::ReusePort);
+
+  expectSetsockopt(/* expected_sockopt_level */ IPPROTO_IP,
+                   /* expected_sockopt_name */ ENVOY_IP_PKTINFO,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#ifdef SO_RXQ_OVFL
+  expectSetsockopt(/* expected_sockopt_level */ SOL_SOCKET,
+                   /* expected_sockopt_name */ SO_RXQ_OVFL,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#endif
+  expectSetsockopt(/* expected_sockopt_level */ SOL_SOCKET,
+                   /* expected_sockopt_name */ SO_REUSEPORT,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#ifdef UDP_GRO
+  if (Api::OsSysCallsSingleton::get().supportsUdpGro()) {
+    expectSetsockopt(/* expected_sockopt_level */ SOL_UDP,
+                     /* expected_sockopt_name */ UDP_GRO,
+                     /* expected_value */ 0,
+                     /* expected_num_calls */ 1);
+  }
+#endif
+
+#ifdef ENVOY_IP_DONTFRAG
+  expectSetsockopt(/* expected_sockopt_level */ IPPROTO_IP,
+                   /* expected_sockopt_name */ IP_DONTFRAG,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#elif defined(ENVOY_IP_MTU_DISCOVER)
+  expectSetsockopt(/* expected_sockopt_level */ IPPROTO_IP,
+                   /* expected_sockopt_name */ IP_MTU_DISCOVER,
+                   /* expected_value */ IP_PMTUDISC_DO,
+                   /* expected_num_calls */ 1);
+#endif
+
+  addOrUpdateListener(listener_proto);
+  EXPECT_EQ(1u, manager_->listeners().size());
+  EXPECT_FALSE(manager_->listeners()[0]
+                   .get()
+                   .udpListenerConfig()
+                   ->listenerFactory()
+                   .isTransportConnectionless());
+  Network::SocketSharedPtr listen_socket =
+      manager_->listeners().front().get().listenSocketFactories()[0]->getListenSocket(0);
+
+  Network::UdpPacketWriterFactory& udp_packet_writer_factory =
+      manager_->listeners().front().get().udpListenerConfig()->packetWriterFactory();
+  Network::UdpPacketWriterPtr udp_packet_writer = udp_packet_writer_factory.createUdpPacketWriter(
+      listen_socket->ioHandle(), manager_->listeners()[0].get().listenerScope(),
+      server_.dispatcher_, []() {});
+  // Even though GSO is enabled, the default writer should be used.
+  EXPECT_EQ(false, udp_packet_writer->isBatchMode());
+}
+
+TEST_P(ListenerManagerImplQuicOnlyTest, QuicPacketWriterFactoryFromConfig) {
+  FakeQuicPacketWriterFactoryFactory factory;
+  Registry::InjectFactory<Quic::QuicPacketWriterFactoryFactory> registered(factory);
+
+  std::string yaml = getBasicConfig();
+  yaml = yaml + R"EOF(
+  udp_packet_packet_writer_config:
+    name: envoy.test.quic_packet_writer
+    typed_config:
+      "@type": type.googleapis.com/google.protobuf.Struct
+  )EOF";
+
+  envoy::config::listener::v3::Listener listener_proto = parseListenerFromV3Yaml(yaml);
+  EXPECT_CALL(server_.api_.random_, uuid());
+  expectCreateListenSocket(envoy::config::core::v3::SocketOption::STATE_PREBIND,
+                           expectedNumSocketOptions(),
+                           ListenerComponentFactory::BindType::ReusePort);
+
+  expectSetsockopt(/* expected_sockopt_level */ IPPROTO_IP,
+                   /* expected_sockopt_name */ ENVOY_IP_PKTINFO,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#ifdef SO_RXQ_OVFL
+  expectSetsockopt(/* expected_sockopt_level */ SOL_SOCKET,
+                   /* expected_sockopt_name */ SO_RXQ_OVFL,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#endif
+  expectSetsockopt(/* expected_sockopt_level */ SOL_SOCKET,
+                   /* expected_sockopt_name */ SO_REUSEPORT,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#ifdef UDP_GRO
+  if (Api::OsSysCallsSingleton::get().supportsUdpGro()) {
+    expectSetsockopt(/* expected_sockopt_level */ SOL_UDP,
+                     /* expected_sockopt_name */ UDP_GRO,
+                     /* expected_value */ 0,
+                     /* expected_num_calls */ 1);
+  }
+#endif
+
+#ifdef ENVOY_IP_DONTFRAG
+  expectSetsockopt(/* expected_sockopt_level */ IPPROTO_IP,
+                   /* expected_sockopt_name */ IP_DONTFRAG,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#elif defined(ENVOY_IP_MTU_DISCOVER)
+  expectSetsockopt(/* expected_sockopt_level */ IPPROTO_IP,
+                   /* expected_sockopt_name */ IP_MTU_DISCOVER,
+                   /* expected_value */ IP_PMTUDISC_DO,
+                   /* expected_num_calls */ 1);
+#endif
+
+  addOrUpdateListener(listener_proto);
+  EXPECT_EQ(1u, manager_->listeners().size());
+  EXPECT_NE(nullptr, manager_->listeners()[0].get().udpListenerConfig()->quicPacketWriterFactory());
+}
+
+TEST_P(ListenerManagerImplQuicOnlyTest, QuicListenerFactoryWithExplictConnectionIdConfig) {
+  const std::string yaml = TestEnvironment::substitute(R"EOF(
+address:
+  socket_address:
+    address: 127.0.0.1
+    protocol: UDP
+    port_value: 1234
+filter_chains:
+- filter_chain_match:
+    transport_protocol: "quic"
+  name: foo
+  filters:
+  - name: envoy.filters.network.http_connection_manager
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+      codec_type: HTTP3
+      stat_prefix: hcm
+      route_config:
+        name: local_route
+      http_filters:
+        - name: envoy.filters.http.router
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  transport_socket:
+    name: envoy.transport_sockets.quic
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.transport_sockets.quic.v3.QuicDownstreamTransport
+      downstream_tls_context:
+        common_tls_context:
+          tls_certificates:
+          - certificate_chain:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/san_uri_cert.pem"
+            private_key:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/san_uri_key.pem"
+          validation_context:
+            trusted_ca:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/ca_cert.pem"
+            match_typed_subject_alt_names:
+            - matcher:
+                exact: localhost
+              san_type: URI
+            - matcher:
+                exact: 127.0.0.1
+              san_type: IP_ADDRESS
+udp_listener_config:
+  quic_options:
+    connection_id_generator_config:
+      name: envoy.quic.deterministic_connection_id_generator
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.quic.connection_id_generator.v3.DeterministicConnectionIdGeneratorConfig
+  )EOF",
+                                                       Network::Address::IpVersion::v4);
+
+  envoy::config::listener::v3::Listener listener_proto = parseListenerFromV3Yaml(yaml);
+  // Configure GSO support but later verify that the default writer is used instead.
+  ON_CALL(udp_gso_syscall_, supportsUdpGso()).WillByDefault(Return(true));
+  EXPECT_CALL(server_.api_.random_, uuid());
+  expectCreateListenSocket(envoy::config::core::v3::SocketOption::STATE_PREBIND,
+                           expectedNumSocketOptions(),
+                           ListenerComponentFactory::BindType::ReusePort);
+
+  expectSetsockopt(/* expected_sockopt_level */ IPPROTO_IP,
+                   /* expected_sockopt_name */ ENVOY_IP_PKTINFO,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#ifdef SO_RXQ_OVFL
+  expectSetsockopt(/* expected_sockopt_level */ SOL_SOCKET,
+                   /* expected_sockopt_name */ SO_RXQ_OVFL,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#endif
+  expectSetsockopt(/* expected_sockopt_level */ SOL_SOCKET,
+                   /* expected_sockopt_name */ SO_REUSEPORT,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#ifdef UDP_GRO
+  if (Api::OsSysCallsSingleton::get().supportsUdpGro()) {
+    expectSetsockopt(/* expected_sockopt_level */ SOL_UDP,
+                     /* expected_sockopt_name */ UDP_GRO,
+                     /* expected_value */ 0,
+                     /* expected_num_calls */ 1);
+  }
+#endif
+
+#ifdef ENVOY_IP_DONTFRAG
+  expectSetsockopt(/* expected_sockopt_level */ IPPROTO_IP,
+                   /* expected_sockopt_name */ IP_DONTFRAG,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#elif defined(ENVOY_IP_MTU_DISCOVER)
+  expectSetsockopt(/* expected_sockopt_level */ IPPROTO_IP,
+                   /* expected_sockopt_name */ IP_MTU_DISCOVER,
+                   /* expected_value */ IP_PMTUDISC_DO,
+                   /* expected_num_calls */ 1);
+#endif
+
+  addOrUpdateListener(listener_proto);
+  EXPECT_EQ(1u, manager_->listeners().size());
+  EXPECT_FALSE(manager_->listeners()[0]
+                   .get()
+                   .udpListenerConfig()
+                   ->listenerFactory()
+                   .isTransportConnectionless());
+}
+
+TEST_P(ListenerManagerImplQuicOnlyTest, QuicListenerFilterFromConfig) {
+  std::string yaml = getBasicConfig();
+  yaml = yaml + R"EOF(
+listener_filters:
+- name: envoy.filters.quic_listener.test
+  typed_config:
+    "@type": type.googleapis.com/test.integration.filters.TestQuicListenerFilterConfig
+    added_value: xyz
+  )EOF";
+
+  envoy::config::listener::v3::Listener listener_proto = parseListenerFromV3Yaml(yaml);
+  // Configure GSO support but later verify that the default writer is used instead.
+  ON_CALL(udp_gso_syscall_, supportsUdpGso()).WillByDefault(Return(true));
+  EXPECT_CALL(server_.api_.random_, uuid());
+  expectCreateListenSocket(envoy::config::core::v3::SocketOption::STATE_PREBIND,
+                           expectedNumSocketOptions(),
+                           ListenerComponentFactory::BindType::ReusePort);
+
+  expectSetsockopt(/* expected_sockopt_level */ IPPROTO_IP,
+                   /* expected_sockopt_name */ ENVOY_IP_PKTINFO,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#ifdef SO_RXQ_OVFL
+  expectSetsockopt(/* expected_sockopt_level */ SOL_SOCKET,
+                   /* expected_sockopt_name */ SO_RXQ_OVFL,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#endif
+  expectSetsockopt(/* expected_sockopt_level */ SOL_SOCKET,
+                   /* expected_sockopt_name */ SO_REUSEPORT,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#ifdef UDP_GRO
+  if (Api::OsSysCallsSingleton::get().supportsUdpGro()) {
+    expectSetsockopt(/* expected_sockopt_level */ SOL_UDP,
+                     /* expected_sockopt_name */ UDP_GRO,
+                     /* expected_value */ 0,
+                     /* expected_num_calls */ 1);
+  }
+#endif
+
+#ifdef ENVOY_IP_DONTFRAG
+  expectSetsockopt(/* expected_sockopt_level */ IPPROTO_IP,
+                   /* expected_sockopt_name */ IP_DONTFRAG,
+                   /* expected_value */ 1,
+                   /* expected_num_calls */ 1);
+#elif defined(ENVOY_IP_MTU_DISCOVER)
+  expectSetsockopt(/* expected_sockopt_level */ IPPROTO_IP,
+                   /* expected_sockopt_name */ IP_MTU_DISCOVER,
+                   /* expected_value */ IP_PMTUDISC_DO,
+                   /* expected_num_calls */ 1);
+#endif
+
+  addOrUpdateListener(listener_proto);
+  EXPECT_EQ(1u, manager_->listeners().size());
+  // Verify that the right filter chain type is installed.
+  Network::MockQuicListenerFilterManager filter_manager;
+  Network::QuicListenerFilterPtr listener_filter;
+  EXPECT_CALL(filter_manager, addFilter(_, _))
+      .WillOnce([&listener_filter](const Network::ListenerFilterMatcherSharedPtr&,
+                                   Network::QuicListenerFilterPtr&& filter) {
+        listener_filter = std::move(filter);
+      });
+  manager_->listeners()[0].get().filterChainFactory().createQuicListenerFilterChain(filter_manager);
+  ASSERT_NE(nullptr, listener_filter);
+  Network::MockListenerFilterCallbacks callbacks;
+  EXPECT_CALL(callbacks, filterState()).Times(2);
+  EXPECT_CALL(callbacks, dispatcher()).WillOnce(ReturnRef(server_.dispatcher_));
+  listener_filter->onAccept(callbacks);
+  auto* added_filter_state =
+      callbacks.filter_state_.getDataReadOnly<TestQuicListenerFilter::TestStringFilterState>(
+          TestQuicListenerFilter::TestStringFilterState::key());
+  ASSERT_NE(nullptr, added_filter_state);
+  EXPECT_EQ("xyz", added_filter_state->asString());
+}
+
+#endif
+
+TEST_P(ListenerManagerImplQuicOnlyTest, QuicListenerFactoryWithWrongTransportSocket) {
+  const std::string yaml = TestEnvironment::substitute(R"EOF(
+address:
+  socket_address:
+    address: 127.0.0.1
+    protocol: UDP
+    port_value: 1234
+filter_chains:
+- filter_chain_match:
+    transport_protocol: "quic"
+  name: foo
+  filters: []
+  transport_socket:
+    name: envoy.transport_sockets.quic
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+      common_tls_context:
+        tls_certificates:
+        - certificate_chain:
+            filename: "{{ test_rundir }}/test/common/tls/test_data/san_uri_cert.pem"
+          private_key:
+            filename: "{{ test_rundir }}/test/common/tls/test_data/san_uri_key.pem"
+        validation_context:
+          trusted_ca:
+            filename: "{{ test_rundir }}/test/common/tls/test_data/ca_cert.pem"
+          match_typed_subject_alt_names:
+          - matcher:
+              exact: localhost
+            san_type: URI
+          - matcher:
+              exact: 127.0.0.1
+            san_type: IP_ADDRESS
+udp_listener_config:
+  quic_options: {}
+  )EOF",
+                                                       Network::Address::IpVersion::v4);
+
+  envoy::config::listener::v3::Listener listener_proto = parseListenerFromV3Yaml(yaml);
+
+#if defined(ENVOY_ENABLE_QUIC)
+  EXPECT_THROW_WITH_REGEX(addOrUpdateListener(listener_proto), EnvoyException,
+                          "wrong transport socket config specified for quic transport socket");
+#else
+  EXPECT_THROW_WITH_REGEX(addOrUpdateListener(listener_proto), EnvoyException,
+                          "QUIC is configured but not enabled in the build.");
+#endif
+}
+
+TEST_P(ListenerManagerImplQuicOnlyTest, QuicListenerFactoryWithWrongCodec) {
+  const std::string yaml = TestEnvironment::substitute(R"EOF(
+address:
+  socket_address:
+    address: 127.0.0.1
+    protocol: UDP
+    port_value: 1234
+filter_chains:
+- filter_chain_match:
+    transport_protocol: "quic"
+  name: foo
+  filters: []
+  transport_socket:
+    name: envoy.transport_sockets.quic
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.transport_sockets.quic.v3.QuicDownstreamTransport
+      downstream_tls_context:
+        common_tls_context:
+          tls_certificates:
+          - certificate_chain:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/san_uri_cert.pem"
+            private_key:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/san_uri_key.pem"
+          validation_context:
+            trusted_ca:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/ca_cert.pem"
+            match_typed_subject_alt_names:
+            - matcher:
+                exact: localhost
+              san_type: URI
+            - matcher:
+                exact: 127.0.0.1
+              san_type: IP_ADDRESS
+udp_listener_config:
+  quic_options: {}
+  )EOF",
+                                                       Network::Address::IpVersion::v4);
+
+  envoy::config::listener::v3::Listener listener_proto = parseListenerFromV3Yaml(yaml);
+
+#if defined(ENVOY_ENABLE_QUIC)
+  EXPECT_THROW_WITH_REGEX(addOrUpdateListener(listener_proto), EnvoyException,
+                          "error building network filter chain for quic listener: requires "
+                          "http_connection_manager filter to be last in the chain.");
+#else
+  EXPECT_THROW_WITH_REGEX(addOrUpdateListener(listener_proto), EnvoyException,
+                          "QUIC is configured but not enabled in the build.");
+#endif
+}
+
+TEST_P(ListenerManagerImplQuicOnlyTest, QuicListenerFactoryWithNetworkFilterAfterHcm) {
+  std::string yaml = TestEnvironment::substitute(R"EOF(
+address:
+  socket_address:
+    address: 127.0.0.1
+    protocol: UDP
+    port_value: 1234
+filter_chains:
+- filter_chain_match:
+    transport_protocol: "quic"
+  name: foo
+  filters:
+  - name: envoy.filters.network.http_connection_manager
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+      codec_type: HTTP3
+      stat_prefix: hcm
+      route_config:
+        name: local_route
+      http_filters:
+        - name: envoy.filters.http.router
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  - name: envoy.test.test_network_filter
+    typed_config:
+      "@type": type.googleapis.com/test.integration.filters.TestNetworkFilterConfig
+  transport_socket:
+    name: envoy.transport_sockets.quic
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.transport_sockets.quic.v3.QuicDownstreamTransport
+      downstream_tls_context:
+        common_tls_context:
+          tls_certificates:
+          - certificate_chain:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/san_uri_cert.pem"
+            private_key:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/san_uri_key.pem"
+          validation_context:
+            trusted_ca:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/ca_cert.pem"
+            match_typed_subject_alt_names:
+            - matcher:
+                exact: localhost
+              san_type: URI
+            - matcher:
+                exact: 127.0.0.1
+              san_type: IP_ADDRESS
+udp_listener_config:
+  quic_options: {}
+  )EOF",
+                                                 Network::Address::IpVersion::v4);
+  envoy::config::listener::v3::Listener listener_proto = parseListenerFromV3Yaml(yaml);
+
+#if defined(ENVOY_ENABLE_QUIC)
+  EXPECT_THROW_WITH_REGEX(addOrUpdateListener(listener_proto), EnvoyException,
+                          "error building network filter chain for quic listener: requires "
+                          "http_connection_manager filter to be last in the chain.");
+#else
+  EXPECT_THROW_WITH_REGEX(addOrUpdateListener(listener_proto), EnvoyException,
+                          "QUIC is configured but not enabled in the build.");
+#endif
+}
+
+TEST_P(ListenerManagerImplQuicOnlyTest, QuicListenerFactoryWithConnectionBalencer) {
+  const std::string yaml = TestEnvironment::substitute(R"EOF(
+address:
+  socket_address:
+    address: 127.0.0.1
+    protocol: UDP
+    port_value: 1234
+filter_chains:
+- filter_chain_match:
+    transport_protocol: "quic"
+  name: foo
+  filters:
+  - name: envoy.filters.network.http_connection_manager
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+      codec_type: HTTP3
+      stat_prefix: hcm
+      route_config:
+        name: local_route
+      http_filters:
+        - name: envoy.filters.http.router
+  transport_socket:
+    name: envoy.transport_sockets.quic
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.transport_sockets.quic.v3.QuicDownstreamTransport
+      downstream_tls_context:
+        common_tls_context:
+          tls_certificates:
+          - certificate_chain:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/san_uri_cert.pem"
+            private_key:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/san_uri_key.pem"
+          validation_context:
+            trusted_ca:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/ca_cert.pem"
+            match_typed_subject_alt_names:
+            - matcher:
+                exact: localhost
+              san_type: URI
+            - matcher:
+                exact: 127.0.0.1
+              san_type: IP_ADDRESS
+udp_listener_config:
+  quic_options: {}
+connection_balance_config:
+  exact_balance: {}
+  )EOF",
+                                                       Network::Address::IpVersion::v4);
+
+  envoy::config::listener::v3::Listener listener_proto = parseListenerFromV3Yaml(yaml);
+
+#if defined(ENVOY_ENABLE_QUIC)
+  EXPECT_THROW_WITH_REGEX(addOrUpdateListener(listener_proto), EnvoyException,
+                          "connection_balance_config is configured for QUIC listener which doesn't "
+                          "work with connection balancer.");
+#else
+  EXPECT_THROW_WITH_REGEX(addOrUpdateListener(listener_proto), EnvoyException,
+                          "QUIC is configured but not enabled in the build.");
+#endif
+}
+
+TEST_P(ListenerManagerImplQuicOnlyTest, QuicListenerFactoryWithBadServerPreferredV4Address) {
+  std::string yaml = TestEnvironment::substitute(R"EOF(
+address:
+  socket_address:
+    address: 0.0.0.0
+    protocol: UDP
+    port_value: 1234
+filter_chains:
+- filter_chain_match:
+    transport_protocol: "quic"
+  name: foo
+  filters:
+  - name: envoy.filters.network.http_connection_manager
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+      codec_type: HTTP3
+      stat_prefix: hcm
+      route_config:
+        name: local_route
+      http_filters:
+        - name: envoy.filters.http.router
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  transport_socket:
+    name: envoy.transport_sockets.quic
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.transport_sockets.quic.v3.QuicDownstreamTransport
+      downstream_tls_context:
+        common_tls_context:
+          tls_certificates:
+          - certificate_chain:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/san_uri_cert.pem"
+            private_key:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/san_uri_key.pem"
+          validation_context:
+            trusted_ca:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/ca_cert.pem"
+            match_typed_subject_alt_names:
+            - matcher:
+                exact: localhost
+              san_type: URI
+            - matcher:
+                exact: 127.0.0.1
+              san_type: IP_ADDRESS
+udp_listener_config:
+  quic_options:
+    server_preferred_address_config:
+      name: quic.server_preferred_address.fixed
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.quic.server_preferred_address.v3.FixedServerPreferredAddressConfig
+        ipv4_address: "bad.v4.address"
+  )EOF",
+                                                 Network::Address::IpVersion::v4);
+  envoy::config::listener::v3::Listener listener_proto = parseListenerFromV3Yaml(yaml);
+
+#if defined(ENVOY_ENABLE_QUIC)
+  EXPECT_THROW_WITH_REGEX(addOrUpdateListener(listener_proto), EnvoyException,
+                          "bad v4 server preferred address");
+#else
+  EXPECT_THROW_WITH_REGEX(addOrUpdateListener(listener_proto), EnvoyException,
+                          "QUIC is configured but not enabled in the build.");
+#endif
+}
+
+TEST_P(ListenerManagerImplQuicOnlyTest, QuicListenerFactoryWithBadServerPreferredV6Address) {
+  std::string yaml = TestEnvironment::substitute(R"EOF(
+address:
+  socket_address:
+    address: 0.0.0.0
+    protocol: UDP
+    port_value: 1234
+filter_chains:
+- filter_chain_match:
+    transport_protocol: "quic"
+  name: foo
+  filters:
+  - name: envoy.filters.network.http_connection_manager
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+      codec_type: HTTP3
+      stat_prefix: hcm
+      route_config:
+        name: local_route
+      http_filters:
+        - name: envoy.filters.http.router
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  transport_socket:
+    name: envoy.transport_sockets.quic
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.transport_sockets.quic.v3.QuicDownstreamTransport
+      downstream_tls_context:
+        common_tls_context:
+          tls_certificates:
+          - certificate_chain:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/san_uri_cert.pem"
+            private_key:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/san_uri_key.pem"
+          validation_context:
+            trusted_ca:
+              filename: "{{ test_rundir }}/test/common/tls/test_data/ca_cert.pem"
+            match_typed_subject_alt_names:
+            - matcher:
+                exact: localhost
+              san_type: URI
+            - matcher:
+                exact: 127.0.0.1
+              san_type: IP_ADDRESS
+udp_listener_config:
+  quic_options:
+    server_preferred_address_config:
+      name: quic.server_preferred_address.fixed
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.quic.server_preferred_address.v3.FixedServerPreferredAddressConfig
+        ipv6_address: "bad.v6.address"
+  )EOF",
+                                                 Network::Address::IpVersion::v4);
+  envoy::config::listener::v3::Listener listener_proto = parseListenerFromV3Yaml(yaml);
+
+#if defined(ENVOY_ENABLE_QUIC)
+  EXPECT_THROW_WITH_REGEX(addOrUpdateListener(listener_proto), EnvoyException,
+                          "bad v6 server preferred address");
+#else
+  EXPECT_THROW_WITH_REGEX(addOrUpdateListener(listener_proto), EnvoyException,
+                          "QUIC is configured but not enabled in the build.");
+#endif
+}
+
+#if defined(ENVOY_ENABLE_QUIC)
+// Adding an address to a QUIC listener is not done in place.
+TEST_P(ListenerManagerImplQuicOnlyTest, QuicListenerAddressUpdateIsNotInPlace) {
+  const envoy::config::listener::v3::Listener listener_proto =
+      parseListenerFromV3Yaml(getBasicConfig());
+  auto listener = *ListenerImpl::create(listener_proto, "", *manager_, "foo", true, false, 0);
+  auto socket_factory = std::make_unique<testing::NiceMock<Network::MockListenSocketFactory>>();
+  ON_CALL(*socket_factory, localAddress())
+      .WillByDefault(
+          testing::ReturnRefOfCopy(*Network::Utility::resolveUrl("udp://127.0.0.1:1234")));
+  EXPECT_OK(listener->addSocketFactory(std::move(socket_factory)));
+
+  auto new_listener_proto = listener_proto;
+  auto* socket_address =
+      new_listener_proto.add_additional_addresses()->mutable_address()->mutable_socket_address();
+  socket_address->set_address("127.0.0.2");
+  socket_address->set_port_value(1234);
+  socket_address->set_protocol(envoy::config::core::v3::SocketAddress::UDP);
+  EXPECT_EQ(ListenerImpl::InPlaceUpdate::None,
+            listener->supportUpdateFilterChain(new_listener_proto, true));
+}
+#endif
+
+INSTANTIATE_TEST_SUITE_P(Matcher, ListenerManagerImplQuicOnlyTest,
+                         ::testing::Combine(::testing::Bool(), ::testing::Bool()));
+
+#if defined(ENVOY_ENABLE_QUIC)
+// LDS delivers a listener while the server init manager is initializing. Extensions initialized
+// during listener creation must be able to register init targets with either value of
+// "envoy.restart_features.defer_worker_routing_init".
+TEST_P(ListenerManagerImplQuicOnlyTest, CidGeneratorRegistersInitTarget) {
+  envoy::config::listener::v3::Listener listener_proto = parseListenerFromV3Yaml(getBasicConfig());
+  auto* cid_generator_config = listener_proto.mutable_udp_listener_config()
+                                   ->mutable_quic_options()
+                                   ->mutable_connection_id_generator_config();
+  cid_generator_config->set_name("envoy.quic.mock_connection_id_generator");
+  std::ignore =
+      cid_generator_config->mutable_typed_config()->PackFrom(test::common::config::DummyConfig());
+
+  Quic::MockEnvoyQuicConnectionIdGeneratorConfigFactory cid_config_factory;
+  Registry::InjectFactory<Quic::EnvoyQuicConnectionIdGeneratorConfigFactory>
+      cid_config_factory_registration(cid_config_factory);
+
+  Init::ManagerImpl server_init_mgr("server-init-manager");
+  Init::ExpectableWatcherImpl server_init_watcher("server-init-watcher");
+  Init::ExpectableTargetImpl child_target("child-target");
+
+  EXPECT_CALL(cid_config_factory, createQuicConnectionIdGeneratorFactory(_, _, _))
+      .WillOnce([&](const Protobuf::Message&, ProtobufMessage::ValidationVisitor&,
+                    Configuration::FactoryContext& context)
+                    -> Quic::EnvoyQuicConnectionIdGeneratorFactoryPtr {
+        EXPECT_EQ(Init::Manager::State::Uninitialized, context.initManager().state());
+        context.initManager().add(child_target);
+        auto generator_factory =
+            std::make_unique<NiceMock<Quic::MockEnvoyQuicConnectionIdGeneratorFactory>>();
+        ON_CALL(*generator_factory, getCompatibleConnectionIdWorkerSelector(_))
+            .WillByDefault(Return([](const Buffer::Instance&, uint32_t) { return 0u; }));
+        return generator_factory;
+      });
+
+  // Mimic LDS delivering the listener while the server init manager is initializing.
+  Init::TargetImpl lds_target("lds", [&]() {
+    EXPECT_TRUE(addOrUpdateListener(listener_proto));
+    lds_target.ready();
+  });
+  server_init_mgr.add(lds_target);
+  EXPECT_CALL(server_, initManager()).WillOnce(ReturnRef(server_init_mgr));
+
+  // The child target is initialized inline with the config delivery and blocks server init until it
+  // is ready.
+  child_target.expectInitialize();
+  server_init_watcher.expectReady().Times(0);
+  server_init_mgr.initialize(server_init_watcher);
+
+  server_init_watcher.expectReady();
+  child_target.ready();
+  EXPECT_EQ(Init::Manager::State::Initialized, server_init_mgr.state());
+}
+
+class ListenerManagerImplQuicWorkerRoutingTest : public ListenerManagerImplQuicOnlyTest {
+public:
+  static constexpr absl::string_view init_failure_msg_ = "worker routing init failure";
+  static constexpr uint32_t concurrency_ = 2;
+
+  ListenerManagerImplQuicWorkerRoutingTest()
+      : cid_config_factory_registration_(cid_config_factory_) {
+    server_.options_.concurrency_ = concurrency_;
+    EXPECT_CALL(worker_factory_, createWorker_())
+        .Times(concurrency_ - 1)
+        .WillRepeatedly([this]() -> Worker* {
+          extra_workers_.push_back(new NiceMock<MockWorker>());
+          return extra_workers_.back();
+        });
+  }
+
+  void callAddCompletionOnWorkers() {
+    worker_->callAddCompletion();
+    for (MockWorker* worker : extra_workers_) {
+      worker->callAddCompletion();
+    }
+  }
+
+  // A listener naming the mock connection ID generator.
+  // @param max_rx_datagram_size is used to modify the config, so that an update is not a no-op.
+  envoy::config::listener::v3::Listener quicListener(uint32_t max_rx_datagram_size = 0) {
+    envoy::config::listener::v3::Listener listener = parseListenerFromV3Yaml(getBasicConfig());
+    listener.set_name("quic_listener");
+    auto* cid_generator_config = listener.mutable_udp_listener_config()
+                                     ->mutable_quic_options()
+                                     ->mutable_connection_id_generator_config();
+    cid_generator_config->set_name("envoy.quic.mock_connection_id_generator");
+    std::ignore =
+        cid_generator_config->mutable_typed_config()->PackFrom(test::common::config::DummyConfig());
+    if (max_rx_datagram_size != 0) {
+      listener.mutable_udp_listener_config()
+          ->mutable_downstream_socket_config()
+          ->mutable_max_rx_datagram_size()
+          ->set_value(max_rx_datagram_size);
+    }
+    return listener;
+  }
+
+  void startWorkers() {
+    EXPECT_CALL(*worker_, start);
+    ASSERT_OK(manager_->startWorkers(guard_dog_, callback_.AsStdFunction()));
+  }
+
+  void expectWorkerRoutingInit(const absl::Status& worker_routing_status,
+                               Init::Target* init_target = nullptr) {
+    absl::StatusOr<Network::Socket::OptionConstSharedPtr> bpf_option =
+        std::make_shared<NiceMock<Network::MockSocketOption>>();
+    if (!worker_routing_status.ok()) {
+      bpf_option = worker_routing_status;
+    }
+    EXPECT_CALL(cid_config_factory_, createQuicConnectionIdGeneratorFactory)
+        .WillOnce([bpf_option, init_target](const Protobuf::Message&,
+                                            ProtobufMessage::ValidationVisitor&,
+                                            Configuration::FactoryContext& context)
+                      -> Quic::EnvoyQuicConnectionIdGeneratorFactoryPtr {
+          if (init_target != nullptr) {
+            context.initManager().add(*init_target);
+          }
+          auto generator_factory =
+              std::make_unique<NiceMock<Quic::MockEnvoyQuicConnectionIdGeneratorFactory>>();
+          EXPECT_CALL(*generator_factory, createCompatibleLinuxBpfSocketOption(concurrency_))
+              .WillOnce(Return(bpf_option));
+          return generator_factory;
+        });
+  }
+
+  void expectCreateUdpListenSocket() {
+    EXPECT_CALL(listener_factory_,
+                createListenSocket(_, _, _, ListenerComponentFactory::BindType::ReusePort, _, _))
+        .Times(concurrency_);
+  }
+
+  Quic::MockEnvoyQuicConnectionIdGeneratorConfigFactory cid_config_factory_;
+  Registry::InjectFactory<Quic::EnvoyQuicConnectionIdGeneratorConfigFactory>
+      cid_config_factory_registration_;
+  std::vector<MockWorker*> extra_workers_;
+};
+
+TEST_P(ListenerManagerImplQuicWorkerRoutingTest, ListenerRejectedOnInitFailure) {
+  expectWorkerRoutingInit(absl::InternalError(init_failure_msg_));
+  expectCreateUdpListenSocket();
+
+  EXPECT_THROW_WITH_REGEX(addOrUpdateListener(quicListener()), EnvoyException, init_failure_msg_);
+  EXPECT_EQ(0UL, manager_->listeners(ListenerManager::ACTIVE).size());
+  EXPECT_EQ(0UL, manager_->listeners(ListenerManager::WARMING).size());
+  checkStats(__LINE__, 0, 0, 0, 0, 0, 0, 0);
+}
+
+TEST_P(ListenerManagerImplQuicWorkerRoutingTest, UpdateRejectedOnInitFailure) {
+  expectWorkerRoutingInit(absl::OkStatus());
+  expectCreateUdpListenSocket();
+  EXPECT_TRUE(addOrUpdateListener(quicListener(), "version1"));
+  checkStats(__LINE__, 1, 0, 0, 0, 1, 0, 0);
+
+  expectWorkerRoutingInit(absl::InternalError(init_failure_msg_));
+  // The listener clones the socket factory, duplicating every socket.
+  EXPECT_CALL(*listener_factory_.socket_, duplicate()).Times(concurrency_);
+  EXPECT_THROW_WITH_REGEX(addOrUpdateListener(quicListener(1500), "version2"), EnvoyException,
+                          init_failure_msg_);
+  EXPECT_EQ(1UL, manager_->listeners(ListenerManager::ACTIVE).size());
+  // The original listener is intact, adding the original config is a no-op
+  EXPECT_FALSE(addOrUpdateListener(quicListener(), "version1"));
+}
+
+TEST_P(ListenerManagerImplQuicWorkerRoutingTest, WarmingListenerUpdateRejectedOnInitFailure) {
+  startWorkers();
+
+  // The connection ID generator registers an init target to keep the listener warming
+  Init::ExpectableTargetImpl init_target("cid-generator-target");
+  expectWorkerRoutingInit(absl::OkStatus(), &init_target);
+  expectCreateUdpListenSocket();
+  init_target.expectInitialize();
+  EXPECT_TRUE(addOrUpdateListener(quicListener(), "version1"));
+  checkStats(__LINE__, 1, 0, 0, 1, 0, 0, 0);
+
+  expectWorkerRoutingInit(absl::InternalError(init_failure_msg_));
+  EXPECT_CALL(*listener_factory_.socket_, duplicate()).Times(concurrency_);
+  EXPECT_THROW_WITH_REGEX(addOrUpdateListener(quicListener(1500), "version2"), EnvoyException,
+                          init_failure_msg_);
+  EXPECT_EQ(1UL, manager_->listeners(ListenerManager::WARMING).size());
+
+  // The original warming listener finishes warming
+  EXPECT_CALL(*worker_, addListener);
+  init_target.ready();
+  callAddCompletionOnWorkers();
+  checkStats(__LINE__, 1, 0, 0, 0, 1, 0, 0);
+}
+
+TEST_P(ListenerManagerImplQuicWorkerRoutingTest, InPlaceUpdateDoesNotReinitializeWorkerRouting) {
+  startWorkers();
+
+  expectWorkerRoutingInit(absl::OkStatus());
+
+  ListenerHandle* listener1 = expectListenerCreate(false, true);
+  expectCreateUdpListenSocket();
+  EXPECT_CALL(*worker_, addListener);
+  const envoy::config::listener::v3::Listener listener = quicListener();
+  EXPECT_TRUE(addOrUpdateListener(listener, "version1"));
+  callAddCompletionOnWorkers();
+
+  // The updated listener shares the origin's listener factory, which must not be initialized again.
+  ::testing::Mock::VerifyAndClearExpectations(&cid_config_factory_);
+  EXPECT_CALL(cid_config_factory_, createQuicConnectionIdGeneratorFactory(_, _, _)).Times(0);
+
+  envoy::config::listener::v3::Listener update_proto = listener;
+  update_proto.mutable_filter_chains(0)
+      ->mutable_filter_chain_match()
+      ->mutable_destination_port()
+      ->set_value(1234);
+  ListenerHandle* listener2 = expectListenerOverridden(true, listener1);
+  EXPECT_CALL(listener2->target_, initialize());
+  EXPECT_TRUE(addOrUpdateListener(update_proto, "version2"));
+  EXPECT_EQ(1UL,
+            server_.stats_store_.counter("listener_manager.listener_in_place_updated").value());
+  checkStats(__LINE__, 1, 1, 0, 1, 1, 0, 0);
+
+  EXPECT_CALL(*listener2, onDestroy());
+  EXPECT_CALL(*listener1, onDestroy());
+}
+
+INSTANTIATE_TEST_SUITE_P(Matcher, ListenerManagerImplQuicWorkerRoutingTest,
+                         ::testing::Values(std::make_tuple(/*use_matcher=*/false,
+                                                           /*defer_worker_routing_init=*/true)));
+#endif
+
+} // namespace
+} // namespace Server
+} // namespace Envoy

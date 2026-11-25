@@ -1,0 +1,593 @@
+#include "source/common/listener_manager/connection_handler_impl.h"
+
+#include <chrono>
+
+#include "envoy/event/dispatcher.h"
+#include "envoy/network/filter.h"
+
+#include "source/common/common/logger.h"
+#include "source/common/event/deferred_task.h"
+#include "source/common/listener_manager/active_tcp_listener.h"
+#include "source/common/network/address_impl.h"
+#include "source/common/network/tcp_listener_impl.h"
+#include "source/common/network/utility.h"
+#include "source/common/runtime/runtime_features.h"
+#include "source/server/listener_manager_factory.h"
+
+namespace Envoy {
+namespace Server {
+
+namespace {
+// The IPv4 address by which the workers also find a dual stack IPv6 address, if any.
+std::optional<std::string> ipv4AliasAddress(const Network::Address::Instance& address) {
+  if (address.type() != Network::Address::Type::Ip ||
+      address.ip()->version() != Network::Address::IpVersion::v6 ||
+      address.ip()->ipv6()->v6only()) {
+    return std::nullopt;
+  }
+  if (address.ip()->isAnyAddress()) {
+    return Network::Address::Ipv4Instance(address.ip()->port()).asString();
+  }
+  // When `v6only` is false, the address with an invalid IPv4-mapped address is rejected early.
+  return address.ip()->ipv6()->v4CompatibleAddress()->asString();
+}
+} // namespace
+
+ConnectionHandlerImpl::ConnectionHandlerImpl(Event::Dispatcher& dispatcher,
+                                             std::optional<uint32_t> worker_index)
+    : worker_index_(worker_index), dispatcher_(dispatcher),
+      per_handler_stat_prefix_(dispatcher.name() + "."), disable_listeners_(false) {}
+
+ConnectionHandlerImpl::ConnectionHandlerImpl(Event::Dispatcher& dispatcher,
+                                             std::optional<uint32_t> worker_index,
+                                             OverloadManager& overload_manager,
+                                             OverloadManager& null_overload_manager)
+    : worker_index_(worker_index), dispatcher_(dispatcher), overload_manager_(overload_manager),
+      null_overload_manager_(null_overload_manager),
+      per_handler_stat_prefix_(dispatcher.name() + "."), disable_listeners_(false) {}
+
+ConnectionHandlerImpl::~ConnectionHandlerImpl() {
+  // Destroying the active listeners closes all of their remaining connections. Closing those
+  // connections can re-enter this handler, e.g. an upstream connection pool that tries to reconnect
+  // to an internal listener goes through findByAddress(). With the implicit destructor the address
+  // maps, which are declared after listener_map_by_tag_, would already be destroyed at that point,
+  // and a lookup into them is a use-after-free (which can spin forever in the hash table probe).
+  //
+  // Drop the address maps first, so that any re-entrant lookup finds no listener. This does not
+  // destroy the listeners because they are also owned by listener_map_by_tag_. Then destroy the
+  // listeners while every other member of the handler is still alive. The listeners are moved out
+  // of listener_map_by_tag_ first so that re-entrant lookups by tag see an empty map instead of a
+  // map that is in the middle of being destroyed.
+  tcp_listener_map_by_address_.clear();
+  internal_listener_map_by_address_.clear();
+  absl::flat_hash_map<uint64_t, std::unique_ptr<ActiveListenerDetails>> listeners;
+  listeners.swap(listener_map_by_tag_);
+  listeners.clear();
+}
+
+void ConnectionHandlerImpl::incNumConnections() { ++num_handler_connections_; }
+
+void ConnectionHandlerImpl::decNumConnections() {
+  ASSERT(num_handler_connections_ > 0);
+  --num_handler_connections_;
+}
+
+void ConnectionHandlerImpl::addListener(std::optional<uint64_t> overridden_listener,
+                                        Network::ListenerConfig& config, Runtime::Loader& runtime,
+                                        Random::RandomGenerator& random) {
+  if (overridden_listener.has_value()) {
+    ActiveListenerDetailsOptRef listener_detail =
+        findActiveListenerByTag(overridden_listener.value());
+    ASSERT(listener_detail.has_value());
+    listener_detail->invokeListenerMethod(
+        [&config](Network::ConnectionHandler::ActiveListener& listener) {
+          listener.updateListenerConfig(config);
+        });
+    // The removed addresses are stopped beforehand, so only an update that adds addresses has more
+    // socket factories than listeners. A filter chain only update keeps the listeners even when its
+    // port 0 addresses got new sockets on other ports.
+    if (config.listenSocketFactories().size() > listener_detail->per_address_details_list_.size()) {
+      addActiveTcpListenersForNewAddresses(*listener_detail, config, runtime, random);
+    }
+    return;
+  }
+
+  auto details = std::make_unique<ActiveListenerDetails>();
+  if (config.internalListenerConfig().has_value()) {
+    // Ensure the this ConnectionHandlerImpl link to the thread local registry. Ideally this step
+    // should be done only once. However, an extra phase and interface is overkill.
+    Network::InternalListenerRegistry& internal_listener_registry =
+        config.internalListenerConfig()->internalListenerRegistry();
+    Network::LocalInternalListenerRegistry* local_registry =
+        internal_listener_registry.getLocalRegistry();
+    RELEASE_ASSERT(local_registry != nullptr, "Failed to get local internal listener registry.");
+    local_registry->setInternalListenerManager(*this);
+    if (overridden_listener.has_value()) {
+      if (auto iter = listener_map_by_tag_.find(overridden_listener.value());
+          iter != listener_map_by_tag_.end()) {
+        iter->second->invokeListenerMethod(
+            [&config](Network::ConnectionHandler::ActiveListener& listener) {
+              listener.updateListenerConfig(config);
+            });
+        return;
+      }
+      IS_ENVOY_BUG("unexpected");
+    }
+    auto internal_listener =
+        local_registry->createActiveInternalListener(*this, config, dispatcher());
+    // TODO(soulxu): support multiple internal addresses in listener in the future.
+    ASSERT(config.listenSocketFactories().size() == 1);
+    details->addActiveListener(
+        config, config.listenSocketFactories()[0]->localAddress(), listener_reject_fraction_,
+        disable_listeners_, std::move(internal_listener),
+        config.shouldBypassOverloadManager() ? null_overload_manager_ : overload_manager_);
+  } else if (config.listenSocketFactories()[0]->socketType() == Network::Socket::Type::Stream) {
+    const auto overload_state = overloadState(config);
+    for (auto& socket_factory : config.listenSocketFactories()) {
+      addActiveTcpListener(*details, config, *socket_factory, runtime, random, overload_state);
+    }
+  } else {
+    ASSERT(config.udpListenerConfig().has_value(), "UDP listener factory is not initialized.");
+    ASSERT(worker_index_.has_value());
+    for (auto& socket_factory : config.listenSocketFactories()) {
+      auto address = socket_factory->localAddress();
+      details->addActiveListener(
+          config, address, listener_reject_fraction_, disable_listeners_,
+          config.udpListenerConfig()->listenerFactory().createActiveUdpListener(
+              runtime, *worker_index_, *this, socket_factory->getListenSocket(*worker_index_),
+              dispatcher_, config),
+          config.shouldBypassOverloadManager() ? null_overload_manager_ : overload_manager_);
+    }
+  }
+
+  ASSERT(!listener_map_by_tag_.contains(config.listenerTag()));
+
+  for (const auto& per_address_details : details->per_address_details_list_) {
+    // This map only stores the new listener.
+    if (absl::holds_alternative<std::reference_wrapper<ActiveTcpListener>>(
+            per_address_details->typed_listener_)) {
+      addToTcpListenerMap(per_address_details);
+    } else if (absl::holds_alternative<std::reference_wrapper<Network::InternalListener>>(
+                   per_address_details->typed_listener_)) {
+      internal_listener_map_by_address_.insert_or_assign(
+          per_address_details->address_->envoyInternalAddress()->addressId(), per_address_details);
+    }
+  }
+  listener_map_by_tag_.emplace(config.listenerTag(), std::move(details));
+}
+
+Server::ThreadLocalOverloadStateOptRef
+ConnectionHandlerImpl::overloadState(const Network::ListenerConfig& config) const {
+  if (config.shouldBypassOverloadManager()) {
+    return null_overload_manager_
+               ? makeOptRef(null_overload_manager_->getThreadLocalOverloadState())
+               : std::nullopt;
+  }
+  return overload_manager_ ? makeOptRef(overload_manager_->getThreadLocalOverloadState())
+                           : std::nullopt;
+}
+
+void ConnectionHandlerImpl::addActiveTcpListener(
+    ActiveListenerDetails& details, Network::ListenerConfig& config,
+    Network::ListenSocketFactory& socket_factory, Runtime::Loader& runtime,
+    Random::RandomGenerator& random, Server::ThreadLocalOverloadStateOptRef overload_state) {
+  auto address = socket_factory.localAddress();
+  // worker_index_ doesn't have a value on the main thread for the admin server.
+  details.addActiveListener(
+      config, address, listener_reject_fraction_, disable_listeners_,
+      std::make_unique<ActiveTcpListener>(
+          *this, config, runtime, random,
+          socket_factory.getListenSocket(worker_index_.has_value() ? *worker_index_ : 0), address,
+          config.connectionBalancer(*address), overload_state),
+      config.shouldBypassOverloadManager() ? null_overload_manager_ : overload_manager_);
+}
+
+void ConnectionHandlerImpl::addActiveTcpListenersForNewAddresses(ActiveListenerDetails& details,
+                                                                 Network::ListenerConfig& config,
+                                                                 Runtime::Loader& runtime,
+                                                                 Random::RandomGenerator& random) {
+  const auto overload_state = overloadState(config);
+  for (auto& socket_factory : config.listenSocketFactories()) {
+    const Network::Address::Instance& address = *socket_factory->localAddress();
+    if (std::none_of(
+            details.per_address_details_list_.begin(), details.per_address_details_list_.end(),
+            [&address](const std::shared_ptr<PerAddressActiveListenerDetails>& per_address) {
+              return *per_address->address_ == address;
+            })) {
+      addActiveTcpListener(details, config, *socket_factory, runtime, random, overload_state);
+      addToTcpListenerMap(details.per_address_details_list_.back());
+    }
+  }
+}
+
+void ConnectionHandlerImpl::addToTcpListenerMap(
+    const std::shared_ptr<PerAddressActiveListenerDetails>& per_address_details,
+    bool keep_existing_entries) {
+  const auto add = [this, &per_address_details, keep_existing_entries](absl::string_view key) {
+    if (keep_existing_entries) {
+      tcp_listener_map_by_address_.try_emplace(key, per_address_details);
+    } else {
+      tcp_listener_map_by_address_.insert_or_assign(key, per_address_details);
+    }
+  };
+  add(per_address_details->address_->asStringView());
+
+  auto& address = per_address_details->address_;
+  // If the address is Ipv6 and isn't v6only, parse out the ipv4 compatible address from the
+  // Ipv6 address and put an item to the map. Then this allows the `getBalancedHandlerByAddress`
+  // can match the Ipv4 request to Ipv4-mapped address also.
+  const std::optional<std::string> ipv4_address = ipv4AliasAddress(*address);
+  if (!ipv4_address.has_value()) {
+    return;
+  }
+  if (address->ip()->isAnyAddress()) {
+    // Since both "::" with ipv4_compat and "0.0.0.0" can be supported.
+    // Only override the listener when this is an update of the existing listener by
+    // checking the address, this ensures the Ipv4 address listener won't be override
+    // by the listener which has the same IPv4-mapped address.
+    auto ipv4_any_listener = tcp_listener_map_by_address_.find(*ipv4_address);
+    if (ipv4_any_listener != tcp_listener_map_by_address_.end() &&
+        *ipv4_any_listener->second->address_ != *address) {
+      return;
+    }
+  }
+  add(*ipv4_address);
+}
+
+void ConnectionHandlerImpl::removeListeners(uint64_t listener_tag) {
+  if (auto listener_iter = listener_map_by_tag_.find(listener_tag);
+      listener_iter != listener_map_by_tag_.end()) {
+    // listener_map_by_address_ may already update to the new listener. Compare it with the one
+    // which find from listener_map_by_tag_, only delete it when it is same listener.
+    for (const auto& per_address_details : listener_iter->second->per_address_details_list_) {
+      auto& address = per_address_details->address_;
+      auto address_view = address->asStringView();
+      if (tcp_listener_map_by_address_.contains(address_view) &&
+          tcp_listener_map_by_address_[address_view]->listener_tag_ ==
+              per_address_details->listener_tag_) {
+        tcp_listener_map_by_address_.erase(address_view);
+
+        // If the address is Ipv6 and isn't v6only, delete the corresponding Ipv4 item from the map.
+        if (address->type() == Network::Address::Type::Ip &&
+            address->ip()->version() == Network::Address::IpVersion::v6 &&
+            !address->ip()->ipv6()->v6only()) {
+          if (address->ip()->isAnyAddress()) {
+            auto ipv4_any_addr_iter = tcp_listener_map_by_address_.find(
+                Network::Address::Ipv4Instance(address->ip()->port()).asStringView());
+            // Since both "::" with ipv4_compat and "0.0.0.0" can be supported, ensure they are same
+            // listener by tag.
+            if (ipv4_any_addr_iter != tcp_listener_map_by_address_.end() &&
+                ipv4_any_addr_iter->second->listener_tag_ == per_address_details->listener_tag_) {
+              tcp_listener_map_by_address_.erase(ipv4_any_addr_iter);
+            }
+          } else {
+            auto v4_compatible_addr = address->ip()->ipv6()->v4CompatibleAddress();
+            // When `v6only` is false, the address with an invalid IPv4-mapped address is rejected
+            // early.
+            ASSERT(v4_compatible_addr != nullptr);
+            // both "::FFFF:<ipv4-addr>" with ipv4_compat and "<ipv4-addr>" isn't valid case,
+            // remove the v4 compatible addr item directly.
+            tcp_listener_map_by_address_.erase(v4_compatible_addr->asStringView());
+          }
+        }
+      } else if (address->type() == Network::Address::Type::EnvoyInternal) {
+        const auto& address_id = address->envoyInternalAddress()->addressId();
+        if (internal_listener_map_by_address_.contains(address_id) &&
+            internal_listener_map_by_address_[address_id]->listener_tag_ ==
+                per_address_details->listener_tag_) {
+          internal_listener_map_by_address_.erase(address_id);
+        }
+      }
+    }
+    listener_map_by_tag_.erase(listener_iter);
+  }
+}
+
+ConnectionHandlerImpl::PerAddressActiveListenerDetailsOptRef
+ConnectionHandlerImpl::findPerAddressActiveListenerDetails(
+    const ConnectionHandlerImpl::ActiveListenerDetailsOptRef active_listener_details,
+    const Network::Address::Instance& address) {
+  if (active_listener_details.has_value()) {
+    // If the tag matches this must be a UDP listener.
+    for (auto& details : active_listener_details->per_address_details_list_) {
+      if (*details->address_ == address) {
+        return *details;
+      }
+    }
+  }
+
+  return std::nullopt;
+}
+
+Network::UdpListenerCallbacksOptRef
+ConnectionHandlerImpl::getUdpListenerCallbacks(uint64_t listener_tag,
+                                               const Network::Address::Instance& address) {
+  auto listener =
+      findPerAddressActiveListenerDetails(findActiveListenerByTag(listener_tag), address);
+  if (listener.has_value()) {
+    // If the tag matches this must be a UDP listener.
+    ASSERT(listener->udpListener().has_value());
+    return listener->udpListener();
+  }
+  return std::nullopt;
+}
+
+void ConnectionHandlerImpl::removeFilterChains(
+    uint64_t listener_tag, const std::list<const Network::FilterChain*>& filter_chains,
+    std::function<void()> completion) {
+  if (auto listener_it = listener_map_by_tag_.find(listener_tag);
+      listener_it != listener_map_by_tag_.end()) {
+    listener_it->second->invokeListenerMethod(
+        [&filter_chains](Network::ConnectionHandler::ActiveListener& listener) {
+          listener.onFilterChainDraining(filter_chains);
+        });
+    // The connections of the stopped addresses may use the removed filter chains too.
+    for (auto& stopped : listener_it->second->stopped_per_address_details_list_) {
+      stopped.details_->listener_->onFilterChainDraining(filter_chains);
+    }
+  }
+
+  // Reach here if the target listener is found or the target listener was removed by a full
+  // listener update. In either case, the completion must be deferred so that any active connection
+  // referencing the filter chain can finish prior to deletion.
+  Event::DeferredTaskUtil::deferredRun(dispatcher_, std::move(completion));
+}
+
+void ConnectionHandlerImpl::stopListeners(uint64_t listener_tag,
+                                          const Network::ExtraShutdownListenerOptions& options) {
+  if (auto iter = listener_map_by_tag_.find(listener_tag); iter != listener_map_by_tag_.end()) {
+    iter->second->invokeListenerMethod(
+        [options](Network::ConnectionHandler::ActiveListener& listener) {
+          if (listener.listener() != nullptr) {
+            listener.shutdownListener(options);
+          }
+        });
+  }
+}
+
+void ConnectionHandlerImpl::onFilterChainDrain(
+    uint64_t listener_tag, const std::list<const Network::FilterChain*>& filter_chains,
+    Network::ConnectionDrainEvent drain_event) {
+  if (auto listener_it = listener_map_by_tag_.find(listener_tag);
+      listener_it != listener_map_by_tag_.end()) {
+    listener_it->second->invokeListenerMethod(
+        [&filter_chains, drain_event](Network::ConnectionHandler::ActiveListener& listener) {
+          listener.onFilterChainDrainStart(filter_chains, drain_event);
+        });
+  }
+}
+
+void ConnectionHandlerImpl::onListenerDrain(uint64_t listener_tag,
+                                            Network::ConnectionDrainEvent drain_event) {
+  if (auto listener_it = listener_map_by_tag_.find(listener_tag);
+      listener_it != listener_map_by_tag_.end()) {
+    listener_it->second->invokeListenerMethod(
+        [drain_event](Network::ConnectionHandler::ActiveListener& listener) {
+          listener.onListenerDrainStart(drain_event);
+        });
+  }
+}
+
+void ConnectionHandlerImpl::stopListenerAddresses(
+    const Network::ListenerConfig& listener,
+    const std::vector<Network::Address::InstanceConstSharedPtr>& addresses) {
+  ActiveListenerDetailsOptRef details = findActiveListenerByTag(listener.listenerTag());
+  if (!details.has_value()) {
+    return;
+  }
+  auto& per_address_details_list = details->per_address_details_list_;
+  const auto stopped_begin = std::stable_partition(
+      per_address_details_list.begin(), per_address_details_list.end(),
+      [&addresses](const std::shared_ptr<PerAddressActiveListenerDetails>& per_address) {
+        return std::none_of(
+            addresses.begin(), addresses.end(),
+            [&per_address](const Network::Address::InstanceConstSharedPtr& address) {
+              return *address == *per_address->address_;
+            });
+      });
+  const auto remove_entry =
+      [this](absl::string_view key,
+             const std::shared_ptr<PerAddressActiveListenerDetails>& stopped) {
+        if (auto entry = tcp_listener_map_by_address_.find(key);
+            entry != tcp_listener_map_by_address_.end() && entry->second == stopped) {
+          tcp_listener_map_by_address_.erase(entry);
+        }
+      };
+  for (auto iter = stopped_begin; iter != per_address_details_list.end(); ++iter) {
+    remove_entry((*iter)->address_->asStringView(), *iter);
+    if (const std::optional<std::string> ipv4_address = ipv4AliasAddress(*(*iter)->address_);
+        ipv4_address.has_value()) {
+      remove_entry(*ipv4_address, *iter);
+    }
+    (*iter)->listener_->shutdownListener({});
+    details->stopped_per_address_details_list_.push_back({&listener, std::move(*iter)});
+  }
+  per_address_details_list.erase(stopped_begin, per_address_details_list.end());
+  // A stopped address may have held an entry that a remaining address is found by. The remaining
+  // address gets it back, unless another listener took over its own entry, since removeListeners()
+  // would then never remove the restored entries.
+  for (const auto& per_address : per_address_details_list) {
+    auto entry = tcp_listener_map_by_address_.find(per_address->address_->asStringView());
+    if (entry == tcp_listener_map_by_address_.end() || entry->second == per_address) {
+      addToTcpListenerMap(per_address, /*keep_existing_entries=*/true);
+    }
+  }
+}
+
+void ConnectionHandlerImpl::onListenerAddressesDrain(const Network::ListenerConfig& listener,
+                                                     Network::ConnectionDrainEvent drain_event) {
+  if (ActiveListenerDetailsOptRef details = findActiveListenerByTag(listener.listenerTag());
+      details.has_value()) {
+    for (StoppedAddressDetails& stopped : details->stopped_per_address_details_list_) {
+      if (stopped.replaced_listener_ == &listener) {
+        stopped.details_->listener_->onListenerDrainStart(drain_event);
+      }
+    }
+  }
+}
+
+void ConnectionHandlerImpl::removeListenerAddresses(const Network::ListenerConfig& listener) {
+  if (ActiveListenerDetailsOptRef details = findActiveListenerByTag(listener.listenerTag());
+      details.has_value()) {
+    std::erase_if(details->stopped_per_address_details_list_,
+                  [&listener](const StoppedAddressDetails& stopped) {
+                    return stopped.replaced_listener_ == &listener;
+                  });
+  }
+}
+
+void ConnectionHandlerImpl::stopListeners() {
+  for (auto& iter : listener_map_by_tag_) {
+    iter.second->invokeListenerMethod([](Network::ConnectionHandler::ActiveListener& listener) {
+      if (listener.listener() != nullptr) {
+        listener.shutdownListener({});
+      }
+    });
+  }
+}
+
+void ConnectionHandlerImpl::disableListeners() {
+  disable_listeners_ = true;
+  for (auto& iter : listener_map_by_tag_) {
+    iter.second->invokeListenerMethod([](Network::ConnectionHandler::ActiveListener& listener) {
+      if (listener.listener() != nullptr && !listener.listener()->shouldBypassOverloadManager()) {
+        listener.pauseListening();
+      }
+    });
+  }
+}
+
+void ConnectionHandlerImpl::enableListeners() {
+  disable_listeners_ = false;
+  for (auto& iter : listener_map_by_tag_) {
+    iter.second->invokeListenerMethod([](Network::ConnectionHandler::ActiveListener& listener) {
+      if (listener.listener() != nullptr && !listener.listener()->shouldBypassOverloadManager()) {
+        listener.resumeListening();
+      }
+    });
+  }
+}
+
+void ConnectionHandlerImpl::setListenerRejectFraction(UnitFloat reject_fraction) {
+  listener_reject_fraction_ = reject_fraction;
+  for (auto& iter : listener_map_by_tag_) {
+    iter.second->invokeListenerMethod([&reject_fraction](
+                                          Network::ConnectionHandler::ActiveListener& listener) {
+      if (listener.listener() != nullptr && !listener.listener()->shouldBypassOverloadManager()) {
+        listener.listener()->setRejectFraction(reject_fraction);
+      }
+    });
+  }
+}
+
+void ConnectionHandlerImpl::closeIdleHttpConnections(bool is_saturated) {
+  for (const auto& [tag, listener] : listener_map_by_tag_) {
+    listener->invokeListenerMethod(
+        [is_saturated](Network::ConnectionHandler::ActiveListener& active_listener) {
+          if (active_listener.listener() != nullptr &&
+              !active_listener.listener()->shouldBypassOverloadManager()) {
+            active_listener.onCloseIdleHttpConnections(is_saturated);
+          }
+        });
+  }
+}
+
+Network::InternalListenerOptRef
+ConnectionHandlerImpl::findByAddress(const Network::Address::InstanceConstSharedPtr& address) {
+  ASSERT(address->type() == Network::Address::Type::EnvoyInternal);
+  if (auto listener_it =
+          internal_listener_map_by_address_.find(address->envoyInternalAddress()->addressId());
+      listener_it != internal_listener_map_by_address_.end()) {
+    return listener_it->second->internalListener();
+  }
+  return {};
+}
+
+ConnectionHandlerImpl::ActiveTcpListenerOptRef
+ConnectionHandlerImpl::PerAddressActiveListenerDetails::tcpListener() {
+  auto* val = absl::get_if<std::reference_wrapper<ActiveTcpListener>>(&typed_listener_);
+  return (val != nullptr) ? makeOptRef(val->get()) : std::nullopt;
+}
+
+ConnectionHandlerImpl::UdpListenerCallbacksOptRef
+ConnectionHandlerImpl::PerAddressActiveListenerDetails::udpListener() {
+  auto* val = absl::get_if<std::reference_wrapper<Network::UdpListenerCallbacks>>(&typed_listener_);
+  return (val != nullptr) ? makeOptRef(val->get()) : std::nullopt;
+}
+
+Network::InternalListenerOptRef
+ConnectionHandlerImpl::PerAddressActiveListenerDetails::internalListener() {
+  auto* val = absl::get_if<std::reference_wrapper<Network::InternalListener>>(&typed_listener_);
+  return (val != nullptr) ? makeOptRef(val->get()) : std::nullopt;
+}
+
+ConnectionHandlerImpl::ActiveListenerDetailsOptRef
+ConnectionHandlerImpl::findActiveListenerByTag(uint64_t listener_tag) {
+  if (auto iter = listener_map_by_tag_.find(listener_tag); iter != listener_map_by_tag_.end()) {
+    return *iter->second;
+  }
+  return std::nullopt;
+}
+
+Network::BalancedConnectionHandlerOptRef
+ConnectionHandlerImpl::getBalancedHandlerByTag(uint64_t listener_tag,
+                                               const Network::Address::Instance& address) {
+  auto active_listener =
+      findPerAddressActiveListenerDetails(findActiveListenerByTag(listener_tag), address);
+  if (active_listener.has_value()) {
+    // If the tag matches this must be a TCP listener.
+    ASSERT(active_listener->tcpListener().has_value());
+    return *active_listener->tcpListener();
+  }
+  return std::nullopt;
+}
+
+Network::ListenerPtr ConnectionHandlerImpl::createListener(
+    Network::SocketSharedPtr&& socket, Network::TcpListenerCallbacks& cb, Runtime::Loader& runtime,
+    Random::RandomGenerator& random, const Network::ListenerConfig& config,
+    Server::ThreadLocalOverloadStateOptRef overload_state) {
+  return std::make_unique<Network::TcpListenerImpl>(
+      dispatcher(), random, runtime, std::move(socket), cb, config.bindToPort(),
+      config.ignoreGlobalConnLimit(), config.shouldBypassOverloadManager(),
+      config.maxConnectionsToAcceptPerSocketEvent(), overload_state);
+}
+
+Network::BalancedConnectionHandlerOptRef
+ConnectionHandlerImpl::getBalancedHandlerByAddress(const Network::Address::Instance& address) {
+  // Only Ip address can be restored to original address and redirect.
+  ASSERT(address.type() == Network::Address::Type::Ip);
+
+  // We do not return stopped listeners.
+  // If there is exact address match, return the corresponding listener.
+  if (auto listener_it = tcp_listener_map_by_address_.find(address.asStringView());
+      listener_it != tcp_listener_map_by_address_.end() &&
+      listener_it->second->listener_->listener() != nullptr) {
+    return *listener_it->second->tcpListener();
+  }
+
+  OptRef<ConnectionHandlerImpl::PerAddressActiveListenerDetails> details;
+  // Otherwise, we need to look for the wild card match, i.e., 0.0.0.0:[address_port].
+  // We do not return stopped listeners.
+  // TODO(wattli): consolidate with previous search for more efficiency.
+
+  std::string addr_str = address.ip()->version() == Network::Address::IpVersion::v4
+                             ? Network::Address::Ipv4Instance(address.ip()->port()).asString()
+                             : Network::Address::Ipv6Instance(address.ip()->port()).asString();
+
+  auto iter = tcp_listener_map_by_address_.find(addr_str);
+  if (iter != tcp_listener_map_by_address_.end() &&
+      iter->second->listener_->listener() != nullptr) {
+    details = *iter->second;
+  }
+
+  return (details.has_value())
+             ? Network::BalancedConnectionHandlerOptRef(
+                   absl::get<std::reference_wrapper<ActiveTcpListener>>(details->typed_listener_)
+                       .get())
+             : std::nullopt;
+}
+
+REGISTER_FACTORY(ConnectionHandlerFactoryImpl, ConnectionHandlerFactory);
+
+} // namespace Server
+} // namespace Envoy
