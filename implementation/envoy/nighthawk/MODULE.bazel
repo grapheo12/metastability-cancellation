@@ -83,17 +83,18 @@ cc_library(
 # deps: Overrides - Use constant for commit
 ####################################################################################
 
-git_override(
+# impl/envoy: build against the vendored Envoy (implementation/envoy/envoy, the ENVOY_COMMIT above)
+# instead of fetching it, so local Envoy changes are what Nighthawk builds. Upstream:
+#   git_override(module_name = "envoy", commit = ENVOY_COMMIT, remote = "https://github.com/envoyproxy/envoy.git")
+#   git_override(module_name = "envoy_api", commit = ENVOY_COMMIT, remote = ..., strip_prefix = "api")
+local_path_override(
     module_name = "envoy",
-    commit = ENVOY_COMMIT,
-    remote = "https://github.com/envoyproxy/envoy.git",
+    path = "../envoy",
 )
 
-git_override(
+local_path_override(
     module_name = "envoy_api",
-    commit = ENVOY_COMMIT,
-    remote = "https://github.com/envoyproxy/envoy.git",
-    strip_prefix = "api",
+    path = "../envoy/api",
 )
 
 single_version_override(
