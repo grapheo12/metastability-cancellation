@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.23.1)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.24.0)
 import csv
 import json
 import os
@@ -586,9 +586,9 @@ if __name__ == "__main__":
 FWD_HEADER = "t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns,attempt,estimate_ns"
 
 
-class EstimateErrorHistogramTest(unittest.TestCase):
+class EstimateErrorCdfTest(unittest.TestCase):
     # The worked example: FailureTime 1 s, latency 400 ms for every row.
-    # Design: abstraction/benchmark_runner/result_plotter/design.md#estimateerrorhistogram
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#estimateerrorcdf
     def test_worked_example(self):
         with tempfile.TemporaryDirectory() as out:
             write_point(out, 0, {"load_gen.global_rate": 80})
@@ -608,17 +608,15 @@ class EstimateErrorHistogramTest(unittest.TestCase):
             self.assertEqual([p for p, _ in samples], [100_000_000, 200_000_000, 1_100_000_000, 1_200_000_000])
             table, keys = plotter.build_table(out)
             (label, (everything, before, after), color), = plotter.estimate_error_lines(out, table, keys)
-            self.assertEqual(len(everything), 18)  # bins -10 ..= 7
-            self.assertEqual([(round(x, 2), y) for x, y in everything if y], [(-0.95, 0.25), (-0.05, 0.25), (0.05, 0.25), (0.75, 0.25)])
-            self.assertEqual([(round(x, 2), y) for x, y in before if y], [(-0.95, 0.5), (0.05, 0.5)])
-            self.assertEqual(len(before), 11)  # bins -10 ..= 0
-            self.assertEqual([(round(x, 2), y) for x, y in after if y], [(-0.05, 0.5), (0.75, 0.5)])
-            self.assertEqual(len(after), 9)  # bins -1 ..= 7
+            r = lambda h: [(round(x, 12), y) for x, y in h]
+            self.assertEqual(r(everything), [(-1.0, 0.25), (-0.05, 0.5), (0.0, 0.75), (0.75, 1.0)])
+            self.assertEqual(r(before), [(-1.0, 0.5), (0.0, 1.0)])
+            self.assertEqual(r(after), [(-0.05, 0.5), (0.75, 1.0)])
 
-    # Bins by multiplying by 10 (0.3 stays in bin 3); old CSVs without the column are left out.
-    # Design: abstraction/benchmark_runner/result_plotter/design.md#estimateerrorhistogram
-    def test_bins_and_missing_column(self):
-        self.assertEqual(plotter.estimate_error_histogram([0.3]), [(0.35, 1.0)])
+    # Ties give a vertical run; old CSVs without the column are left out.
+    # Design: abstraction/benchmark_runner/result_plotter/design.md#estimateerrorcdf
+    def test_ties_and_missing_column(self):
+        self.assertEqual(plotter.estimate_error_cdf([0.5, 0.2, 0.2]), [(0.2, 1 / 3), (0.2, 2 / 3), (0.5, 1.0)])
         with tempfile.TemporaryDirectory() as out:
             write_point(out, 0, {"load_gen.global_rate": 80})
             pdir = os.path.join(out, "points", "point_0000")
