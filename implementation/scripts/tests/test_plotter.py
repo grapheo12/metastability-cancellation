@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.23.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.23.1)
 import csv
 import json
 import os

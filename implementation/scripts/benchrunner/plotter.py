@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.23.0)
+# Source: abstraction/benchmark_runner/result_plotter/design.md (result_plotter v0.23.1)
 """PointTable (all_points.csv), SweepPlots, ThroughputLatencyPlot, QueueLengthPlot and ForwardTimelinePlots,
 drawn as interactive HTML FigurePages with plotly."""
 
@@ -840,7 +840,7 @@ def draw_estimate_error(output_dir, done, swept_keys):
     draw_split_histograms(os.path.join(output_dir, "plots", "estimate_error.html"),
                           estimate_error_lines(output_dir, done, swept_keys),
                           ["all ok forwards", "picked before the failure", "picked after the failure"], "exact",
-                          "(latency - (queue + 1) x EwmaExecTime) / latency", "fraction of ok forwards",
+                          "(latency - (queue + 1) x EwmaExecTime / k) / latency", "fraction of ok forwards",
                           "estimate_error")
 
 
