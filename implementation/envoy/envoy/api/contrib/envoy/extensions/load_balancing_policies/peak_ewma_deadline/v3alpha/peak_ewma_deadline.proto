@@ -18,13 +18,13 @@ option (udpa.annotations.file_status).package_version_status = ACTIVE;
 option (xds.annotations.v3.file_status).work_in_progress = true;
 
 // [#protodoc-title: Peak EWMA with a deadline filter]
-// impl/envoy (cancellation testbed): Peak EWMA's cost, `Cost = RTT_ewma * (active_requests + 1)`, used as a
-// deadline filter over EVERY healthy host, with a FIFO wait queue (the testbed's DeadlineFilter and
-// FilterWaitQueue, abstraction/ingress/load_balancer/design.md).
+// impl/envoy (cancellation testbed): a deadline filter over EVERY healthy host on Peak EWMA's RTT EWMA, with a
+// FIFO wait queue (the testbed's DeadlineFilter and FilterWaitQueue, abstraction/ingress/load_balancer/design.md).
 //
-// A request carrying the deadline header (decimal Unix ns) is sent only to a host whose cost fits in its remaining
-// time (`cost_ms * 1e6 <= deadline - now`); a host without an RTT sample yet always fits. Among the hosts that fit
-// it takes the lowest cost (ties at random). When none fits, or requests are already waiting, it waits in this
+// A request carrying the deadline header (decimal Unix ns) is never sent to a host whose current EWMA RTT exceeds
+// its remaining time (`rtt_ewma_ms * 1e6 > deadline - now`); a host without an RTT sample yet always fits.
+// Among the hosts that fit it takes the lowest Peak EWMA cost, `RTT_ewma * (active_requests + 1)` (ties at
+// random). When none fits, or requests are already waiting, it waits in this
 // worker's FIFO queue, re-checked every `queue_tick`, oldest first; once its deadline has passed it fails with
 // "no healthy upstream" (503). Requests without the header are not filtered and never wait.
 //

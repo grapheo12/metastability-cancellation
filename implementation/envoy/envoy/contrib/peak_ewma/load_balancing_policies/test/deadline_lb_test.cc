@@ -122,24 +122,31 @@ TEST_F(PeakEwmaDeadlineTest, NoDeadlineHeaderTakesLowestCostOverAllHosts) {
   EXPECT_EQ(lb_->queueLength(), 0u);
 }
 
-TEST_F(PeakEwmaDeadlineTest, ExactFitPassesAndOneNanosecondLessWaits) {
-  setHost(0, 400, 9);  // cost 4000 ms
-  setHost(1, 400, 19); // cost 8000 ms
-  auto fits = request(4000 * kMs);
-  auto response = lb_->chooseHost(&fits->context);
-  EXPECT_EQ(response.host, hosts_[0]); // 4000 ms * 1e6 <= 4e9 ns: exactly fits
+TEST_F(PeakEwmaDeadlineTest, RttEqualToTimeLeftPassesOneNanosecondMoreWaits) {
+  setHost(0, 4000, 9); // RTT 4000 ms (cost 40 s: the test does not use the active requests)
+  setHost(1, 8000, 0); // RTT 8000 ms
+  auto equal = request(4000 * kMs);
+  auto response = lb_->chooseHost(&equal->context);
+  EXPECT_EQ(response.host, hosts_[0]); // 4000 ms is not > 4000 ms: kept
 
   expectTimer();
   auto tight = request(4000 * kMs - 1);
   response = lb_->chooseHost(&tight->context);
-  EXPECT_EQ(response.host, nullptr);
-  EXPECT_NE(response.cancelable, nullptr); // waits
+  EXPECT_EQ(response.host, nullptr); // 4000 ms > 4e9 - 1 ns: rejected everywhere, waits
+  EXPECT_NE(response.cancelable, nullptr);
   EXPECT_EQ(lb_->queueLength(), 1u);
+}
+
+TEST_F(PeakEwmaDeadlineTest, ChoiceAmongKeptIsLowestCost) {
+  setHost(0, 100, 50); // RTT 100 ms, cost 5100
+  setHost(1, 400, 1);  // RTT 400 ms, cost 800: both kept with 1 s left, host 1 is cheaper
+  auto r = request(1000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&r->context).host, hosts_[1]);
 }
 
 TEST_F(PeakEwmaDeadlineTest, HostWithoutSampleIsEligible) {
   setHost(0, 0, 3);   // no RTT sample: eligible whatever the deadline
-  setHost(1, 400, 0); // cost 400 ms > 100 ms left
+  setHost(1, 400, 0); // RTT 400 ms > 100 ms left
   auto r = request(100 * kMs);
   EXPECT_EQ(lb_->chooseHost(&r->context).host, hosts_[0]);
 }
@@ -154,15 +161,15 @@ TEST_F(PeakEwmaDeadlineTest, TiesBrokenAtRandom) {
 }
 
 TEST_F(PeakEwmaDeadlineTest, FifoAdmissionScanSendsOldestFirstAndDropsPastDeadline) {
-  setHost(0, 1000, 9); // cost 10 s
-  setHost(1, 1000, 9); // cost 10 s
+  setHost(0, 10000, 9); // RTT 10 s
+  setHost(1, 10000, 9); // RTT 10 s
   Event::MockTimer* timer = expectTimer();
   auto a = request(5000 * kMs);
   auto ra = lb_->chooseHost(&a->context);
   EXPECT_EQ(ra.host, nullptr);
   EXPECT_TRUE(timer->enabled_);
 
-  setHost(1, 1000, 1); // host 1 now costs 2 s
+  setHost(1, 2000, 1); // host 1 now has RTT 2 s
   auto b = request(1000 * kMs); // 1 s left: host 1 would not fit anyway, but it must not overtake A
   auto c = request(9000 * kMs); // would fit host 1 now, but the queue is not empty: waits (FIFO)
   EXPECT_EQ(lb_->chooseHost(&b->context).host, nullptr);
@@ -208,8 +215,8 @@ TEST_F(PeakEwmaDeadlineTest, AlreadyLateWaitsThenIsDropped) {
 }
 
 TEST_F(PeakEwmaDeadlineTest, CancelledRequestIsRemovedWithoutCallback) {
-  setHost(0, 1000, 9);
-  setHost(1, 1000, 9);
+  setHost(0, 10000, 9);
+  setHost(1, 10000, 9);
   Event::MockTimer* timer = expectTimer();
   auto r = request(5000 * kMs);
   auto response = lb_->chooseHost(&r->context);
@@ -223,12 +230,12 @@ TEST_F(PeakEwmaDeadlineTest, CancelledRequestIsRemovedWithoutCallback) {
 }
 
 TEST_F(PeakEwmaDeadlineTest, RetryIsPickedAtOnceEvenWhileFirstAttemptsWait) {
-  setHost(0, 1000, 9); // cost 10 s
-  setHost(1, 1000, 9); // cost 10 s
+  setHost(0, 10000, 9); // RTT 10 s
+  setHost(1, 10000, 9); // RTT 10 s
   expectTimer();
   auto first = request(5000 * kMs);
   EXPECT_EQ(lb_->chooseHost(&first->context).host, nullptr); // waits in the FIFO
-  setHost(1, 1000, 1);                                        // host 1 now costs 2 s
+  setHost(1, 2000, 1);                                        // host 1 now has RTT 2 s
   auto retry = request(9000 * kMs, 2);
   auto response = lb_->chooseHost(&retry->context);
   EXPECT_EQ(response.host, hosts_[1]); // not behind the FIFO
@@ -237,8 +244,8 @@ TEST_F(PeakEwmaDeadlineTest, RetryIsPickedAtOnceEvenWhileFirstAttemptsWait) {
 }
 
 TEST_F(PeakEwmaDeadlineTest, RefusedRetryIsRecheckedAndSentLater) {
-  setHost(0, 1000, 9);
-  setHost(1, 1000, 9);
+  setHost(0, 10000, 9);
+  setHost(1, 10000, 9);
   Event::MockTimer* timer = expectTimer();
   auto retry = request(5000 * kMs, 2);
   auto response = lb_->chooseHost(&retry->context);
@@ -253,7 +260,7 @@ TEST_F(PeakEwmaDeadlineTest, RefusedRetryIsRecheckedAndSentLater) {
   EXPECT_TRUE(timer->enabled_);
   testing::Mock::VerifyAndClearExpectations(&retry->context);
 
-  setHost(0, 1000, 1); // host 0 now costs 2 s
+  setHost(0, 2000, 1); // host 0 now has RTT 2 s
   EXPECT_CALL(retry->context, onAsyncHostSelection(_, _))
       .WillOnce([this](Upstream::HostConstSharedPtr&& host, std::string&&) { EXPECT_EQ(host, hosts_[0]); });
   timer->invokeCallback();
@@ -261,8 +268,8 @@ TEST_F(PeakEwmaDeadlineTest, RefusedRetryIsRecheckedAndSentLater) {
 }
 
 TEST_F(PeakEwmaDeadlineTest, RefusedRetryIsNeverDroppedPastItsDeadline) {
-  setHost(0, 1000, 9);
-  setHost(1, 1000, 9);
+  setHost(0, 10000, 9);
+  setHost(1, 10000, 9);
   Event::MockTimer* timer = expectTimer();
   auto retry = request(5000 * kMs, 2);
   EXPECT_EQ(lb_->chooseHost(&retry->context).host, nullptr);
@@ -275,8 +282,8 @@ TEST_F(PeakEwmaDeadlineTest, RefusedRetryIsNeverDroppedPastItsDeadline) {
 }
 
 TEST_F(PeakEwmaDeadlineTest, CancelledRetryIsRemovedWithoutCallback) {
-  setHost(0, 1000, 9);
-  setHost(1, 1000, 9);
+  setHost(0, 10000, 9);
+  setHost(1, 10000, 9);
   Event::MockTimer* timer = expectTimer();
   auto retry = request(5000 * kMs, 2);
   auto response = lb_->chooseHost(&retry->context);

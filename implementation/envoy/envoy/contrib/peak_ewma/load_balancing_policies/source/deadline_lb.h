@@ -4,9 +4,10 @@
 // the testbed's DeadlineFilter and FilterWaitQueue (abstraction/ingress/load_balancer/design.md#deadlinefilter,
 // #filterwaitqueue) with Peak EWMA's cost as the per-host test:
 //
-//   keep host h  iff  h has no RTT sample yet, or  cost(h) * 1e6 <= remaining_ns
-//   cost(h) = ewma_rtt_ms(h) * (rq_active(h) + 1)          (Peak EWMA's Cost::compute, binary64)
-//   choose the kept host with the lowest Peak EWMA cost; ties at random
+//   reject host h  iff  h has an RTT sample and  ewma_rtt_ms(h) * 1e6 > remaining_ns      (binary64)
+//   choose the kept host with the lowest Peak EWMA cost, ewma_rtt_ms * (rq_active + 1); ties at random
+// (The EWMA RTT already includes the time a request waits at the server, so the test does not multiply it by the
+// active requests; the testbed's first version kept h iff cost(h) * 1e6 <= remaining_ns.)
 //
 // A request without the deadline header is not filtered (lowest cost over all healthy hosts) and never waits.
 // A request with it is sent at once if this worker's queue is empty and a host is kept; otherwise it joins the

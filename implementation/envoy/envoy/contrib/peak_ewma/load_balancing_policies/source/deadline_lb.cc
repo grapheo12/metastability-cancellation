@@ -58,7 +58,8 @@ int64_t PeakEwmaDeadlineLoadBalancer::nowUnixNs() const {
       .count();
 }
 
-// The DeadlineFilter over EVERY healthy host (not two random ones), then the lowest Peak EWMA cost.
+// The DeadlineFilter over EVERY healthy host (not two random ones): reject a host whose EWMA RTT > time left; then
+// the lowest Peak EWMA cost among the kept hosts.
 Upstream::HostConstSharedPtr
 PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const char* kind) {
   const auto& host_sets = priority_set_.hostSetsPerPriority();
@@ -75,7 +76,7 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
   for (size_t i = 0; i < hosts.size(); ++i) {
     auto* data = getPeakEwmaData(hosts[i]);
     const double ewma_ms = data != nullptr ? data->getEwmaRtt() : 0.0;
-    costs[i] = calculateHostCost(hosts[i]); // ewma_ms * (rq_active + 1) once a sample exists
+    costs[i] = calculateHostCost(hosts[i]); // ewma_ms * (rq_active + 1) once a sample exists: the choice
     if (!remaining_ns.has_value()) {
       keep[i] = true; // no deadline: not filtered
     } else if (late) {
@@ -83,7 +84,8 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
     } else if (ewma_ms <= 0.0) {
       keep[i] = true; // no RTT sample yet: eligible (as the Go DeadlineFilter without an EwmaExecTime)
     } else {
-      keep[i] = costs[i] * 1e6 <= static_cast<double>(*remaining_ns);
+      // The filter: reject the host if its current EWMA RTT exceeds the request's time left.
+      keep[i] = !(ewma_ms * 1e6 > static_cast<double>(*remaining_ns));
     }
     if (keep[i] && costs[i] < best) {
       best = costs[i];
