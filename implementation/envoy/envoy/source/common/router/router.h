@@ -438,11 +438,12 @@ public:
   bool shouldSelectAnotherHost(const Upstream::Host& host) override {
     // We only care about host selection when performing a retry, at which point we consult the
     // RetryState to see if we're configured to avoid certain hosts during retries.
-    if (!is_retry_) {
+    // impl/envoy (cancellation testbed): a load balancer may still be choosing a host for a retry (asynchronous
+    // host selection) after the response became final and retry_state_ was reset; nothing to avoid then.
+    if (!is_retry_ || retry_state_ == nullptr) {
       return false;
     }
 
-    ASSERT(retry_state_);
     return retry_state_->shouldSelectAnotherHost(host);
   }
 

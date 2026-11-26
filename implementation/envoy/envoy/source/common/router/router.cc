@@ -2122,6 +2122,12 @@ void Filter::onUpstreamHeaders(uint64_t response_code, Http::ResponseHeaderMapPt
   if (retry_state_) {
     retry_state_.reset();
   }
+  // impl/envoy (cancellation testbed): the response is final, so a retry still waiting for its host
+  // (asynchronous host selection) will never be used: cancel it now rather than when the stream ends.
+  if (host_selection_cancelable_) {
+    host_selection_cancelable_->cancel();
+    host_selection_cancelable_.reset();
+  }
 
   // Only send upstream service time if we received the complete request and this is not a
   // premature response.
