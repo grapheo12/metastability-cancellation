@@ -6,6 +6,7 @@
 #include "test/mocks/stats/mocks.h"
 #include "test/mocks/upstream/cluster_info.h"
 #include "test/mocks/upstream/host.h"
+#include "test/mocks/upstream/load_balancer_context.h"
 #include "test/mocks/upstream/priority_set.h"
 
 #include "absl/container/flat_hash_set.h"
@@ -112,6 +113,19 @@ TEST_F(PeakEwmaLoadBalancerComprehensiveTest, BasicHostSelection) {
 
 // Note: More detailed tests for RTT recording and EWMA calculation
 // are covered in host_data_test.cc and other unit tests
+
+// impl/envoy (cancellation testbed): hosts the context asks to avoid (retry host predicates) are not chosen.
+TEST_F(PeakEwmaLoadBalancerComprehensiveTest, HonorsRetryHostPredicates) {
+  createLoadBalancer();
+  NiceMock<Upstream::MockLoadBalancerContext> context;
+  ON_CALL(context, shouldSelectAnotherHost(testing::_))
+      .WillByDefault([this](const Upstream::Host& host) { return &host != hosts_[2].get(); });
+  for (int i = 0; i < 10; ++i) {
+    EXPECT_EQ(lb_->chooseHost(&context).host, hosts_[2]);
+  }
+  ON_CALL(context, shouldSelectAnotherHost(testing::_)).WillByDefault(Return(true)); // all excluded: all allowed
+  EXPECT_NE(lb_->chooseHost(&context).host, nullptr);
+}
 
 TEST_F(PeakEwmaLoadBalancerComprehensiveTest, NoHostsScenario) {
   createLoadBalancer();

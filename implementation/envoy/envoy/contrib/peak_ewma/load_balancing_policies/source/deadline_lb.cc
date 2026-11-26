@@ -161,7 +161,8 @@ int64_t PeakEwmaDeadlineLoadBalancer::nowUnixNs() const {
 // The DeadlineFilter over EVERY healthy host (not two random ones): reject a host whose ProvisionalCurrentRTT >
 // time left; then the lowest Peak EWMA cost among the kept hosts.
 Upstream::HostConstSharedPtr
-PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const char* kind) {
+PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const char* kind,
+                                     Upstream::LoadBalancerContext* context) {
   const auto& host_sets = priority_set_.hostSetsPerPriority();
   if (host_sets.empty() || host_sets[0]->healthyHosts().empty()) {
     return nullptr;
@@ -173,6 +174,18 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
   std::vector<double> costs(hosts.size());
   std::vector<double> provisional(hosts.size());
   std::vector<bool> keep(hosts.size());
+  // RetryElsewhere: hosts the context asks to avoid (retry host predicates) are not kept, unless that is all.
+  std::vector<bool> excluded(hosts.size(), false);
+  size_t n_excluded = 0;
+  if (context != nullptr) {
+    for (size_t i = 0; i < hosts.size(); ++i) {
+      excluded[i] = context->shouldSelectAnotherHost(*hosts[i]);
+      n_excluded += excluded[i] ? 1 : 0;
+    }
+    if (n_excluded == hosts.size()) {
+      std::fill(excluded.begin(), excluded.end(), false);
+    }
+  }
   double best = std::numeric_limits<double>::infinity();
   const int64_t now_mono = monoNowNs();
   for (size_t i = 0; i < hosts.size(); ++i) {
@@ -181,7 +194,9 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
     costs[i] = calculateHostCost(hosts[i]); // ewma_ms * (rq_active + 1) once a sample exists: the choice
     bool has_pending = false;
     provisional[i] = provisionalRtt(hosts[i], now_mono, has_pending);
-    if (!remaining_ns.has_value()) {
+    if (excluded[i]) {
+      keep[i] = false; // RetryElsewhere: not the backend(s) this request already tried
+    } else if (!remaining_ns.has_value()) {
       keep[i] = true; // no deadline: not filtered
     } else if (late) {
       keep[i] = false;
@@ -226,12 +241,12 @@ PeakEwmaDeadlineLoadBalancer::chooseHost(Upstream::LoadBalancerContext* context)
   const absl::optional<int64_t> deadline = deadlineOf(context);
   if (!deadline.has_value()) {
     // No RequestDeadline: never filtered, never waits.
-    Upstream::HostConstSharedPtr host = decide(absl::nullopt, "nofilter");
+    Upstream::HostConstSharedPtr host = decide(absl::nullopt, "nofilter", context);
     registerPending(context, host);
     return {host};
   }
   if (isRetry(context)) { // an LB retry: picked at once, refused (re-checked each scan) if nothing is kept
-    Upstream::HostConstSharedPtr host = decide(*deadline - nowUnixNs(), "retry");
+    Upstream::HostConstSharedPtr host = decide(*deadline - nowUnixNs(), "retry", context);
     if (host != nullptr) {
       registerPending(context, host);
       return {host};
@@ -241,7 +256,7 @@ PeakEwmaDeadlineLoadBalancer::chooseHost(Upstream::LoadBalancerContext* context)
   if (!queue_.empty()) {
     return enqueue(context, *deadline); // FIFO: never overtake a waiting request at admission
   }
-  Upstream::HostConstSharedPtr host = decide(*deadline - nowUnixNs(), "admit");
+  Upstream::HostConstSharedPtr host = decide(*deadline - nowUnixNs(), "admit", context);
   if (host != nullptr) {
     registerPending(context, host);
     return {host};
@@ -311,7 +326,7 @@ void PeakEwmaDeadlineLoadBalancer::scan() {
       context->onAsyncHostSelection(nullptr, std::string(kDroppedDetails));
       continue;
     }
-    Upstream::HostConstSharedPtr host = decide(remaining, "rescan");
+    Upstream::HostConstSharedPtr host = decide(remaining, "rescan", it->context);
     if (host != nullptr) {
       Upstream::LoadBalancerContext* context = it->context;
       it = queue_.erase(it);
@@ -332,7 +347,7 @@ void PeakEwmaDeadlineLoadBalancer::scan() {
       it = retry_waiters_.erase(it);
       continue;
     }
-    Upstream::HostConstSharedPtr host = decide(remaining, "retry_rescan"); // none once late: stays refused
+    Upstream::HostConstSharedPtr host = decide(remaining, "retry_rescan", it->context); // none once late: stays refused
     if (host != nullptr) {
       Upstream::LoadBalancerContext* context = it->context;
       it = retry_waiters_.erase(it);

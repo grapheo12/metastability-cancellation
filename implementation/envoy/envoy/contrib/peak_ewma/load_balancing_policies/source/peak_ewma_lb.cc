@@ -280,7 +280,7 @@ PeakEwmaLoadBalancer::selectFromTwoCandidates(const Upstream::HostVector& hosts,
 }
 
 Upstream::HostSelectionResponse
-PeakEwmaLoadBalancer::chooseHost(Upstream::LoadBalancerContext* /* context */) {
+PeakEwmaLoadBalancer::chooseHost(Upstream::LoadBalancerContext* context) {
   // Lazily aggregate EWMA data if the interval has elapsed.
   maybeAggregate();
 
@@ -292,11 +292,23 @@ PeakEwmaLoadBalancer::chooseHost(Upstream::LoadBalancerContext* /* context */) {
   }
 
   // Use first priority for now (can be extended for multi-priority).
-  const auto& hosts = host_sets[0]->healthyHosts();
+  const auto& healthy = host_sets[0]->healthyHosts();
 
-  if (hosts.empty()) {
+  if (healthy.empty()) {
     return {nullptr, ""};
   }
+
+  // impl/envoy (cancellation testbed): honor the retry host predicates (e.g. previous_hosts for the testbed's
+  // RetryElsewhere): hosts the context asks to avoid are left out, unless that would leave none.
+  Upstream::HostVector allowed;
+  if (context != nullptr) {
+    for (const auto& host : healthy) {
+      if (!context->shouldSelectAnotherHost(*host)) {
+        allowed.push_back(host);
+      }
+    }
+  }
+  const auto& hosts = (context != nullptr && !allowed.empty()) ? allowed : healthy;
 
   if (hosts.size() == 1) {
     return {hosts[0], ""};

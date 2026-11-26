@@ -143,7 +143,9 @@ private:
   int64_t nowUnixNs() const;
   // One decision over every healthy host: with remaining_ns, the filtered lowest-cost host or nullptr if none is
   // kept; without, the lowest-cost host. kind names the decision in the trace (admit, rescan, nofilter).
-  Upstream::HostConstSharedPtr decide(absl::optional<int64_t> remaining_ns, const char* kind);
+  // context: hosts it asks to avoid (retry host predicates, e.g. previous_hosts) are not kept, unless all are.
+  Upstream::HostConstSharedPtr decide(absl::optional<int64_t> remaining_ns, const char* kind,
+                                      Upstream::LoadBalancerContext* context);
   Upstream::HostSelectionResponse enqueue(Upstream::LoadBalancerContext* context, int64_t deadline_unix_ns);
   Upstream::HostSelectionResponse waitAsRetry(Upstream::LoadBalancerContext* context, int64_t deadline_unix_ns);
 

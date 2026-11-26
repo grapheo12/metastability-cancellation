@@ -343,6 +343,24 @@ TEST_F(PeakEwmaDeadlineTest, HostWithoutSampleButPendingUsesThePendingLatency) {
   EXPECT_EQ(lb_->chooseHost(&c->context).host, hosts_[0]); // 10 s <= 11 s: kept, and still the cheaper host
 }
 
+// RetryElsewhere: a retry never goes back to a backend the router's previous_hosts predicate excludes.
+TEST_F(PeakEwmaDeadlineTest, RetryAvoidsExcludedBackend) {
+  setHost(0, 400, 0);
+  setHost(1, 400, 0); // tie: random 0 would pick host 0
+  auto retry = request(17000 * kMs, 2);
+  ON_CALL(retry->context, shouldSelectAnotherHost(_))
+      .WillByDefault([this](const Upstream::Host& host) { return &host == hosts_[0].get(); });
+  EXPECT_EQ(lb_->chooseHost(&retry->context).host, hosts_[1]);
+}
+
+TEST_F(PeakEwmaDeadlineTest, AllBackendsExcludedFallsBackToAll) {
+  setHost(0, 400, 0);
+  setHost(1, 400, 0);
+  auto retry = request(17000 * kMs, 2);
+  ON_CALL(retry->context, shouldSelectAnotherHost(_)).WillByDefault(Return(true));
+  EXPECT_EQ(lb_->chooseHost(&retry->context).host, hosts_[0]); // nothing left: exclusion ignored
+}
+
 } // namespace
 } // namespace PeakEwma
 } // namespace LoadBalancingPolicies
