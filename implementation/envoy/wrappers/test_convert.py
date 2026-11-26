@@ -119,7 +119,8 @@ class PeakEwmaTraceMerge(unittest.TestCase):
                 "t_unix_ns,host_a,active_a,ewma_a_ms,cost_a,host_b,active_b,ewma_b_ms,cost_b,chosen\n")
             out = os.path.join(d, "ing")
             merged = convert.merge_peak_ewma(pre, backends, 1_000_000_000, out)
-            self.assertEqual({k: len(v) for k, v in merged.items()}, {"ewma": 3, "picks": 1, "evals": 0, "queue": 0})
+            self.assertEqual({k: len(v) for k, v in merged.items()}, {"ewma": 3, "picks": 1, "evals": 0, "queue": 0,
+                                                                     "anxious": 0, "exec": 0})
             up = open(out + ".peak_ewma_updates.csv").read().splitlines()
             self.assertEqual(up, [convert.PEAK_EWMA_UPDATES_HEADER,
                                   "100,0,390,-5,1,401,390",
@@ -134,7 +135,7 @@ class PeakEwmaTraceMerge(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             out = os.path.join(d, "ing")
             self.assertEqual(convert.merge_peak_ewma(out + ".peak_ewma", ["a:1"], 0, out),
-                             {"ewma": [], "picks": [], "evals": [], "queue": []})
+                             {"ewma": [], "picks": [], "evals": [], "queue": [], "anxious": [], "exec": []})
             self.assertEqual(os.listdir(d), [])  # no outputs without trace files
 
 
@@ -174,6 +175,30 @@ class PeakEwmaDeadlineTrace(unittest.TestCase):
             s = convert.ingress_summary([], backends, {}, 0, 1.0, convert.filter_counts(merged["queue"]))
             self.assertEqual((s["filter_queued"], s["filter_dropped"], s["filter_queue_max"]), (3, 1, 3))
             self.assertEqual(convert.ingress_summary([], backends, {}, 0, 1.0)["filter_queued"], 0)
+
+
+class AnxiousTraceMerge(unittest.TestCase):
+    def test_anxious_and_exec(self):
+        backends = ["10.0.0.1:8080", "10.0.0.2:8080"]
+        with tempfile.TemporaryDirectory() as d:
+            pre = os.path.join(d, "ing.peak_ewma")
+            open(pre + ".anxious.0.csv", "w").write(
+                "t_unix_ns,event,seq,host,current_ns,remaining_ns,in_flight,anxious\n"
+                "1000000100,eval,,,,,9,1\n"
+                "1000000200,retry,7,10.0.0.1:8080,240,20,,\n")
+            open(pre + ".exec.0.csv", "w").write(
+                "t_unix_ns,host,exec_ns,backend,ewma_exec_ns,ewma_anti_ns\n"
+                "1000000050,10.0.0.1:8080,80,10.0.0.1:8080,80,\n"
+                "1000000050,10.0.0.1:8080,80,10.0.0.2:8080,,80\n"
+                "1000000060,10.0.0.2:8080,100,10.0.0.1:8080,80,100\n"
+                "1000000060,10.0.0.2:8080,100,10.0.0.2:8080,100,80\n")
+            out = os.path.join(d, "ing")
+            merged = convert.merge_peak_ewma(pre, backends, 1_000_000_000, out)
+            self.assertEqual(open(out + ".anxious.csv").read().splitlines(),
+                             [convert.ANXIOUS_HEADER, "100,eval,,,,,9,1", "200,retry,7,0,240,20,,"])
+            self.assertEqual(open(out + ".exec.csv").read().splitlines()[1], "50,0,80,0,80,")
+            self.assertEqual(convert.exec_ewmas(merged["exec"], 2), [(80.0, 100.0), (100.0, 80.0)])
+            self.assertEqual(convert.exec_ewmas([], 2), [(None, None), (None, None)])
 
 
 class LoadgenConversion(unittest.TestCase):

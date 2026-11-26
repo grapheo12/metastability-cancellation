@@ -89,6 +89,25 @@ has `per_try_timeout = lb_retry_timeout_ms`, `num_retries = N`, `retry_on: retri
 within a request); a hedging loser is `reset`. `lb_retries` in the summary counts attempts beyond each request's
 first.
 
+`--lb_retry_policy anxious` with `--lb_max_retries N` (N > 0), `--lb_retry_anxiety_ratio` (alpha),
+`--lb_retry_late_factor` (beta) and `--ewma_beta` maps to the Go Ingress's AnxiousRetry
+(`abstraction/ingress/retry_policy/design.md#anxious`), built from three vendored pieces:
+- **`testbed_anxious` upstream filter** (`envoy/contrib/peak_ewma/anxious/`), in the cluster's upstream filter
+  chain, one instance per upstream attempt: AttemptSent (TicketSeq, backend, the `x-request-deadline`) on request
+  headers, AttemptFinished when the attempt ends, and the ExecReport's `exec_ns` of 202 / 503 answers for
+  EwmaExecTime and EwmaAntiServiceTime (`ewma_beta`). It keeps the AnxiousTracker (EdfAhead, CurrentExpFinish,
+  RetryExpFinish, the anxious set at most every 10 ms after a change) exactly as the spec's pseudocode; its tests
+  are the spec's worked examples.
+- **Router retry hook** (`envoy/source/common/router/testbed_retry_hook.h`): while the filter is configured, every
+  upstream attempt ticks every 10 ms; on the newest attempt of an unanswered request the router asks the tracker
+  (anxious and ExpectedLate: CurrentExpFinish > beta × time left) and, on yes, starts a hedge.
+- **RetryElsewhere**: the route's `retry_host_predicate: previous_hosts`; Peak EWMA and `peak_ewma_deadline` leave
+  out the hosts it excludes (unless all are).
+Differences from Go: as for `timeout`, the first answer wins and the other attempts are reset (their tracker
+entries end then); every backend is live (no Heartbeat Monitor); RetryRefused is not observed. The trace adds
+`ingress.anxious.csv` (evaluations and retries decided) and `ingress.exec.csv` (EWMAs after each sample), and the
+summary reports each backend's final `ewma_exec_ns` and `ewma_anti_exec_ns`.
+
 ### Peak EWMA trace
 
 With `--lb_policy ewma`, the ingress wrapper sets `PEAK_EWMA_TRACE_PREFIX` and Envoy's Peak EWMA (vendored change,
@@ -105,7 +124,7 @@ python3 implementation/envoy/wrappers/plot_peak_ewma.py <results dir>   # writes
 
 ## Not done yet
 
-- Ingress: DeadlineFilter strategies other than `deadline_mean` with `ewma`, the `anxious` LbRetry policy,
-  Heartbeat Monitor, LoadCanceller (the wrapper rejects their flags).
+- Ingress: DeadlineFilter strategies other than `deadline_mean` with `ewma`, Heartbeat Monitor, LoadCanceller
+  (the wrapper rejects their flags).
 - LoadGenerator: client retries (RequestCopies) and SLO cancellation.
 - No `Design specific to C++` sections yet: the wrappers and Nighthawk changes are not traced to `abstraction/`.

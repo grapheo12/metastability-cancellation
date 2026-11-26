@@ -189,7 +189,11 @@ def ingress_summary(rows, backends, config, run_start_unix_ns, run_end_s, filter
 #   <prefix>.evals.<n>.csv  t_unix_ns,decision,kind,host,active,ewma_ms,cost,remaining_ns,eligible,chosen,provisional_ms
 #                           (files from before provisional_ms have 10 columns; merged with an empty value)
 #   <prefix>.queue.<n>.csv  t_unix_ns,event,wait_ns,remaining_ns,host
-# (picks: Peak EWMA; evals and queue: peak_ewma_deadline). The merged outputs replace hosts by server ids
+#   <prefix>.anxious.0.csv  t_unix_ns,event,seq,host,current_ns,remaining_ns,in_flight,anxious   (AnxiousRetry:
+#                           event eval (in_flight, anxious) or retry (seq, host, current_ns, remaining_ns))
+#   <prefix>.exec.0.csv     t_unix_ns,host,exec_ns,backend,ewma_exec_ns,ewma_anti_ns   (one row per backend
+#                           after each ExecReport sample)
+# (picks: Peak EWMA; evals and queue: peak_ewma_deadline; anxious and exec: the testbed_anxious filter). The merged outputs replace hosts by server ids
 # (--backends order; an empty host stays empty) and Unix times by t_ns since run_start_unix_ns (the forwards.csv
 # time base), add the instance number as `worker` where decisions or queues are per worker, and are sorted by t_ns
 # (stable, in instance order).
@@ -198,6 +202,8 @@ PEAK_EWMA_PICKS_HEADER = "t_ns,server_a,active_a,ewma_a_ms,cost_a,server_b,activ
 PEAK_EWMA_EVALS_HEADER = ("t_ns,worker,decision,kind,server_id,active,ewma_ms,cost,remaining_ns,eligible,chosen,"
                           "provisional_ms")
 PEAK_EWMA_QUEUE_HEADER = "t_ns,worker,event,wait_ns,remaining_ns,server_id"
+ANXIOUS_HEADER = "t_ns,event,seq,server_id,current_ns,remaining_ns,in_flight,anxious"
+EXEC_HEADER = "t_ns,server_id,exec_ns,backend,ewma_exec_ns,ewma_anti_ns"
 
 # kind -> (raw width, raw host columns, output file suffix, output header, add the worker column)
 _PEAK_EWMA_KINDS = {
@@ -205,6 +211,8 @@ _PEAK_EWMA_KINDS = {
     "picks": (10, (1, 5), "peak_ewma_picks", PEAK_EWMA_PICKS_HEADER, False),
     "evals": (11, (3,), "peak_ewma_evals", PEAK_EWMA_EVALS_HEADER, True),
     "queue": (5, (4,), "peak_ewma_queue", PEAK_EWMA_QUEUE_HEADER, True),
+    "anxious": (8, (3,), "anxious", ANXIOUS_HEADER, False),
+    "exec": (6, (1, 3), "exec", EXEC_HEADER, False),
 }
 
 
@@ -259,6 +267,17 @@ def merge_peak_ewma(prefix, backends, run_start_unix_ns, out_prefix, remove=True
                 os.remove(path)
         merged_by_kind[kind] = merged
     return merged_by_kind
+
+
+def exec_ewmas(exec_rows, n_backends):
+    """[(ewma_exec_ns, ewma_anti_exec_ns)] per backend (floats or None): the last values in the merged exec trace
+    (t_ns,server_id,exec_ns,backend,ewma_exec_ns,ewma_anti_ns); all None without one."""
+    out = [(None, None)] * n_backends
+    for row in exec_rows:
+        if row[3] != "":
+            b = int(row[3])
+            out[b] = (float(row[4]) if row[4] else None, float(row[5]) if row[5] else None)
+    return out
 
 
 def retry_counts(evals_rows):

@@ -13,6 +13,8 @@
   5  share of decisions choosing the server, per 1 s
   6  peak_ewma_deadline only: FilterWaitQueue length summed over workers (column 1) and requests dropped past
      their deadline per 1 s (column 2)
+  7  AnxiousRetry only (ingress.anxious.csv): attempts published as anxious at each evaluation (column 1) and LB
+     retries decided per 1 s (column 2)
 
 Decisions are Peak EWMA's picks (two candidates) or, with peak_ewma_deadline, its evals (every host).
 
@@ -30,6 +32,7 @@ from benchrunner import plotter  # noqa: E402
 ACTIVE_BIN_MS = 500
 SHARE_BIN_MS = 1000
 ROWS = ["active requests at the LB", "EWMA RTT (ms)", "alpha", "cost = EWMA × (active + 1) (ms)", "pick share"]
+ANXIOUS_TITLES = ["anxious attempts (published set)", "anxious retries decided per s"]
 QUEUE_TITLES = ["wait queue length (all workers; dashed: refused LB retries waiting)", "dropped past deadline per s"]
 
 
@@ -97,6 +100,13 @@ def queue_series(queue):
     return steps, per_s, retry_steps
 
 
+def anxious_series(rows):
+    """(anxious count at each evaluation, retries decided per 1 s) from the merged anxious trace."""
+    evals = [(int(r["t_ns"]) / 1e9, int(r["anxious"])) for r in rows if r["event"] == "eval" and r["anxious"]]
+    retries = [(int(r["t_ns"]), 1.0) for r in rows if r["event"] == "retry"]
+    return evals, [(x, y * 1000 / SHARE_BIN_MS) for x, y in binned_sum(retries, SHARE_BIN_MS)]
+
+
 def binned_sum(points, bin_ms):
     bins = {}
     for t, y in points:
@@ -147,8 +157,10 @@ def plot_dir(output_dir):
         rows = decisions(picks or [], evals or [])
         servers = sorted({int(u["server_id"]) for u in updates} | {int(r[1]) for r in rows})
         label = ", ".join(f"{k}={plotter._cell(row[k])}" for k in swept_keys) or f"point {row['point']}"
+        anxious = read_csv(os.path.join(pdir, "ingress.anxious.csv"))
         lines.append((label, color, {s: point_series(updates, rows, s) for s in servers},
-                      queue_series(queue) if queue is not None else None))
+                      queue_series(queue) if queue is not None else None,
+                      anxious_series(anxious) if anxious is not None else None))
         params = plotter._read_json(os.path.join(pdir, "params.json")) or {}
         f = plotter.failure_time_ms(params)
         if f is not None:
@@ -156,15 +168,19 @@ def plot_dir(output_dir):
     if not lines:
         print(f"plot_peak_ewma: {output_dir}: nothing to plot")
         return None
-    servers = sorted({s for _, _, per, _ in lines for s in per})
-    has_queue = any(q is not None for *_, q in lines)
-    n_rows = len(ROWS) + (1 if has_queue else 0)
+    servers = sorted({s for _, _, per, _, _ in lines for s in per})
+    has_queue = any(line[3] is not None for line in lines)
+    has_anxious = any(line[4] is not None for line in lines)
+    n_rows = len(ROWS) + (1 if has_queue else 0) + (1 if has_anxious else 0)
+    anxious_row = n_rows if has_anxious else None
     titles = [f"server {s}: {r}" for r in ROWS for s in servers]
     if has_queue:
         titles += [QUEUE_TITLES[c] if c < len(QUEUE_TITLES) else "" for c in range(len(servers))]
+    if has_anxious:
+        titles += [ANXIOUS_TITLES[c] if c < len(ANXIOUS_TITLES) else "" for c in range(len(servers))]
     fig = make_subplots(rows=n_rows, cols=len(servers), shared_xaxes=True, vertical_spacing=0.035,
                         subplot_titles=titles)
-    for label, color, per, queue in lines:
+    for label, color, per, queue, anxious in lines:
         shown = False
         for col, s in enumerate(servers, start=1):
             if s not in per:
@@ -207,6 +223,17 @@ def plot_dir(output_dir):
                                                        shape="hv" if col == 1 else "linear"),
                                              marker=dict(size=3, color=plotter.palette_color(color))),
                                   row=len(ROWS) + 1, col=col)
+                    shown = True
+        if anxious is not None:
+            for col, series in enumerate(anxious[:min(2, len(servers))], start=1):
+                if series:
+                    fig.add_trace(go.Scatter(x=[p[0] for p in series], y=[p[1] for p in series], name=label,
+                                             legendgroup=label, showlegend=not shown,
+                                             mode="lines" if col == 1 else "lines+markers",
+                                             line=dict(color=plotter.palette_color(color), width=1,
+                                                       shape="hv" if col == 1 else "linear"),
+                                             marker=dict(size=3, color=plotter.palette_color(color))),
+                                  row=anxious_row, col=col)
                     shown = True
     for col in range(1, len(servers) + 1):
         fig.update_yaxes(type="log", row=3, col=col)
