@@ -148,7 +148,7 @@ class PeakEwmaDeadlineTrace(unittest.TestCase):
                 eh + "1000000100,0,admit,10.0.0.1:8080,9,400,4000,3999999999,0,0\n"
                      "1000000100,0,admit,10.0.0.2:8080,19,400,8000,3999999999,0,0\n"
                      "1000000300,1,rescan,10.0.0.2:8080,1,400,800,3999999799,1,1\n")
-            open(pre + ".evals.1.csv", "w").write(eh + "1000000200,0,nofilter,10.0.0.1:8080,0,0,10,,1,1\n")
+            open(pre + ".evals.1.csv", "w").write(eh + "1000000200,0,nofilter,10.0.0.1:8080,0,0,10,,1,1,6468.5\n")
             qh = "t_unix_ns,event,wait_ns,remaining_ns,host\n"
             open(pre + ".queue.0.csv", "w").write(
                 qh + "1000000100,queued,0,3999999999,\n1000000300,sent,200,3999999799,10.0.0.2:8080\n")
@@ -159,10 +159,10 @@ class PeakEwmaDeadlineTrace(unittest.TestCase):
             merged = convert.merge_peak_ewma(pre, backends, 1_000_000_000, out)
             ev = open(out + ".peak_ewma_evals.csv").read().splitlines()
             self.assertEqual(ev, [convert.PEAK_EWMA_EVALS_HEADER,
-                                  "100,0,0,admit,0,9,400,4000,3999999999,0,0",
-                                  "100,0,0,admit,1,19,400,8000,3999999999,0,0",
-                                  "200,1,0,nofilter,0,0,0,10,,1,1",
-                                  "300,0,1,rescan,1,1,400,800,3999999799,1,1"])
+                                  "100,0,0,admit,0,9,400,4000,3999999999,0,0,",
+                                  "100,0,0,admit,1,19,400,8000,3999999999,0,0,",
+                                  "200,1,0,nofilter,0,0,0,10,,1,1,6468.5",
+                                  "300,0,1,rescan,1,1,400,800,3999999799,1,1,"])
             q = open(out + ".peak_ewma_queue.csv").read().splitlines()
             self.assertEqual(q, [convert.PEAK_EWMA_QUEUE_HEADER, "100,0,queued,0,3999999999,",
                                  "150,1,queued,0,10,", "160,1,queued,0,500,", "250,1,dropped,100,-90,",

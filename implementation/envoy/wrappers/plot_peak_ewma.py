@@ -4,8 +4,9 @@
 <results dir>/plots/peak_ewma.html, one colour per done point, rows = metric, columns = server:
 
   1  active requests at the LB (rq_active of each evaluated host at each decision), mean per 500 ms
-  2  EWMA RTT (ms) after each update; with peak_ewma_deadline also the median time left (ms) of the deadline
-     decisions (dashed): a host is rejected while its EWMA RTT is above that
+  2  EWMA RTT (ms) after each update; with peak_ewma_deadline also the median ProvisionalCurrentRTT (dotted) and
+     the median time left (dashed) of the deadline decisions per 500 ms: a host is rejected while its provisional
+     RTT is above the time left
   3  alpha of each update (1 - e^(-dt/tau); 1 when samples arrive out of order), log scale
   4  cost = EWMA RTT x (active + 1) of each evaluated host at each decision, mean per 500 ms, log scale (the
      choice among kept hosts)
@@ -51,16 +52,18 @@ def binned_mean(points, bin_ms):
 
 
 def decisions(picks, evals):
-    """[(t_ns, server, active, cost, chosen 0/1, remaining_ms or None)], one per host evaluated per decision."""
+    """[(t_ns, server, active, cost, chosen 0/1, remaining_ms or None, provisional_ms or None)], one per host
+    evaluated per decision."""
     out = []
     for p in picks:
         for side in ("a", "b"):
             out.append((int(p["t_ns"]), p[f"server_{side}"], float(p[f"active_{side}"]), float(p[f"cost_{side}"]),
-                        1.0 if p["chosen"] == side else 0.0, None))
+                        1.0 if p["chosen"] == side else 0.0, None, None))
     for e in evals:
         remaining = int(e["remaining_ns"]) / 1e6 if e["remaining_ns"] else None
+        provisional = float(e["provisional_ms"]) if e.get("provisional_ms") else None
         out.append((int(e["t_ns"]), e["server_id"], float(e["active"]), float(e["cost"]), float(e["chosen"]),
-                    remaining))
+                    remaining, provisional))
     return out
 
 
@@ -103,10 +106,11 @@ def binned_sum(points, bin_ms):
 
 
 def point_series(updates, rows, server):
-    """The five (xs, ys) series of one server, plus the median time left of the deadline decisions (ms)."""
+    """The five (xs, ys) series of one server, plus the median time left and the median ProvisionalCurrentRTT of
+    the deadline decisions (ms)."""
     s = str(server)
-    active, cost, share, remaining = [], [], [], []
-    for t, srv, a, c, chosen, rem in rows:
+    active, cost, share, remaining, provisional = [], [], [], [], []
+    for t, srv, a, c, chosen, rem, prov in rows:
         if srv != s:
             continue
         active.append((t, a))
@@ -114,11 +118,14 @@ def point_series(updates, rows, server):
         share.append((t, chosen))
         if rem is not None:
             remaining.append((t, rem))
+            if prov is not None:
+                provisional.append((t, prov))
     ups = [u for u in updates if u["server_id"] == s]
     ewma = [(int(u["t_ns"]) / 1e9, float(u["ewma_after_ms"])) for u in ups]
     alpha = [(int(u["t_ns"]) / 1e9, float(u["alpha"])) for u in ups if float(u["alpha"]) > 0]
     return [binned_mean(active, ACTIVE_BIN_MS), ewma, alpha, binned_mean(cost, ACTIVE_BIN_MS),
-            binned_mean(share, SHARE_BIN_MS)], binned_median(remaining, ACTIVE_BIN_MS)
+            binned_mean(share, SHARE_BIN_MS)], binned_median(remaining, ACTIVE_BIN_MS), \
+        binned_median(provisional, ACTIVE_BIN_MS)
 
 
 def plot_dir(output_dir):
@@ -162,7 +169,12 @@ def plot_dir(output_dir):
         for col, s in enumerate(servers, start=1):
             if s not in per:
                 continue
-            series_list, remaining = per[s]
+            series_list, remaining, provisional = per[s]
+            if provisional:  # ProvisionalCurrentRTT of the deadline decisions, against the EWMA RTT
+                fig.add_trace(go.Scatter(x=[p[0] for p in provisional], y=[p[1] for p in provisional],
+                                         name=f"{label}: provisional RTT (ms)", legendgroup=label, showlegend=False,
+                                         mode="lines", line=dict(color=plotter.palette_color(color), width=1,
+                                                                 dash="dot")), row=2, col=col)
             if remaining:  # time left of the deadline decisions, against the EWMA RTT (the filter's test)
                 fig.add_trace(go.Scatter(x=[p[0] for p in remaining], y=[p[1] for p in remaining],
                                          name=f"{label}: time left (ms)", legendgroup=label, showlegend=False,

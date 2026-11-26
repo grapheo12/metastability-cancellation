@@ -52,8 +52,13 @@ programs' flags, run Envoy and Nighthawk, and write the Go programs' output file
 `--lb_filter deadline_mean` with `--lb_policy ewma` selects `peak_ewma_deadline`, a policy added to the vendored
 contrib (`envoy/contrib/peak_ewma/load_balancing_policies/source/deadline_lb.h`): the DeadlineFilter and
 FilterWaitQueue of `abstraction/ingress/load_balancer/design.md` with Peak EWMA's RTT EWMA as the test.
-- Every backend is evaluated: rejected if its current `EWMA RTT > time left` (a backend without an RTT sample yet
-  is kept); the lowest
+- Every backend is evaluated: rejected if its `ProvisionalCurrentRTT > time left`. ProvisionalCurrentRTT treats the
+  backend's pending requests as answered now: with nothing pending it is the EWMA RTT; otherwise it is
+  `(1 − α) × EWMA RTT + α × L`, L the latency so far of its oldest pending request and α the EWMA's own time-based
+  weight `1 − e^(−(now − last sample)/τ)`, so a stalled backend's value climbs toward its stall age while a healthy
+  one stays at its EWMA. (Earlier: `EWMA RTT > time left`, and before that `EWMA RTT × (active + 1) <= time left`.)
+  A backend with no RTT sample and nothing pending is kept. Pending requests are recorded when the balancer hands
+  out a backend and removed when the request's stream ends. The lowest
   Peak EWMA cost (`EWMA RTT × (active + 1)`) among the kept ones is chosen (ties at random). The EWMA RTT already
   includes the time a request waits at the server, so the test does not multiply it by the active requests (the
   first version, up to commit `1495570d`, kept a backend if `EWMA RTT × (active + 1) <= time left`).

@@ -186,7 +186,8 @@ def ingress_summary(rows, backends, config, run_start_unix_ns, run_end_s, filter
 # (one instance per worker; envoy/contrib/peak_ewma/load_balancing_policies/source/peak_ewma_lb.h, PeakEwmaTrace):
 #   <prefix>.ewma.<n>.csv   t_unix_ns,host,rtt_ms,dt_ns,alpha,ewma_before_ms,ewma_after_ms
 #   <prefix>.picks.<n>.csv  t_unix_ns,host_a,active_a,ewma_a_ms,cost_a,host_b,active_b,ewma_b_ms,cost_b,chosen
-#   <prefix>.evals.<n>.csv  t_unix_ns,decision,kind,host,active,ewma_ms,cost,remaining_ns,eligible,chosen
+#   <prefix>.evals.<n>.csv  t_unix_ns,decision,kind,host,active,ewma_ms,cost,remaining_ns,eligible,chosen,provisional_ms
+#                           (files from before provisional_ms have 10 columns; merged with an empty value)
 #   <prefix>.queue.<n>.csv  t_unix_ns,event,wait_ns,remaining_ns,host
 # (picks: Peak EWMA; evals and queue: peak_ewma_deadline). The merged outputs replace hosts by server ids
 # (--backends order; an empty host stays empty) and Unix times by t_ns since run_start_unix_ns (the forwards.csv
@@ -194,14 +195,15 @@ def ingress_summary(rows, backends, config, run_start_unix_ns, run_end_s, filter
 # (stable, in instance order).
 PEAK_EWMA_UPDATES_HEADER = "t_ns,server_id,rtt_ms,dt_ns,alpha,ewma_before_ms,ewma_after_ms"
 PEAK_EWMA_PICKS_HEADER = "t_ns,server_a,active_a,ewma_a_ms,cost_a,server_b,active_b,ewma_b_ms,cost_b,chosen"
-PEAK_EWMA_EVALS_HEADER = "t_ns,worker,decision,kind,server_id,active,ewma_ms,cost,remaining_ns,eligible,chosen"
+PEAK_EWMA_EVALS_HEADER = ("t_ns,worker,decision,kind,server_id,active,ewma_ms,cost,remaining_ns,eligible,chosen,"
+                          "provisional_ms")
 PEAK_EWMA_QUEUE_HEADER = "t_ns,worker,event,wait_ns,remaining_ns,server_id"
 
 # kind -> (raw width, raw host columns, output file suffix, output header, add the worker column)
 _PEAK_EWMA_KINDS = {
     "ewma": (7, (1,), "peak_ewma_updates", PEAK_EWMA_UPDATES_HEADER, False),
     "picks": (10, (1, 5), "peak_ewma_picks", PEAK_EWMA_PICKS_HEADER, False),
-    "evals": (10, (3,), "peak_ewma_evals", PEAK_EWMA_EVALS_HEADER, True),
+    "evals": (11, (3,), "peak_ewma_evals", PEAK_EWMA_EVALS_HEADER, True),
     "queue": (5, (4,), "peak_ewma_queue", PEAK_EWMA_QUEUE_HEADER, True),
 }
 
@@ -221,6 +223,8 @@ def _trace_rows(prefix, kind):
             next(f, None)
             for line in f:
                 parts = line.rstrip("\n").split(",")
+                if kind == "evals" and len(parts) == width - 1:  # before provisional_ms
+                    parts.append("")
                 if len(parts) == width and parts[0].lstrip("-").isdigit():
                     rows.append((n, parts))
     return [p for _, p in sorted(found)], rows
