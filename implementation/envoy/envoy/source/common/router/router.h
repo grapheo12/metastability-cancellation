@@ -537,6 +537,7 @@ public:
                               bool pool_success) override;
   void onPerTryTimeout(UpstreamRequest& upstream_request) override;
   void onPerTryIdleTimeout(UpstreamRequest& upstream_request) override;
+  bool onRetryHookTick(UpstreamRequest& upstream_request) override; // impl/envoy: testbed_retry_hook.h
   void onStreamMaxDurationReached(UpstreamRequest& upstream_request) override;
   void setupRouteTimeoutForWebsocketUpgrade() override;
   void disableRouteTimeoutForWebsocketUpgrade() override;

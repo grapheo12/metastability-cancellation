@@ -404,6 +404,17 @@ envoy_cc_library(
     ],
 )
 
+# impl/envoy (cancellation testbed): process-wide retry hook (testbed_retry_hook.h).
+envoy_cc_library(
+    name = "testbed_retry_hook_lib",
+    srcs = ["testbed_retry_hook.cc"],
+    hdrs = ["testbed_retry_hook.h"],
+    deps = [
+        "//envoy/http:header_map_interface",
+        "//envoy/stream_info:stream_info_interface",
+    ],
+)
+
 envoy_cc_library(
     name = "router_lib",
     srcs = [
@@ -415,6 +426,7 @@ envoy_cc_library(
         "upstream_request.h",
     ],
     deps = [
+        ":testbed_retry_hook_lib",
         ":context_lib",
         ":debug_config_lib",
         ":header_parser_lib",

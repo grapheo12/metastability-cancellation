@@ -1,4 +1,5 @@
 #include "source/common/router/router.h"
+#include "source/common/router/testbed_retry_hook.h"
 
 #include <algorithm>
 #include <chrono>
@@ -1529,6 +1530,38 @@ void Filter::onSoftPerTryTimeout(UpstreamRequest& upstream_request) {
           StreamInfo::CoreResponseFlag::UpstreamRetryLimitExceeded);
     }
   }
+}
+
+// impl/envoy (cancellation testbed): a TestbedRetryHook tick on an upstream attempt (testbed_retry_hook.h). Only
+// the newest attempt of a request that is not answered and not already retried from this attempt is considered;
+// on the hook's yes a retry starts as for a hedged per-try timeout (onSoftPerTryTimeout, without its outlier
+// detection update): the attempt keeps running and the retry's host comes from the load balancer (with the route's
+// retry host predicates). Returns whether the attempt should keep ticking.
+bool Filter::onRetryHookTick(UpstreamRequest& upstream_request) {
+  TestbedRetryHook* hook = TestbedRetryHook::get();
+  if (hook == nullptr || downstream_response_started_ || retry_state_ == nullptr ||
+      upstream_request.retried() || downstream_headers_ == nullptr || upstream_requests_.empty() ||
+      upstream_requests_.front().get() != &upstream_request) {
+    return false; // answered, no retries, or no longer the newest attempt: never retried from here
+  }
+  if (!hook->shouldRetryNow(callbacks_->streamInfo(), *downstream_headers_)) {
+    return true; // ask again at the next tick
+  }
+  RetryStatus retry_status = retry_state_->shouldHedgeRetryPerTryTimeout(
+      [this, can_use_http3 = upstream_request.upstreamStreamOptions().can_use_http3_]() -> void {
+        doRetry(/*can_send_early_data*/ false, can_use_http3, TimeoutRetry::No);
+      });
+  updateStatsOnNoRetry(retry_status);
+  if (retry_status == RetryStatus::Yes) {
+    runRetryOptionsPredicates(upstream_request);
+    pending_retries_++;
+    upstream_request.retried(true);
+  } else if (retry_status == RetryStatus::NoOverflow) {
+    callbacks_->streamInfo().setResponseFlag(StreamInfo::CoreResponseFlag::UpstreamOverflow);
+  } else if (retry_status == RetryStatus::NoRetryLimitExceeded) {
+    callbacks_->streamInfo().setResponseFlag(StreamInfo::CoreResponseFlag::UpstreamRetryLimitExceeded);
+  }
+  return false; // retried, or no budget left: this attempt is not asked again
 }
 
 void Filter::onPerTryIdleTimeout(UpstreamRequest& upstream_request) {

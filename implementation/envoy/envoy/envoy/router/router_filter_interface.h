@@ -99,6 +99,14 @@ public:
   virtual void onPerTryIdleTimeout(UpstreamRequest& upstream_request) PURE;
 
   /*
+   * impl/envoy (cancellation testbed): called every kTestbedRetryHookTick on an upstream attempt whose request was
+   * sent, while a TestbedRetryHook is registered (source/common/router/testbed_retry_hook.h).
+   * @param upstream_request the attempt
+   * @return whether the attempt should keep ticking
+   */
+  virtual bool onRetryHookTick(UpstreamRequest&) { return false; }
+
+  /*
    * This will be called if the max stream duration was reached.
    * @param upstream_request indicates which UpstreamRequest which timed out
    */

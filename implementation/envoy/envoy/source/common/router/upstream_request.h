@@ -85,6 +85,8 @@ public:
 
   virtual void resetStream();
   void setupPerTryTimeout();
+  // impl/envoy (cancellation testbed): the TestbedRetryHook tick (testbed_retry_hook.h).
+  void onRetryHookTimer();
   void maybeEndDecode(bool end_stream);
   void onUpstreamHostSelected(Upstream::HostDescriptionConstSharedPtr host, bool pool_success);
 
@@ -201,6 +203,7 @@ private:
   RouterFilterInterface& parent_;
   std::unique_ptr<GenericConnPool> conn_pool_;
   Event::TimerPtr per_try_timeout_;
+  Event::TimerPtr retry_hook_timer_; // impl/envoy: TestbedRetryHook tick, while a hook is registered
   Event::TimerPtr per_try_idle_timeout_;
   std::unique_ptr<GenericUpstream> upstream_;
   std::optional<Http::StreamResetReason> deferred_reset_reason_;

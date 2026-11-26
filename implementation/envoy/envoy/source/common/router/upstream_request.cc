@@ -1,4 +1,5 @@
 #include "source/common/router/upstream_request.h"
+#include "source/common/router/testbed_retry_hook.h"
 
 #include <chrono>
 #include <cstdint>
@@ -208,6 +209,10 @@ void UpstreamRequest::cleanUp() {
   if (per_try_timeout_ != nullptr) {
     // Allows for testing.
     per_try_timeout_->disableTimer();
+  }
+
+  if (retry_hook_timer_ != nullptr) { // impl/envoy: TestbedRetryHook tick
+    retry_hook_timer_->disableTimer();
   }
 
   if (per_try_idle_timeout_ != nullptr) {
@@ -572,8 +577,20 @@ void UpstreamRequest::resetUpstreamLogFlushTimer() {
   }
 }
 
+void UpstreamRequest::onRetryHookTimer() {
+  if (parent_.onRetryHookTick(*this) && retry_hook_timer_ != nullptr) {
+    retry_hook_timer_->enableTimer(kTestbedRetryHookTick);
+  }
+}
+
 void UpstreamRequest::setupPerTryTimeout() {
   ASSERT(!per_try_timeout_);
+  // impl/envoy (cancellation testbed): with a TestbedRetryHook registered, tick this attempt from now on.
+  if (TestbedRetryHook::get() != nullptr && retry_hook_timer_ == nullptr) {
+    retry_hook_timer_ =
+        parent_.callbacks()->dispatcher().createTimer([this]() -> void { onRetryHookTimer(); });
+    retry_hook_timer_->enableTimer(kTestbedRetryHookTick);
+  }
   if (parent_.timeout().per_try_timeout_.count() > 0) {
     per_try_timeout_ =
         parent_.callbacks()->dispatcher().createTimer([this]() -> void { onPerTryTimeout(); });
