@@ -62,6 +62,23 @@ FilterWaitQueue of `abstraction/ingress/load_balancer/design.md` with Peak EWMA'
   not the server's ExecutionTime (Envoy never parses the ExecReport); and there is one queue per Envoy worker, so
   FIFO order holds per worker, while `active` and the EWMA are shared by all workers.
 - The ingress summary's `filter_*` counters come from the queue trace.
+- LB retries (below) are picked like Go's LbRetry picks: at once, never behind the FIFO; a retry that fits nowhere
+  is refused and re-checked every 10 ms while the earlier attempt keeps running, and is never dropped (that would
+  fail the whole request). `lb_retry_refused` counts refused picks, one per 10 ms re-check, as Go counts one per
+  tick.
+
+`--lb_retry_policy timeout` with `--lb_max_retries N` (N > 0) maps to Envoy hedging: the route's `retry_policy`
+has `per_try_timeout = lb_retry_timeout_ms`, `num_retries = N`, `retry_on: retriable-status-codes` with no codes
+(errors, 503 and 400 are never retried, as in Go) and a back-off of at most 1 ms, and `hedge_policy` has
+`hedge_on_per_try_timeout`, so the slow attempt is kept while the retry runs. Differences from Go's LbRetryLoop:
+1. The first answer from any attempt is relayed (Go: the newest attempt's answer).
+2. The other attempts are then reset: the server gets a cancel and Envoy's active count drops (Go: older attempts
+   keep running, and counting at their server, until they finish).
+3. The timeout counts from when the request is fully sent upstream, not from the pick, and fires exactly (Go:
+   checked every 10 ms).
+`forwards.csv` has one row per upstream attempt (from the router's upstream log, `attempt` numbered by start time
+within a request); a hedging loser is `reset`. `lb_retries` in the summary counts attempts beyond each request's
+first.
 
 ### Peak EWMA trace
 
@@ -79,7 +96,7 @@ python3 implementation/envoy/wrappers/plot_peak_ewma.py <results dir>   # writes
 
 ## Not done yet
 
-- Ingress: DeadlineFilter strategies other than `deadline_mean` with `ewma`, LbRetries, Heartbeat Monitor,
-  LoadCanceller (the wrapper rejects their flags).
+- Ingress: DeadlineFilter strategies other than `deadline_mean` with `ewma`, the `anxious` LbRetry policy,
+  Heartbeat Monitor, LoadCanceller (the wrapper rejects their flags).
 - LoadGenerator: client retries (RequestCopies) and SLO cancellation.
 - No `Design specific to C++` sections yet: the wrappers and Nighthawk changes are not traced to `abstraction/`.

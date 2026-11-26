@@ -19,6 +19,13 @@ import os
 ACCESS_LOG_FORMAT = ("%START_TIME(%s.%9f)%,%COMMON_DURATION(DS_RX_BEG:US_RX_END:ns)%,"
                      "%COMMON_DURATION(US_TX_BEG:US_RX_END:ns)%,%UPSTREAM_HOST%,%RESPONSE_CODE%,"
                      "%RESPONSE_FLAGS%,%UPSTREAM_REQUEST_ATTEMPT_COUNT%\n")
+# The router's upstream (per-attempt) log line: one per upstream attempt, written when the attempt ends (answered, or
+# reset, e.g. a hedging loser): attempt start, end offset (ns, when an answer arrived), forward latency (ns), host,
+# response code, response flags, attempt duration (ms, also set for a reset attempt), and the downstream request's
+# x-request-id (shared by all attempts of one request).
+UPSTREAM_LOG_FORMAT = ("%START_TIME(%s.%9f)%,%COMMON_DURATION(DS_RX_BEG:US_RX_END:ns)%,"
+                       "%COMMON_DURATION(US_TX_BEG:US_RX_END:ns)%,%UPSTREAM_HOST%,%RESPONSE_CODE%,"
+                       "%RESPONSE_FLAGS%,%DURATION%,%REQ(X-REQUEST-ID)%\n")
 FORWARDS_HEADER = "t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns,attempt,estimate_ns"
 OUTCOMES = ("ok", "rejected", "bad_request", "bad_gateway", "reset")
 # Envoy response flags meaning the downstream (the client) went away before the answer.
@@ -62,42 +69,107 @@ def parse_access_log(path):
     return rows
 
 
+def lb_retries(path):
+    """LbRetries started: the sum over downstream requests of (upstream attempts - 1), from the access log's last
+    column (%UPSTREAM_REQUEST_ATTEMPT_COUNT%)."""
+    total = 0
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            n = _int(line.rstrip("\n").split(",")[-1])
+            if n is not None and n > 1:
+                total += n - 1
+    return total
+
+
+# Upstream-log flags for an attempt that ended because Envoy itself reset it (a hedging loser once another attempt
+# answered, or every attempt when the client went away): the attempt has no answer of its own.
+_ATTEMPT_RESET_FLAGS = {"UR", "DC", "DR"}
+
+
+def attempt_outcome(code, flags):
+    """The ForwardOutcome of one upstream-log line. UT (its per-try timeout fired) is not a failure under hedging:
+    the attempt went on, and either answered (202 UT: ok) or was reset once another attempt answered (0 UT: reset).
+    Otherwise: reset when the attempt was reset without an answer (code 0, no failure flag), else as
+    forward_outcome."""
+    flag_set = (set(flags.split(",")) if flags and flags != "-" else set()) - {"UT"}
+    if not code and flag_set <= _ATTEMPT_RESET_FLAGS:
+        return "reset"
+    return forward_outcome(code, ",".join(sorted(flag_set)) or "-")
+
+
+def parse_upstream_log(path):
+    """[(start_unix_ns, end_unix_ns, latency_ns or None, upstream 'host:port' or None, outcome, request id)], one per
+    upstream attempt (UPSTREAM_LOG_FORMAT). The end is the answer's arrival, or start + the attempt's duration for
+    an attempt without one (reset)."""
+    rows = []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            parts = line.rstrip("\n").split(",")
+            if len(parts) < 8:
+                continue
+            start_s, end_off, lat, host, code = parts[0], parts[1], parts[2], parts[3], parts[4]
+            flags, duration_ms, rid = ",".join(parts[5:-2]), parts[-2], parts[-1]
+            sec, _, frac = start_s.partition(".")
+            if not sec.isdigit():
+                continue
+            start = int(sec) * 1_000_000_000 + int((frac + "000000000")[:9])
+            off = _int(end_off)
+            if off is None:
+                off = (_int(duration_ms) or 0) * 1_000_000
+            rows.append((start, start + off, _int(lat), host if host not in ("", "-") else None,
+                         attempt_outcome(_int(code), flags), rid))
+    return rows
+
+
 EWMA_INITIAL_LATENCY_NS = 1_000_000  # abstraction/ingress/load_balancer/api.md#constants
 
 
-def write_forwards(rows, backends, path, ewma_beta=0.7):
-    """forwards.csv (Go column order); returns run_start_unix_ns (the first request's start, 0 if none).
-    ewma_latency_ns is the backend's EwmaLatency right after each forward, computed here from the log in end-time
-    order exactly as defined (abstraction/ingress/load_balancer/design.md#ewmalatency: ok forwards only, start
-    1 ms, weight ewma_beta on the old value); Envoy's own balancer does not use it. exec, ewma_exec and estimate
-    columns are empty (no ExecReport in Envoy's access log); attempt is 0 (no LbRetries)."""
-    run_start = min((r[0] for r in rows), default=0)
+def write_forwards(rows, backends, path, ewma_beta=0.7, run_start=None):
+    """forwards.csv (Go column order); returns run_start_unix_ns (given, else the first row's start, 0 if none).
+    rows are access-log rows (one per request, attempt 0) or upstream-log rows (one per attempt, with a request id:
+    the attempt column numbers a request's attempts 0, 1, ... in start order). ewma_latency_ns is the backend's
+    EwmaLatency right after each forward, computed here from the log in end-time order exactly as defined
+    (abstraction/ingress/load_balancer/design.md#ewmalatency: ok forwards only, start 1 ms, weight ewma_beta on the
+    old value); Envoy's own balancer does not use it. exec, ewma_exec and estimate columns are empty (no
+    ExecReport in Envoy's logs)."""
+    if run_start is None:
+        run_start = min((r[0] for r in rows), default=0)
+    attempt = {}
+    by_request = {}
+    for r in rows:
+        if len(r) > 5:
+            by_request.setdefault(r[5], []).append(r)
+    for rs in by_request.values():
+        for k, r in enumerate(sorted(rs, key=lambda x: x[0])):
+            attempt[id(r)] = k
     index = {b: i for i, b in enumerate(backends)}
     out = []
-    for start, end, lat, host, outcome in rows:
+    for r in rows:
+        start, end, lat, host, outcome = r[:5]
         sid = index.get(host)
         if sid is None:  # never reached a backend: count it against no server
             continue
-        out.append((end - run_start, sid, outcome, lat if lat is not None else end - start))
+        out.append((end - run_start, sid, outcome, lat if lat is not None else end - start, attempt.get(id(r), 0)))
     out.sort(key=lambda r: r[0])
     ewma = [float(EWMA_INITIAL_LATENCY_NS)] * len(backends)
     with open(path, "w", newline="") as f:
         f.write(FORWARDS_HEADER + "\n")
-        for t, sid, outcome, lat in out:
+        for t, sid, outcome, lat, k in out:
             if outcome == "ok":
                 ewma[sid] = float(float(ewma[sid] * ewma_beta) + float(float(lat) * (1 - ewma_beta)))
-            f.write(f"{t},{sid},{outcome},{lat},{repr(ewma[sid])},,,0,\n")
+            f.write(f"{t},{sid},{outcome},{lat},{repr(ewma[sid])},,,{k},\n")
     return run_start
 
 
 def ingress_summary(rows, backends, config, run_start_unix_ns, run_end_s, filter_counters=None):
     """The Ingress Summary JSON (abstraction/ingress/api.md), with the LoadCanceller and LB-internal fields
-    zero/null (not implemented on impl/envoy), except the FilterWaitQueue counters given by filter_counters
-    (filter_counts of the peak_ewma_deadline queue trace)."""
+    zero/null (not implemented on impl/envoy), except the counters given in filter_counters (FilterWaitQueue
+    counters from filter_counts, lb_retries, lb_retry_refused from retry_counts). rows: one per forward (attempt)."""
     index = {b: i for i, b in enumerate(backends)}
     per = [{"server_id": i, "addr": b, "forwarded": 0, **{o: 0 for o in OUTCOMES}, "ewma_latency_ns": None,
             "ewma_exec_ns": None, "ewma_anti_exec_ns": None, "worker_count": 0} for i, b in enumerate(backends)]
-    for _, _, _, host, outcome in rows:
+    for r in rows:
+        host, outcome = r[3], r[4]
         i = index.get(host)
         if i is not None:
             per[i]["forwarded"] += 1
@@ -187,6 +259,18 @@ def merge_peak_ewma(prefix, backends, run_start_unix_ns, out_prefix, remove=True
                 os.remove(path)
         merged_by_kind[kind] = merged
     return merged_by_kind
+
+
+def retry_counts(evals_rows):
+    """lb_retry_refused: peak_ewma_deadline decisions for an LB retry (kind retry or retry_rescan) that chose no host,
+    one per refused pick as in Go (a refused LbRetry is re-picked at every tick). Merged evals rows:
+    t_ns,worker,decision,kind,server_id,...,chosen."""
+    decisions = {}
+    for row in evals_rows:
+        if row[3] in ("retry", "retry_rescan"):
+            key = (row[1], row[2])
+            decisions[key] = decisions.get(key, False) or row[10] == "1"
+    return {"lb_retry_refused": sum(1 for chosen in decisions.values() if not chosen)}
 
 
 def filter_counts(queue_rows):

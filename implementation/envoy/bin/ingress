@@ -8,8 +8,12 @@ contrib Peak EWMA policy: power of two choices on cost = EWMA RTT x (active requ
 not used by it). lb_filter none, or deadline_mean with lb_policy ewma: the testbed's peak_ewma_deadline policy (the
 DeadlineFilter over every backend with cost = EWMA RTT x (active + 1) <= time left, lowest cost among those kept,
 and a per-worker FilterWaitQueue re-checked every 10 ms; vendored envoy/contrib/peak_ewma/.../deadline_lb.h); it
-reads the RequestDeadline from the x-request-deadline header that the impl/envoy load generator sends. No LB
-retries, no Heartbeat Monitor, no LoadCanceller. Anything else is a startup error.
+reads the RequestDeadline from the x-request-deadline header that the impl/envoy load generator sends.
+lb_retry_policy none, or timeout with lb_max_retries > 0: Envoy hedging (route retry_policy with per_try_timeout =
+lb_retry_timeout_ms, hedge_on_per_try_timeout, num_retries = lb_max_retries, no retry on errors); the first answer
+from any attempt is relayed and the other attempts are reset (Go: the newest answer, older attempts keep running).
+forwards.csv has one row per attempt, from the router's upstream log. No Heartbeat Monitor, no LoadCanceller.
+Anything else is a startup error.
 """
 import argparse
 import json
@@ -58,8 +62,9 @@ def parse(argv):
     if args.lb_filter != "none" and not (args.lb_filter == "deadline_mean" and args.lb_policy == "ewma"):
         unsupported.append(f"lb_filter={args.lb_filter} with lb_policy={args.lb_policy} "
                            "(supported: none, or deadline_mean with ewma)")
-    if args.lb_retry_policy != "none" and args.lb_max_retries > 0:
-        unsupported.append(f"lb_retry_policy={args.lb_retry_policy} with lb_max_retries={args.lb_max_retries}")
+    if args.lb_retry_policy not in ("none", "timeout") and args.lb_max_retries > 0:
+        unsupported.append(f"lb_retry_policy={args.lb_retry_policy} with lb_max_retries={args.lb_max_retries} "
+                           "(supported: none, timeout)")
     if args.heartbeat_timeout_ms > 0:
         unsupported.append("heartbeat_timeout_ms > 0")
     if args.cancel_rate > 0:
@@ -67,6 +72,11 @@ def parse(argv):
     if unsupported:
         p.error("not supported on impl/envoy yet: " + "; ".join(unsupported))
     return args
+
+
+def hedging(args):
+    """True when the flags ask for timeout LbRetries (Envoy hedging on per-try timeout)."""
+    return args.lb_retry_policy == "timeout" and args.lb_max_retries > 0
 
 
 def cluster_policy(args):
@@ -82,7 +92,7 @@ def free_port():
         return s.getsockname()[1]
 
 
-def envoy_config(args, backends, admin_port, access_log):
+def envoy_config(args, backends, admin_port, access_log, upstream_log=None):
     host, port = args.listen_addr.rsplit(":", 1)
     policy, choice = cluster_policy(args)
     cluster = {
@@ -95,7 +105,7 @@ def envoy_config(args, backends, admin_port, access_log):
             "@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
             "explicit_http_config": {"http2_protocol_options": {}}}},
         "circuit_breakers": {"thresholds": [{"max_connections": UNLIMITED, "max_pending_requests": UNLIMITED,
-                                             "max_requests": UNLIMITED, "max_retries": 0}]},
+                                             "max_requests": UNLIMITED, "max_retries": UNLIMITED}]},
         "load_assignment": {"cluster_name": "servers", "endpoints": [{"lb_endpoints": [
             {"endpoint": {"address": {"socket_address": {"address": h, "port_value": int(pt)}}}}
             for h, pt in (b.rsplit(":", 1) for b in backends)]}]},
@@ -117,6 +127,22 @@ def envoy_config(args, backends, admin_port, access_log):
             "choice_count": len(backends) if choice == "all" else choice}
     router = {"name": "envoy.filters.http.router", "typed_config": {
         "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"}}
+    if upstream_log is not None:  # one line per upstream attempt (forwards.csv)
+        router["typed_config"]["upstream_log"] = [{"name": "envoy.access_loggers.file", "typed_config": {
+            "@type": "type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog",
+            "path": upstream_log, "log_format": {"text_format_source": {
+                "inline_string": convert.UPSTREAM_LOG_FORMAT}}}}]
+    route = {"cluster": "servers", "timeout": "0s"}
+    if hedging(args):
+        # The timeout RetryPolicy as Envoy hedging: after lb_retry_timeout_ms without an answer, one more attempt
+        # through the load balancer, the slow one kept; never on errors (retriable-status-codes with no codes
+        # matches no response and no reset); back-off at most 1 ms (Go consults the policy every 10 ms).
+        route["retry_policy"] = {
+            "retry_on": "retriable-status-codes", "retriable_status_codes": [],
+            "num_retries": args.lb_max_retries,
+            "per_try_timeout": f"{float(args.lb_retry_timeout_ms) / 1000:.6f}s",
+            "retry_back_off": {"base_interval": "0.001s", "max_interval": "0.001s"}}
+        route["hedge_policy"] = {"hedge_on_per_try_timeout": True}
     # Peak EWMA learns RTTs only through its HTTP filter, which must run before the router.
     http_filters = ([{"name": "envoy.filters.http.peak_ewma", "typed_config": {
         "@type": "type.googleapis.com/envoy.extensions.filters.http.peak_ewma.v3alpha.PeakEwmaConfig"}}]
@@ -128,7 +154,7 @@ def envoy_config(args, backends, admin_port, access_log):
         "stream_idle_timeout": "0s", "request_timeout": "0s",
         "http2_protocol_options": {"max_concurrent_streams": 100000},
         "route_config": {"name": "ping", "virtual_hosts": [{"name": "all", "domains": ["*"], "routes": [
-            {"match": {"prefix": "/"}, "route": {"cluster": "servers", "timeout": "0s"}}]}]},
+            {"match": {"prefix": "/"}, "route": route}]}]},
         "http_filters": http_filters,
         "access_log": [{"name": "envoy.access_loggers.file", "typed_config": {
             "@type": "type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog",
@@ -153,9 +179,10 @@ def main():
     backends = [b for b in args.backends.split(",") if b]
     out = args.output_path
     access_log = out + ".access.raw"
+    upstream_log = out + ".upstream.raw"
     admin_port = free_port()
     cfg_path = out + ".envoy.json"
-    convert.write_json(envoy_config(args, backends, admin_port, access_log), cfg_path)
+    convert.write_json(envoy_config(args, backends, admin_port, access_log, upstream_log), cfg_path)
     concurrency = os.environ.get("GOMAXPROCS") or str(os.cpu_count() or 1)
     env = dict(os.environ)
     trace_prefix = out + ".peak_ewma"
@@ -194,14 +221,18 @@ def main():
         envoy.kill()
         envoy.wait()
     rows = convert.parse_access_log(access_log) if os.path.exists(access_log) else []
-    run_start = convert.write_forwards(rows, backends, out + ".forwards.csv", float(args.ewma_beta))
+    attempts = convert.parse_upstream_log(upstream_log) if os.path.exists(upstream_log) else rows
+    run_start = min((r[0] for r in rows), default=0)  # the first request's arrival (as before)
+    convert.write_forwards(attempts, backends, out + ".forwards.csv", float(args.ewma_beta), run_start)
     trace = convert.merge_peak_ewma(trace_prefix, backends, run_start, out)
     if any(trace.values()):
         print("ingress: Peak EWMA trace: " + ", ".join(f"{len(v)} {k}" for k, v in trace.items() if v), flush=True)
-    counters = convert.filter_counts(trace["queue"]) if cluster_policy(args)[0] == "PEAK_EWMA_DEADLINE" else None
+    counters = convert.filter_counts(trace["queue"]) if cluster_policy(args)[0] == "PEAK_EWMA_DEADLINE" else {}
+    counters["lb_retries"] = convert.lb_retries(access_log) if os.path.exists(access_log) else 0
+    counters.update(convert.retry_counts(trace["evals"]))
     config = {k: getattr(args, k) for k in vars(args)}
     config["backends"] = backends
-    convert.write_json(convert.ingress_summary(rows, backends, config, run_start, time.monotonic() - started,
+    convert.write_json(convert.ingress_summary(attempts, backends, config, run_start, time.monotonic() - started,
                                                counters), out + ".summary.json")
     for name in ("cancels", "liveness", "picks"):  # outputs of components not implemented here: header only
         header = {"cancels": "arrival,cancel_id,client_id,server_id,target_seq,outcome,http_status,scheduled_ns,send_ns,end_ns",
@@ -209,7 +240,8 @@ def main():
                   "picks": "t_ns,server_id,outstanding,ewma_exec_ns,worker_count"}[name]
         with open(f"{out}.{name}.csv", "w") as f:
             f.write(header + "\n")
-    print(f"ingress: {len(rows)} requests forwarded; outputs written", flush=True)
+    print(f"ingress: {len(rows)} requests, {len(attempts)} upstream attempts, {counters['lb_retries']} LB retries; "
+          "outputs written", flush=True)
 
 
 if __name__ == "__main__":

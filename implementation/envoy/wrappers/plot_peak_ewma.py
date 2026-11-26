@@ -29,7 +29,7 @@ from benchrunner import plotter  # noqa: E402
 ACTIVE_BIN_MS = 500
 SHARE_BIN_MS = 1000
 ROWS = ["active requests at the LB", "EWMA RTT (ms)", "alpha", "cost = EWMA × (active + 1) (ms)", "pick share"]
-QUEUE_TITLES = ["wait queue length (all workers)", "dropped past deadline per s"]
+QUEUE_TITLES = ["wait queue length (all workers; dashed: refused LB retries waiting)", "dropped past deadline per s"]
 
 
 def read_csv(path):
@@ -72,16 +72,26 @@ def binned_median(points, bin_ms):
     return [((k + 0.5) * bin_ms / 1000, sorted(v)[len(v) // 2]) for k, v in sorted(bins.items())]
 
 
+QUEUE_STEP = {"queued": 1, "sent": -1, "dropped": -1, "gone": -1}          # FilterWaitQueue (first attempts)
+RETRY_STEP = {"retry_waiting": 1, "retry_sent": -1, "retry_gone": -1}      # refused LB retries waiting
+
+
 def queue_series(queue):
-    """(queue length after each event summed over workers, dropped per 1 s) from the merged queue events."""
-    length, steps, drops = 0, [], []
+    """(FIFO length after each event summed over workers, dropped per 1 s, refused LB retries waiting after each
+    retry event) from the merged queue events."""
+    length, steps, drops, waiting, retry_steps = 0, [], [], 0, []
     for q in queue:
-        length += 1 if q["event"] == "queued" else -1
-        steps.append((int(q["t_ns"]) / 1e9, length))
+        t = int(q["t_ns"])
+        if q["event"] in QUEUE_STEP:
+            length += QUEUE_STEP[q["event"]]
+            steps.append((t / 1e9, length))
+        elif q["event"] in RETRY_STEP:
+            waiting += RETRY_STEP[q["event"]]
+            retry_steps.append((t / 1e9, waiting))
         if q["event"] == "dropped":
-            drops.append((int(q["t_ns"]), 1.0))
+            drops.append((t, 1.0))
     per_s = [(x, y * 1000 / SHARE_BIN_MS) for x, y in binned_sum(drops, SHARE_BIN_MS)]
-    return steps, per_s
+    return steps, per_s, retry_steps
 
 
 def binned_sum(points, bin_ms):
@@ -170,7 +180,13 @@ def plot_dir(output_dir):
                               row=r, col=col)
                 shown = True
         if queue is not None:
-            for col, series in enumerate(queue[:len(servers)], start=1):
+            if queue[2]:  # refused LB retries waiting, dashed in the queue-length cell
+                fig.add_trace(go.Scatter(x=[p[0] for p in queue[2]], y=[p[1] for p in queue[2]],
+                                         name=f"{label}: refused retries waiting", legendgroup=label,
+                                         showlegend=False, mode="lines",
+                                         line=dict(color=plotter.palette_color(color), width=1, dash="dash",
+                                                   shape="hv")), row=len(ROWS) + 1, col=1)
+            for col, series in enumerate(queue[:min(2, len(servers))], start=1):
                 if series:
                     fig.add_trace(go.Scatter(x=[p[0] for p in series], y=[p[1] for p in series], name=label,
                                              legendgroup=label, showlegend=not shown,

@@ -50,6 +50,57 @@ class IngressConversion(unittest.TestCase):
             self.assertEqual(s["lb_retries"], 0)
 
 
+class UpstreamAttempts(unittest.TestCase):
+    def test_attempt_outcomes(self):
+        self.assertEqual(convert.attempt_outcome(202, "-"), "ok")
+        self.assertEqual(convert.attempt_outcome(202, "UT"), "ok")       # answered after its per-try timeout fired
+        self.assertEqual(convert.attempt_outcome(0, "UT"), "reset")      # hedging loser
+        self.assertEqual(convert.attempt_outcome(0, "-"), "reset")       # reset (e.g. the client went away)
+        self.assertEqual(convert.attempt_outcome(0, "DC"), "reset")
+        self.assertEqual(convert.attempt_outcome(503, "UT"), "rejected")
+        self.assertEqual(convert.attempt_outcome(0, "UF"), "bad_gateway")  # connection failure
+        self.assertEqual(convert.attempt_outcome(0, "UF,UT"), "bad_gateway")
+
+    def test_upstream_log_to_forwards_with_attempts(self):
+        backends = ["10.0.0.1:8080", "10.0.0.2:8080"]
+        lines = [
+            # request r1: attempt 0 to server 0 timed out (UT) and was reset at 8.6 s; attempt 1 to server 1 won
+            "1700000008.500000000,400000000,399000000,10.0.0.2:8080,202,-,400,r1",
+            "1700000000.000000000,-,-,10.0.0.1:8080,0,UT,8600,r1",
+            # request r2: one attempt
+            "1700000001.000000000,300000000,299000000,10.0.0.2:8080,202,-,300,r2",
+            "garbage",
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            up = os.path.join(d, "u.raw")
+            open(up, "w").write("\n".join(lines) + "\n")
+            rows = convert.parse_upstream_log(up)
+            self.assertEqual([(r[3], r[4], r[5]) for r in rows],
+                             [("10.0.0.2:8080", "ok", "r1"), ("10.0.0.1:8080", "reset", "r1"),
+                              ("10.0.0.2:8080", "ok", "r2")])
+            self.assertEqual(rows[1][1] - rows[1][0], 8_600_000_000)  # reset: end = start + duration
+            out = os.path.join(d, "f.csv")
+            convert.write_forwards(rows, backends, out, run_start=1_700_000_000_000_000_000)
+            got = [r.split(",") for r in open(out).read().splitlines()[1:]]
+            # (t_ns, server_id, outcome, attempt), sorted by end time
+            self.assertEqual([(r[0], r[1], r[2], r[7]) for r in got],
+                             [("1300000000", "1", "ok", "0"), ("8600000000", "0", "reset", "0"),
+                              ("8900000000", "1", "ok", "1")])
+            acc = os.path.join(d, "a.raw")
+            open(acc, "w").write("1700000000.000000000,8900000000,399000000,10.0.0.2:8080,202,URX,2\n"
+                                 "1700000001.000000000,300000000,299000000,10.0.0.2:8080,202,-,1\n")
+            self.assertEqual(convert.lb_retries(acc), 1)
+
+    def test_retry_counts(self):
+        # merged evals: t_ns,worker,decision,kind,server_id,active,ewma_ms,cost,remaining_ns,eligible,chosen
+        rows = [["1", "0", "5", "retry", "0", "9", "1000", "10000", "5000", "0", "0"],
+                ["1", "0", "5", "retry", "1", "9", "1000", "10000", "5000", "0", "0"],   # refused
+                ["2", "0", "6", "retry_rescan", "1", "1", "1000", "2000", "4990", "1", "1"],  # sent
+                ["3", "1", "5", "retry_rescan", "0", "9", "1000", "10000", "4980", "0", "0"],  # refused (other worker)
+                ["4", "0", "7", "admit", "0", "9", "1000", "10000", "5000", "0", "0"]]
+        self.assertEqual(convert.retry_counts(rows), {"lb_retry_refused": 2})
+
+
 class PeakEwmaTraceMerge(unittest.TestCase):
     def test_merge(self):
         backends = ["10.0.0.1:8080", "10.0.0.2:8080"]
