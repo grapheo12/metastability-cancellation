@@ -5,6 +5,7 @@
 #include <limits>
 #include <vector>
 
+#include "envoy/common/optref.h"
 #include "envoy/network/connection.h"
 #include "envoy/stream_info/stream_info.h"
 
@@ -17,6 +18,50 @@ namespace Extensions {
 namespace LoadBalancingPolicies {
 namespace PeakEwma {
 
+void PendingRequests::add(int64_t start_ns) {
+  absl::MutexLock lock(&mu_);
+  starts_.insert(start_ns);
+}
+
+void PendingRequests::remove(int64_t start_ns) {
+  absl::MutexLock lock(&mu_);
+  auto it = starts_.find(start_ns);
+  if (it != starts_.end()) {
+    starts_.erase(it);
+  }
+}
+
+absl::optional<int64_t> PendingRequests::oldest() const {
+  absl::MutexLock lock(&mu_);
+  if (starts_.empty()) {
+    return absl::nullopt;
+  }
+  return *starts_.begin();
+}
+
+PendingRegistration::~PendingRegistration() {
+  for (const auto& [host, start_ns] : entries_) {
+    auto pending = host->typedLbPolicyData<PendingRequests>();
+    if (pending.has_value()) {
+      pending->remove(start_ns);
+    }
+  }
+}
+
+void PendingRegistration::add(Upstream::HostConstSharedPtr host, int64_t start_ns) {
+  entries_.emplace_back(std::move(host), start_ns);
+}
+
+void PeakEwmaDeadlineLoadBalancer::addPendingDataToHosts(const Upstream::HostVector& hosts) {
+  static absl::Mutex attach_mu; // worker balancers are created concurrently; attach once per host
+  absl::MutexLock lock(&attach_mu);
+  for (const auto& host : hosts) {
+    if (!host->typedLbPolicyData<PendingRequests>().has_value()) {
+      host->addLbPolicyData(std::make_unique<PendingRequests>());
+    }
+  }
+}
+
 PeakEwmaDeadlineLoadBalancer::PeakEwmaDeadlineLoadBalancer(
     const Upstream::PrioritySet& priority_set, const Upstream::PrioritySet* local_priority_set,
     Upstream::ClusterLbStats& stats, Runtime::Loader& runtime, Random::RandomGenerator& random,
@@ -28,7 +73,62 @@ PeakEwmaDeadlineLoadBalancer::PeakEwmaDeadlineLoadBalancer(
                                                         : config.deadline_header()),
       queue_tick_(std::max<int64_t>(
           1, config.has_queue_tick() ? DurationUtil::durationToMilliseconds(config.queue_tick())
-                                     : kDefaultQueueTickMilliseconds)) {}
+                                     : kDefaultQueueTickMilliseconds)) {
+  for (const auto& host_set : priority_set_.hostSetsPerPriority()) {
+    addPendingDataToHosts(host_set->hosts());
+  }
+  pending_update_cb_ = priority_set_.addPriorityUpdateCb(
+      [](uint32_t, const Upstream::HostVector& hosts_added, const Upstream::HostVector&) -> absl::Status {
+        addPendingDataToHosts(hosts_added);
+        return absl::OkStatus();
+      });
+}
+
+int64_t PeakEwmaDeadlineLoadBalancer::monoNowNs() const {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             time_source_.monotonicTime().time_since_epoch())
+      .count();
+}
+
+void PeakEwmaDeadlineLoadBalancer::registerPending(Upstream::LoadBalancerContext* context,
+                                                   const Upstream::HostConstSharedPtr& host) {
+  StreamInfo::StreamInfo* info = context != nullptr ? context->requestStreamInfo() : nullptr;
+  OptRef<PendingRequests> pending;
+  if (host != nullptr) {
+    pending = host->typedLbPolicyData<PendingRequests>();
+  }
+  if (info == nullptr || !pending.has_value()) {
+    return; // not tracked
+  }
+  const StreamInfo::FilterStateSharedPtr& filter_state = info->filterState();
+  auto* registration = filter_state->getDataMutable<PendingRegistration>(kPendingFilterStateKey);
+  if (registration == nullptr) {
+    auto created = std::make_shared<PendingRegistration>();
+    registration = created.get();
+    filter_state->setData(kPendingFilterStateKey, std::move(created),
+                          StreamInfo::FilterState::LifeSpan::FilterChain);
+  }
+  const int64_t now = monoNowNs();
+  pending->add(now);
+  registration->add(host, now);
+}
+
+double PeakEwmaDeadlineLoadBalancer::provisionalRtt(const Upstream::HostConstSharedPtr& host,
+                                                    int64_t now_mono_ns, bool& has_pending) {
+  auto* data = getPeakEwmaData(host);
+  const double ewma_ms = data != nullptr ? data->getEwmaRtt() : 0.0;
+  auto pending = host->typedLbPolicyData<PendingRequests>();
+  const absl::optional<int64_t> oldest = pending.has_value() ? pending->oldest() : absl::nullopt;
+  has_pending = oldest.has_value();
+  if (!has_pending) {
+    return ewma_ms; // nothing pending: ProvisionalCurrentRTT = CurrentRTT
+  }
+  // The oldest pending request answered now: one provisional sample, time-based alpha since the last sample.
+  const double latency_ms = static_cast<double>(now_mono_ns - *oldest) / 1e6;
+  const uint64_t last = data != nullptr ? data->last_update_timestamp_.load() : 0;
+  const double alpha = calculateTimeBasedAlpha(static_cast<uint64_t>(now_mono_ns), last);
+  return updateEwmaWithSample(ewma_ms, latency_ms, alpha); // ewma 0 (no sample yet): the latency itself
+}
 
 absl::optional<int64_t>
 PeakEwmaDeadlineLoadBalancer::deadlineOf(Upstream::LoadBalancerContext* context) const {
@@ -58,8 +158,8 @@ int64_t PeakEwmaDeadlineLoadBalancer::nowUnixNs() const {
       .count();
 }
 
-// The DeadlineFilter over EVERY healthy host (not two random ones): reject a host whose EWMA RTT > time left; then
-// the lowest Peak EWMA cost among the kept hosts.
+// The DeadlineFilter over EVERY healthy host (not two random ones): reject a host whose ProvisionalCurrentRTT >
+// time left; then the lowest Peak EWMA cost among the kept hosts.
 Upstream::HostConstSharedPtr
 PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const char* kind) {
   const auto& host_sets = priority_set_.hostSetsPerPriority();
@@ -71,21 +171,25 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
   const bool late = remaining_ns.has_value() && *remaining_ns <= 0; // already late: passes nowhere
 
   std::vector<double> costs(hosts.size());
+  std::vector<double> provisional(hosts.size());
   std::vector<bool> keep(hosts.size());
   double best = std::numeric_limits<double>::infinity();
+  const int64_t now_mono = monoNowNs();
   for (size_t i = 0; i < hosts.size(); ++i) {
     auto* data = getPeakEwmaData(hosts[i]);
     const double ewma_ms = data != nullptr ? data->getEwmaRtt() : 0.0;
     costs[i] = calculateHostCost(hosts[i]); // ewma_ms * (rq_active + 1) once a sample exists: the choice
+    bool has_pending = false;
+    provisional[i] = provisionalRtt(hosts[i], now_mono, has_pending);
     if (!remaining_ns.has_value()) {
       keep[i] = true; // no deadline: not filtered
     } else if (late) {
       keep[i] = false;
-    } else if (ewma_ms <= 0.0) {
-      keep[i] = true; // no RTT sample yet: eligible (as the Go DeadlineFilter without an EwmaExecTime)
+    } else if (ewma_ms <= 0.0 && !has_pending) {
+      keep[i] = true; // no RTT sample and nothing pending: eligible (as the Go DeadlineFilter with no sample)
     } else {
-      // The filter: reject the host if its current EWMA RTT exceeds the request's time left.
-      keep[i] = !(ewma_ms * 1e6 > static_cast<double>(*remaining_ns));
+      // The filter: reject the host if its ProvisionalCurrentRTT exceeds the request's time left.
+      keep[i] = !(provisional[i] * 1e6 > static_cast<double>(*remaining_ns));
     }
     if (keep[i] && costs[i] < best) {
       best = costs[i];
@@ -110,7 +214,7 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
       trace_.eval(decision, kind, hosts[i]->address()->asString(),
                   static_cast<double>(hosts[i]->stats().rq_active_.value()),
                   data != nullptr ? data->getEwmaRtt() : 0.0, costs[i], remaining_ns.has_value(),
-                  remaining_ns.value_or(0), keep[i], i == chosen);
+                  remaining_ns.value_or(0), keep[i], i == chosen, provisional[i]);
     }
   }
   return chosen < hosts.size() ? hosts[chosen] : nullptr;
@@ -121,11 +225,15 @@ PeakEwmaDeadlineLoadBalancer::chooseHost(Upstream::LoadBalancerContext* context)
   maybeAggregate();
   const absl::optional<int64_t> deadline = deadlineOf(context);
   if (!deadline.has_value()) {
-    return {decide(absl::nullopt, "nofilter")}; // no RequestDeadline: never filtered, never waits
+    // No RequestDeadline: never filtered, never waits.
+    Upstream::HostConstSharedPtr host = decide(absl::nullopt, "nofilter");
+    registerPending(context, host);
+    return {host};
   }
   if (isRetry(context)) { // an LB retry: picked at once, refused (re-checked each scan) if nothing is kept
     Upstream::HostConstSharedPtr host = decide(*deadline - nowUnixNs(), "retry");
     if (host != nullptr) {
+      registerPending(context, host);
       return {host};
     }
     return waitAsRetry(context, *deadline);
@@ -135,6 +243,7 @@ PeakEwmaDeadlineLoadBalancer::chooseHost(Upstream::LoadBalancerContext* context)
   }
   Upstream::HostConstSharedPtr host = decide(*deadline - nowUnixNs(), "admit");
   if (host != nullptr) {
+    registerPending(context, host);
     return {host};
   }
   return enqueue(context, *deadline);
@@ -207,6 +316,7 @@ void PeakEwmaDeadlineLoadBalancer::scan() {
       Upstream::LoadBalancerContext* context = it->context;
       it = queue_.erase(it);
       trace_.queueEvent("sent", waited, remaining, host->address()->asString());
+      registerPending(context, host);
       context->onAsyncHostSelection(std::move(host), "");
       continue;
     }
@@ -227,6 +337,7 @@ void PeakEwmaDeadlineLoadBalancer::scan() {
       Upstream::LoadBalancerContext* context = it->context;
       it = retry_waiters_.erase(it);
       trace_.queueEvent("retry_sent", waited, remaining, host->address()->asString());
+      registerPending(context, host);
       context->onAsyncHostSelection(std::move(host), "");
       continue;
     }

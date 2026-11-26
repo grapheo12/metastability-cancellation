@@ -4,10 +4,26 @@
 // the testbed's DeadlineFilter and FilterWaitQueue (abstraction/ingress/load_balancer/design.md#deadlinefilter,
 // #filterwaitqueue) with Peak EWMA's cost as the per-host test:
 //
-//   reject host h  iff  h has an RTT sample and  ewma_rtt_ms(h) * 1e6 > remaining_ns      (binary64)
+//   reject host h  iff  provisional_rtt_ms(h) * 1e6 > remaining_ns                         (binary64)
 //   choose the kept host with the lowest Peak EWMA cost, ewma_rtt_ms * (rq_active + 1); ties at random
-// (The EWMA RTT already includes the time a request waits at the server, so the test does not multiply it by the
-// active requests; the testbed's first version kept h iff cost(h) * 1e6 <= remaining_ns.)
+//
+// ProvisionalCurrentRTT treats h's pending requests as if they were all answered now. With the time-based alpha
+// only the first of several simultaneous samples gets weight, so it is the oldest pending request's latency:
+//   provisional_rtt_ms(h) = ewma_rtt_ms(h)                              if nothing is pending at h
+//                         = (1 - a) * ewma_rtt_ms(h) + a * L            otherwise (= L if h has no RTT sample yet)
+//   L = (now - start of h's oldest pending request) / 1e6 ms,  a = 1 - e^(-max(now - last sample, 0) / tau)
+// A host with no RTT sample and nothing pending is kept. The real EWMA is never changed by provisional values.
+// Worked example (tau = 10 s, EWMA 400 ms, last sample and oldest pending both at the stall, t s ago):
+//   t =  5 s: a = 0.3935, L =  5000 ms -> 0.6065 * 400 + 0.3935 *  5000 =  2210 ms
+//   t = 10 s: a = 0.6321, L = 10000 ms -> 0.3679 * 400 + 0.6321 * 10000 =  6468 ms
+//   t = 15 s: a = 0.7769, L = 15000 ms -> 0.2231 * 400 + 0.7769 * 15000 = 11743 ms
+//   t = 20 s: a = 0.8647, L = 20000 ms -> 0.1353 * 400 + 0.8647 * 20000 = 17348 ms
+// (Earlier versions: reject h iff ewma_rtt_ms(h) * 1e6 > remaining_ns; before that, keep h iff
+// ewma_rtt_ms(h) * (rq_active(h) + 1) * 1e6 <= remaining_ns.)
+//
+// Pending requests: when this balancer hands a host to a request it records (host, now) in the host's
+// PendingRequests (shared by all workers) and in the request's stream-info filter state (PendingRegistration); the
+// registration removes its entries when the downstream stream ends (answered, cancelled or reset).
 //
 // A request without the deadline header is not filtered (lowest cost over all healthy hosts) and never waits.
 // A request with it is sent at once if this worker's queue is empty and a host is kept; otherwise it joins the
@@ -24,13 +40,19 @@
 #include <cstdint>
 #include <list>
 #include <memory>
+#include <set>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "envoy/event/dispatcher.h"
 #include "envoy/event/timer.h"
 #include "envoy/http/header_map.h"
+#include "envoy/stream_info/filter_state.h"
 #include "envoy/upstream/load_balancer.h"
+#include "envoy/upstream/upstream.h"
 
+#include "absl/synchronization/mutex.h"
 #include "absl/types/optional.h"
 #include "contrib/envoy/extensions/load_balancing_policies/peak_ewma_deadline/v3alpha/peak_ewma_deadline.pb.h"
 #include "contrib/peak_ewma/load_balancing_policies/source/peak_ewma_lb.h"
@@ -46,6 +68,30 @@ using DeadlineConfig =
 constexpr int64_t kDefaultQueueTickMilliseconds = 10;             // FILTER_QUEUE_TICK_MS
 constexpr absl::string_view kDefaultDeadlineHeader = "x-request-deadline"; // decimal Unix ns
 constexpr absl::string_view kDroppedDetails = "deadline_filter_dropped";
+constexpr absl::string_view kPendingFilterStateKey = "envoy.testbed.peak_ewma_deadline.pending";
+
+// Start times (monotonic ns) of the requests pending at one host, shared by all workers' balancers.
+struct PendingRequests : public Upstream::HostLbPolicyData {
+  bool receivesOrcaLoadReport() const override { return false; }
+  void add(int64_t start_ns);
+  void remove(int64_t start_ns);
+  absl::optional<int64_t> oldest() const;
+
+private:
+  mutable absl::Mutex mu_;
+  std::multiset<int64_t> starts_ ABSL_GUARDED_BY(mu_);
+};
+
+// A request's pending entries (one per host handed to it, retries included); removed from the hosts'
+// PendingRequests when the request's stream info (and so its filter state) is destroyed.
+class PendingRegistration : public StreamInfo::FilterState::Object {
+public:
+  ~PendingRegistration() override;
+  void add(Upstream::HostConstSharedPtr host, int64_t start_ns);
+
+private:
+  std::vector<std::pair<Upstream::HostConstSharedPtr, int64_t>> entries_;
+};
 
 class PeakEwmaDeadlineLoadBalancer : public PeakEwmaLoadBalancer {
 public:
@@ -81,6 +127,13 @@ private:
     std::shared_ptr<bool> gone_;
   };
 
+  // Attaches PendingRequests to hosts that do not have it yet.
+  static void addPendingDataToHosts(const Upstream::HostVector& hosts);
+  // Records that host was handed to the request (its pending entry, until the request's stream ends).
+  void registerPending(Upstream::LoadBalancerContext* context, const Upstream::HostConstSharedPtr& host);
+  int64_t monoNowNs() const;
+  // ProvisionalCurrentRTT of a host (see the top of this file); has_pending tells whether anything is pending.
+  double provisionalRtt(const Upstream::HostConstSharedPtr& host, int64_t now_mono_ns, bool& has_pending);
   // True for the router's attempts after the first (stream info attempt count > 1).
   static bool isRetry(Upstream::LoadBalancerContext* context);
   // Creates this worker's scan timer on first use; false if the context has no downstream connection.
@@ -100,6 +153,7 @@ private:
   std::list<Entry> retry_waiters_; // refused LB retries, re-checked every scan, never dropped
   Event::TimerPtr timer_; // created on the first enqueue, on this worker's dispatcher
   uint64_t next_decision_{0};
+  ::Envoy::Common::CallbackHandlePtr pending_update_cb_; // attaches PendingRequests to hosts added later
 };
 
 } // namespace PeakEwma

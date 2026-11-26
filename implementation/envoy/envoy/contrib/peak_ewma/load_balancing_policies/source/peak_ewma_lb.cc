@@ -126,18 +126,18 @@ void PeakEwmaTrace::pick(const std::string& host_a, double active_a, double ewma
 
 void PeakEwmaTrace::eval(uint64_t decision, const char* kind, const std::string& host, double active,
                          double ewma_ms, double cost, bool has_remaining, int64_t remaining_ns, bool eligible,
-                         bool chosen) {
-  std::FILE* f =
-      enabled_ ? file(evals_, "evals",
-                      "t_unix_ns,decision,kind,host,active,ewma_ms,cost,remaining_ns,eligible,chosen\n")
-               : nullptr;
+                         bool chosen, double provisional_ms) {
+  std::FILE* f = enabled_ ? file(evals_, "evals",
+                                 "t_unix_ns,decision,kind,host,active,ewma_ms,cost,remaining_ns,eligible,chosen,"
+                                 "provisional_ms\n")
+                          : nullptr;
   if (f == nullptr) {
     return;
   }
   const std::string remaining = has_remaining ? std::to_string(remaining_ns) : std::string();
-  std::fprintf(f, "%lld,%llu,%s,%s,%.9g,%.9g,%.9g,%s,%d,%d\n", static_cast<long long>(unixNowNs()),
+  std::fprintf(f, "%lld,%llu,%s,%s,%.9g,%.9g,%.9g,%s,%d,%d,%.9g\n", static_cast<long long>(unixNowNs()),
                static_cast<unsigned long long>(decision), kind, host.c_str(), active, ewma_ms, cost,
-               remaining.c_str(), eligible ? 1 : 0, chosen ? 1 : 0);
+               remaining.c_str(), eligible ? 1 : 0, chosen ? 1 : 0, provisional_ms);
 }
 
 void PeakEwmaTrace::queueEvent(const char* event, int64_t wait_ns, int64_t remaining_ns,

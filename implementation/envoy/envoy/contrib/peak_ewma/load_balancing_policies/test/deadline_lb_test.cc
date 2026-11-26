@@ -62,8 +62,9 @@ protected:
     host_set_->healthy_hosts_ = hosts_;
     ON_CALL(priority_set_, hostSetsPerPriority()).WillByDefault(ReturnRef(priority_set_.host_sets_));
     ON_CALL(*cluster_info_, statsScope()).WillByDefault(ReturnRef(*store_.rootScope()));
-    ON_CALL(time_source_, monotonicTime())
-        .WillByDefault(Return(MonotonicTime(std::chrono::milliseconds(1234567890))));
+    ON_CALL(time_source_, monotonicTime()).WillByDefault([this]() {
+      return MonotonicTime(std::chrono::duration_cast<MonotonicTime::duration>(std::chrono::nanoseconds(mono_ns_)));
+    });
     ON_CALL(time_source_, systemTime()).WillByDefault([this]() {
       return SystemTime(std::chrono::duration_cast<SystemTime::duration>(std::chrono::nanoseconds(now_ns_)));
     });
@@ -71,11 +72,11 @@ protected:
                                                          50, *cluster_info_, time_source_, config_);
   }
 
-  // Host i's EWMA RTT (0: no sample) and active requests: cost = ewma_ms * (active + 1).
+  // Host i's EWMA RTT (0: no sample), last sampled now, and active requests: cost = ewma_ms * (active + 1).
   void setHost(size_t i, double ewma_ms, uint64_t active) {
     auto data = hosts_[i]->typedLbPolicyData<PeakEwmaHostLbPolicyData>();
     ASSERT_TRUE(data.has_value());
-    data->updateEwma(ewma_ms, 1);
+    data->updateEwma(ewma_ms, static_cast<uint64_t>(mono_ns_));
     hosts_[i]->stats().rq_active_.set(active);
   }
 
@@ -107,6 +108,11 @@ protected:
   NiceMock<MockTimeSystem> time_source_;
   NiceMock<Network::MockConnection> connection_;
   int64_t now_ns_{kNowNs};
+  int64_t mono_ns_{1234567890LL * kMs}; // monotonic clock (RTT sample and pending start times)
+  void advance(int64_t ms) {          // both clocks
+    now_ns_ += ms * kMs;
+    mono_ns_ += ms * kMs;
+  }
   Upstream::HostVector hosts_;
   DeadlineConfig config_;
   std::unique_ptr<PeakEwmaDeadlineLoadBalancer> lb_;
@@ -295,6 +301,46 @@ TEST_F(PeakEwmaDeadlineTest, CancelledRetryIsRemovedWithoutCallback) {
   timer->invokeCallback();
   EXPECT_EQ(lb_->retryWaiters(), 0u);
   EXPECT_FALSE(timer->enabled_);
+}
+
+// ProvisionalCurrentRTT: a host's oldest pending request counts as answered now (deadline_lb.h).
+TEST_F(PeakEwmaDeadlineTest, StalledHostIsRejectedByProvisionalRtt) {
+  setHost(0, 400, 0);
+  setHost(1, 400, 0);
+  auto a = request(17000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&a->context).host, hosts_[0]); // tie, random 0: host 0; A stays pending there
+  advance(10000);                                           // 10 s: host 0 never answers
+  setHost(1, 400, 0);                                       // host 1 keeps answering (sampled now)
+  // Host 0: L = 10000 ms, alpha = 1 - e^-1 = 0.63212: 0.36788 * 400 + 0.63212 * 10000 = 6468 ms.
+  auto b = request(5000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&b->context).host, hosts_[1]); // 6468 ms > 5 s left: host 0 rejected
+  auto c = request(7000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&c->context).host, hosts_[0]); // 6468 ms <= 7 s: kept (tie, random 0: host 0)
+}
+
+TEST_F(PeakEwmaDeadlineTest, FinishedRequestIsNoLongerPending) {
+  setHost(0, 400, 0);
+  setHost(1, 400, 0);
+  auto a = request(17000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&a->context).host, hosts_[0]);
+  advance(10000);
+  setHost(1, 400, 0);
+  a.reset(); // A's stream ended: its pending entry is removed with its filter state
+  auto b = request(5000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&b->context).host, hosts_[0]); // nothing pending: provisional = 400 ms, kept
+}
+
+TEST_F(PeakEwmaDeadlineTest, HostWithoutSampleButPendingUsesThePendingLatency) {
+  setHost(0, 0, 0);   // no RTT sample yet: cost 10 (default RTT), the cheaper host
+  setHost(1, 400, 0); // cost 400
+  auto a = request(17000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&a->context).host, hosts_[0]);
+  advance(10000);
+  setHost(1, 400, 0);
+  auto b = request(5000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&b->context).host, hosts_[1]); // host 0: provisional = L = 10 s > 5 s
+  auto c = request(11000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&c->context).host, hosts_[0]); // 10 s <= 11 s: kept, and still the cheaper host
 }
 
 } // namespace

@@ -69,8 +69,9 @@ private:
  *   picks: t_unix_ns,host_a,active_a,ewma_a_ms,cost_a,host_b,active_b,ewma_b_ms,cost_b,chosen   (one row per
  *          Power of Two Choices decision; chosen is "a" or "b")
  * and, for the peak_ewma_deadline policy (deadline_lb.h), <prefix>.evals.<n>.csv and <prefix>.queue.<n>.csv:
- *   evals: t_unix_ns,decision,kind,host,active,ewma_ms,cost,remaining_ns,eligible,chosen   (one row per host per
- *          decision; kind is admit, rescan or nofilter; remaining_ns empty for nofilter; eligible/chosen 0 or 1)
+ *   evals: t_unix_ns,decision,kind,host,active,ewma_ms,cost,remaining_ns,eligible,chosen,provisional_ms   (one
+ *          row per host per decision; kind is admit, rescan, nofilter, retry or retry_rescan; remaining_ns empty
+ *          for nofilter; eligible/chosen 0 or 1; provisional_ms: the host's ProvisionalCurrentRTT)
  *   queue: t_unix_ns,event,wait_ns,remaining_ns,host   (event is queued, sent, dropped or gone; host only for sent)
  * Each file is created on its first row. Monotonic times are converted to Unix ns with an offset taken once at
  * construction.
@@ -87,7 +88,8 @@ public:
             const std::string& host_b, double active_b, double ewma_b_ms, double cost_b, bool chose_a);
   // has_remaining false (a request without a deadline) writes an empty remaining_ns.
   void eval(uint64_t decision, const char* kind, const std::string& host, double active, double ewma_ms,
-            double cost, bool has_remaining, int64_t remaining_ns, bool eligible, bool chosen);
+            double cost, bool has_remaining, int64_t remaining_ns, bool eligible, bool chosen,
+            double provisional_ms);
   void queueEvent(const char* event, int64_t wait_ns, int64_t remaining_ns, const std::string& host);
   int64_t unixNowNs() const { return monoNowNs() + unix_minus_mono_ns_; }
 
