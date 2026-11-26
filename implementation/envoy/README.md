@@ -51,16 +51,20 @@ programs' flags, run Envoy and Nighthawk, and write the Go programs' output file
 
 `--lb_filter deadline_mean` with `--lb_policy ewma` selects `peak_ewma_deadline`, a policy added to the vendored
 contrib (`envoy/contrib/peak_ewma/load_balancing_policies/source/deadline_lb.h`): the DeadlineFilter and
-FilterWaitQueue of `abstraction/ingress/load_balancer/design.md` with Peak EWMA's cost as the test.
-- Every backend is evaluated: kept if it has no RTT sample yet or `EWMA RTT × (active + 1) <= time left`; the
-  lowest cost among the kept ones is chosen (ties at random).
+FilterWaitQueue of `abstraction/ingress/load_balancer/design.md` with Peak EWMA's RTT EWMA as the test.
+- Every backend is evaluated: rejected if its current `EWMA RTT > time left` (a backend without an RTT sample yet
+  is kept); the lowest
+  Peak EWMA cost (`EWMA RTT × (active + 1)`) among the kept ones is chosen (ties at random). The EWMA RTT already
+  includes the time a request waits at the server, so the test does not multiply it by the active requests (the
+  first version, up to commit `1495570d`, kept a backend if `EWMA RTT × (active + 1) <= time left`).
 - The time left comes from the `x-request-deadline` header (Unix ns) that the ping RequestSource sends with each
   request, since Envoy chooses a host before the body arrives.
 - When nothing is kept, or requests are already waiting, the request waits (Envoy's asynchronous host selection)
   in its worker's FIFO, re-checked every 10 ms; past its deadline it fails with a 503 (`no healthy upstream`).
-- Differences from the Go `deadline_mean`: the EWMA is of the time to first response byte as Envoy measures it,
-  not the server's ExecutionTime (Envoy never parses the ExecReport); and there is one queue per Envoy worker, so
-  FIFO order holds per worker, while `active` and the EWMA are shared by all workers.
+- Differences from the Go `deadline_mean` (`(n + 1) × EwmaExecTime <= time left`): the test is the EWMA of the
+  time to first response byte as Envoy measures it, alone, not multiplied by the outstanding requests (Envoy never
+  parses the ExecReport); and there is one queue per Envoy worker, so FIFO order holds per worker, while `active`
+  and the EWMA are shared by all workers.
 - The ingress summary's `filter_*` counters come from the queue trace.
 - LB retries (below) are picked like Go's LbRetry picks: at once, never behind the FIFO; a retry that fits nowhere
   is refused and re-checked every 10 ms while the earlier attempt keeps running, and is never dropped (that would

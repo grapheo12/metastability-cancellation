@@ -2,7 +2,7 @@
 # retries: one retry (lb_max_retries = 1) once an attempt has had no answer for 8.5 s (half the SLO), as the Go
 # timeout runs. 120 s run; one of the two servers stalls at 60 s (WorkerFreeze, FreezeTarget = instance 0 on
 # metafail-exp-2). No heartbeats (not implemented on impl/envoy yet). Swept: lb_filter none (Peak EWMA) and
-# deadline_mean (peak_ewma_deadline: the DeadlineFilter with Peak EWMA's cost, FIFO wait queue per Envoy worker;
+# deadline_mean (peak_ewma_deadline: reject a backend whose EWMA RTT > time left, FIFO wait queue per Envoy worker;
 # refused retries re-checked every 10 ms, never dropped).
 # Envoy does the retry by hedging on per-try timeout: the first answer from any attempt wins and the others are
 # reset. On the Go stack the same file runs the Go Ingress's EwmaPolicy (with and without deadline_mean) and its

@@ -4,11 +4,11 @@
 <results dir>/plots/peak_ewma.html, one colour per done point, rows = metric, columns = server:
 
   1  active requests at the LB (rq_active of each evaluated host at each decision), mean per 500 ms
-  2  EWMA RTT (ms) after each update
+  2  EWMA RTT (ms) after each update; with peak_ewma_deadline also the median time left (ms) of the deadline
+     decisions (dashed): a host is rejected while its EWMA RTT is above that
   3  alpha of each update (1 - e^(-dt/tau); 1 when samples arrive out of order), log scale
-  4  cost = EWMA RTT x (active + 1) of each evaluated host at each decision, mean per 500 ms, log scale; with
-     peak_ewma_deadline also the median time left (ms) of the deadline decisions (dashed): a host is kept only
-     while its cost is at most that
+  4  cost = EWMA RTT x (active + 1) of each evaluated host at each decision, mean per 500 ms, log scale (the
+     choice among kept hosts)
   5  share of decisions choosing the server, per 1 s
   6  peak_ewma_deadline only: FilterWaitQueue length summed over workers (column 1) and requests dropped past
      their deadline per 1 s (column 2)
@@ -163,11 +163,11 @@ def plot_dir(output_dir):
             if s not in per:
                 continue
             series_list, remaining = per[s]
-            if remaining:  # time left of the deadline decisions, against the cost
+            if remaining:  # time left of the deadline decisions, against the EWMA RTT (the filter's test)
                 fig.add_trace(go.Scatter(x=[p[0] for p in remaining], y=[p[1] for p in remaining],
                                          name=f"{label}: time left (ms)", legendgroup=label, showlegend=False,
                                          mode="lines", line=dict(color=plotter.palette_color(color), width=1,
-                                                                 dash="dash")), row=4, col=col)
+                                                                 dash="dash")), row=2, col=col)
             for r, series in enumerate(series_list, start=1):
                 if not series:
                     continue
