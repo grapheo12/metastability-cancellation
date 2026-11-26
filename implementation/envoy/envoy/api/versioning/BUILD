@@ -21,6 +21,7 @@ proto_library(
         "//contrib/envoy/extensions/filters/http/istio_stats/v3:pkg",
         "//contrib/envoy/extensions/filters/http/language/v3alpha:pkg",
         "//contrib/envoy/extensions/filters/http/peak_ewma/v3alpha:pkg",
+        "//contrib/envoy/extensions/filters/http/testbed_anxious/v3alpha:pkg",
         "//contrib/envoy/extensions/filters/http/peer_metadata/v3:pkg",
         "//contrib/envoy/extensions/filters/http/sxg/v3alpha:pkg",
         "//contrib/envoy/extensions/filters/listener/postgres_inspector/v3alpha:pkg",

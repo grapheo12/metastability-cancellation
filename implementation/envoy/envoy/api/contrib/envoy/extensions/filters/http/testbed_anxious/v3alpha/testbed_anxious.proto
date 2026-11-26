@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package envoy.extensions.filters.http.testbed_anxious.v3alpha;
+
+import "xds/annotations/v3/status.proto";
+
+import "udpa/annotations/status.proto";
+
+option java_package = "io.envoyproxy.envoy.extensions.filters.http.testbed_anxious.v3alpha";
+option java_outer_classname = "TestbedAnxiousProto";
+option java_multiple_files = true;
+option go_package = "github.com/envoyproxy/go-control-plane/contrib/envoy/extensions/filters/http/testbed_anxious/v3alpha";
+option (udpa.annotations.file_status).package_version_status = ACTIVE;
+option (xds.annotations.v3.file_status).work_in_progress = true;
+
+// [#protodoc-title: Testbed AnxiousRetry (upstream filter)]
+// impl/envoy (cancellation testbed): the Go Ingress's `anxious` RetryPolicy
+// (abstraction/ingress/retry_policy/design.md#anxious) in Envoy. Configured as an upstream HTTP filter of the
+// cluster, it follows every upstream attempt (sent, finished, the ExecReport's exec_ns of 202 and 503 answers),
+// keeps the AnxiousTracker, and registers it as the router's TestbedRetryHook: every 10 ms the router asks it
+// whether to retry a request's newest attempt (anxious and ExpectedLate), and retries it as a hedge.
+// [#extension: envoy.filters.http.testbed_anxious]
+message TestbedAnxious {
+  option (xds.annotations.v3.message_status).work_in_progress = true;
+
+  // The anxiety ratio: an attempt is anxious if (CurrentExpFinish - RetryExpFinish) / CurrentExpFinish >= alpha.
+  double alpha = 1;
+
+  // The late factor: an anxious attempt is retried once CurrentExpFinish > beta * the request's time left.
+  double beta = 2;
+
+  // Weight of the old value in each EwmaExecTime / EwmaAntiServiceTime update.
+  double ewma_beta = 3;
+
+  // The cluster's backends as "host:port", in server-id order (B = the number of entries).
+  repeated string backends = 4;
+
+  // The request header carrying the RequestDeadline as decimal Unix ns. Defaults to `x-request-deadline`.
+  string deadline_header = 5;
+}
