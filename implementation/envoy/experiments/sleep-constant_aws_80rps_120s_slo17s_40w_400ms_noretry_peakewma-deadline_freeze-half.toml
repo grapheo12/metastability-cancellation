@@ -1,0 +1,70 @@
+# impl/envoy: 2 Go servers, Envoy as the Ingress (peak_ewma_deadline: lb_policy = ewma, lb_filter = deadline_mean), Nighthawk as the load generator, no retries,
+# 120 s run; one of the two servers stalls at 60 s (WorkerFreeze, FreezeTarget = instance 0 on metafail-exp-2).
+# No heartbeats (not implemented on impl/envoy yet). Envoy's peak_ewma_deadline policy rejects a backend whose
+# current EWMA RTT exceeds the request's time left (from Nighthawk's x-request-deadline header), over EVERY backend
+# (up to commit 1495570d it kept a backend only if EWMA RTT x (active + 1) <= time left); it takes the lowest Peak
+# EWMA cost among those kept; when none is kept the request waits in its
+# Envoy worker's FIFO queue, re-checked every 10 ms, and gets a 503 once its deadline has passed. Envoy keeps the
+# default worker count (one queue per worker). On the Go stack the same file runs the Go Ingress's EwmaPolicy with
+# the deadline_mean DeadlineFilter ((n + 1) x EwmaExecTime <= time left) and its global FilterWaitQueue.
+# Servers: 40 workers sleeping a constant 400 ms (sleep_constant, ConstantServiceTime = round(1e6 / 2.5) us),
+# 100 req/s each.
+# Load: 80 req/s Poisson from 16 clients, SLO 17 s, 120 s, DrainDeadline 30 s.
+# The same file runs the Go stack for comparison from an impl/go checkout.
+#
+# Meant to be run ON metafail-exp-1 (client = "local"), detached, from a checkout of impl/envoy:
+#   python3 implementation/scripts/bench.py run implementation/envoy/experiments/sleep-constant_aws_80rps_120s_slo17s_40w_400ms_noretry_peakewma-deadline_freeze-half.toml
+[repo]
+url = "https://github.com/grapheo12/metastability-cancellation.git"
+
+[[machines.server]]
+host = "172.31.30.174"   # metafail-exp-2
+user = "ubuntu"
+ssh_key = "~/.ssh/id_ed25519_bench"
+data_addr = "172.31.30.174"
+
+[[machines.server]]
+host = "172.31.21.15"    # metafail-exp-3
+user = "ubuntu"
+ssh_key = "~/.ssh/id_ed25519_bench"
+data_addr = "172.31.21.15"
+
+[machines.client]
+host = "local"           # metafail-exp-1, where this runner runs
+
+[server]
+listen_port = 8080
+instances = 1   # per server machine: 2 servers in total
+workload = "sleep_constant"   # ConstantServiceTime: every request sleeps exactly 400 ms
+response_rate = 2.5   # per worker: 400 ms each (100 req/s per 40-worker server)
+initial_stall_ms = 0
+n_worker_threads = 40
+queue_discipline = "edf"
+response_bytes = 128
+freeze_after_ms = 60000   # half of load_gen.duration_s
+freeze_instance = 0       # FreezeTarget: only the metafail-exp-2 server stalls
+
+[load_gen]
+num_clients = 16
+global_rate = [80]   # 40% of 2 x 100 req/s
+request_bytes = 128
+slo_ms = 17000
+duration_s = 120
+n_waiting_requests = 500
+max_retries = 0           # no client retries
+initial_stall_ms = 0      # no StallWindow
+slo_cancel = false        # late requests run to completion; DrainDeadline ends the rest
+drain_timeout_ms = 30000  # DrainDeadline: 30 s after duration_s
+
+[ingress]
+machine = "client"   # Ingress next to the load generator on metafail-exp-1
+listen_port = 9090
+lb_policy = "ewma"   # Envoy: contrib Peak EWMA; Go: the Go Ingress EwmaPolicy
+heartbeat_timeout_ms = 0     # no Heartbeat Monitor
+lb_retry_policy = "none"     # no LbRetries
+lb_max_retries = 0
+lb_filter = "deadline_mean"  # Envoy: peak_ewma_deadline; Go: DeadlineFilter deadline_mean + FilterWaitQueue
+
+[run]
+sweep_order = ["load_gen.global_rate"]
+cooldown_s = 2
