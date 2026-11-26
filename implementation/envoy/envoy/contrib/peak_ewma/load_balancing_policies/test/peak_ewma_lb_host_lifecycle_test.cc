@@ -359,6 +359,33 @@ TEST_F(PeakEwmaHostLifecycleTest, AggregationHappensInlineOnChooseHost) {
   EXPECT_GT(data->getEwmaRtt(), 0.0) << "EWMA should be updated after inline aggregation";
 }
 
+// impl/envoy: alpha = 1 - e^(-max(dt, 0)/tau). A sample that reaches the ring buffer out of order (dt < 0, e.g.
+// from another worker a few ns earlier) or at the same instant (dt = 0) gets no weight; upstream gave it alpha = 1,
+// replacing the whole EWMA by that one sample (seen in a testbed run: dt = -9 ns moved an EWMA from 400 to 1151 ms).
+TEST_F(PeakEwmaHostLifecycleTest, OutOfOrderSampleHasNoWeight) {
+  config_.mutable_decay_time()->set_seconds(1); // tau = 1s
+  createLoadBalancer();
+
+  auto* data = hosts_[0]->typedLbPolicyData<PeakEwmaHostLbPolicyData>().ptr();
+  ASSERT_NE(data, nullptr);
+
+  // LB was created at T=1000s (SetUp default). Use times after that.
+  const uint64_t t_1001s = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                               MonotonicTime(std::chrono::seconds(1001)).time_since_epoch())
+                               .count();
+  data->recordRttSample(400.0, t_1001s);      // initializes the EWMA to 400
+  data->recordRttSample(1151.0, t_1001s - 9); // 9 ns out of order: dt = -9 ns
+  data->recordRttSample(1151.0, t_1001s - 9); // same instant as the reference: dt = 0
+
+  // Aggregate at T=1002s (past the 100ms aggregation interval).
+  ON_CALL(time_source_, monotonicTime())
+      .WillByDefault(Return(MonotonicTime(std::chrono::seconds(1002))));
+  lb_->chooseHost(nullptr);
+
+  EXPECT_DOUBLE_EQ(data->getEwmaRtt(), 400.0)
+      << "out-of-order and concurrent samples must not move the EWMA";
+}
+
 } // namespace PeakEwma
 } // namespace LoadBalancingPolicies
 } // namespace Extensions

@@ -363,8 +363,11 @@ void PeakEwmaLoadBalancer::aggregateWorkerData() {
 double PeakEwmaLoadBalancer::calculateTimeBasedAlpha(uint64_t later_time_ns,
                                                      uint64_t earlier_time_ns) {
   int64_t time_delta_ns = static_cast<int64_t>(later_time_ns - earlier_time_ns);
+  // impl/envoy: alpha = 1 - e^(-max(dt, 0)/tau). A concurrent or out-of-order sample (dt <= 0, e.g. samples from
+  // two workers reaching the shared ring buffer a few ns out of order) gets no weight; upstream gave it full weight
+  // (alpha = 1), which replaced the whole EWMA by that one sample.
   if (time_delta_ns <= 0) {
-    return 1.0; // Use full weight for future/concurrent samples.
+    return 0.0;
   }
 
   // Time-based exponential decay: α = 1 - e^(-Δt/τ).
