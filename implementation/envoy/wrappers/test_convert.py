@@ -86,10 +86,7 @@ class UpstreamAttempts(unittest.TestCase):
             self.assertEqual([(r[0], r[1], r[2], r[7]) for r in got],
                              [("1300000000", "1", "ok", "0"), ("8600000000", "0", "reset", "0"),
                               ("8900000000", "1", "ok", "1")])
-            acc = os.path.join(d, "a.raw")
-            open(acc, "w").write("1700000000.000000000,8900000000,399000000,10.0.0.2:8080,202,URX,2\n"
-                                 "1700000001.000000000,300000000,299000000,10.0.0.2:8080,202,-,1\n")
-            self.assertEqual(convert.lb_retries(acc), 1)
+            self.assertEqual(convert.lb_retries(rows), 1)  # r1 had two attempts, r2 one
 
     def test_retry_counts(self):
         # merged evals: t_ns,worker,decision,kind,server_id,active,ewma_ms,cost,remaining_ns,eligible,chosen

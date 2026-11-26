@@ -228,7 +228,7 @@ def main():
     if any(trace.values()):
         print("ingress: Peak EWMA trace: " + ", ".join(f"{len(v)} {k}" for k, v in trace.items() if v), flush=True)
     counters = convert.filter_counts(trace["queue"]) if cluster_policy(args)[0] == "PEAK_EWMA_DEADLINE" else {}
-    counters["lb_retries"] = convert.lb_retries(access_log) if os.path.exists(access_log) else 0
+    counters["lb_retries"] = convert.lb_retries(attempts)
     counters.update(convert.retry_counts(trace["evals"]))
     config = {k: getattr(args, k) for k in vars(args)}
     config["backends"] = backends

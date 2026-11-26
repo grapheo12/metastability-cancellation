@@ -69,16 +69,12 @@ def parse_access_log(path):
     return rows
 
 
-def lb_retries(path):
-    """LbRetries started: the sum over downstream requests of (upstream attempts - 1), from the access log's last
-    column (%UPSTREAM_REQUEST_ATTEMPT_COUNT%)."""
-    total = 0
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            n = _int(line.rstrip("\n").split(",")[-1])
-            if n is not None and n > 1:
-                total += n - 1
-    return total
+def lb_retries(attempt_rows):
+    """LbRetries started, as Go counts them (a refused retry is not one): upstream attempts beyond the first of
+    each request, from parse_upstream_log rows (the last field is the request id). Envoy's own attempt count
+    (%UPSTREAM_REQUEST_ATTEMPT_COUNT%) also counts retries that never got a host, so it is not used."""
+    with_id = [r for r in attempt_rows if len(r) > 5 and r[5] not in ("", "-")]
+    return len(with_id) - len({r[5] for r in with_id})
 
 
 # Upstream-log flags for an attempt that ended because Envoy itself reset it (a hedging loser once another attempt
