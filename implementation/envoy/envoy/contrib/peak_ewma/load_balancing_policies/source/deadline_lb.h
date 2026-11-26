@@ -13,6 +13,12 @@
 // queue (FIFO) and the router waits (asynchronous host selection). Every queue_tick the worker re-checks its
 // queue oldest first: a request whose deadline has passed fails (no host: 503 "no healthy upstream"), one that
 // now fits is sent, the others stay. One balancer, hence one queue, per worker thread.
+//
+// LB retries (the router's attempts after the first, e.g. a hedge on per-try timeout) are picked like the Go
+// Ingress's LbRetry picks (abstraction/ingress/frontend/design.md#lbretryloop): at once, even if first attempts are
+// waiting (they never join the FIFO); if no host is kept the retry is refused and simply re-checked at every scan,
+// while the request's earlier attempt keeps running. A refused retry is never dropped (that would fail the whole
+// request); it ends when it is sent or when the request ends (the router cancels its handle).
 
 #include <cstdint>
 #include <list>
@@ -54,6 +60,7 @@ public:
   // One FilterWaitQueue re-check; run by this worker's timer every queue_tick (public for tests).
   void scan();
   size_t queueLength() const { return queue_.size(); }
+  size_t retryWaiters() const { return retry_waiters_.size(); }
 
 private:
   struct Entry {
@@ -73,6 +80,10 @@ private:
     std::shared_ptr<bool> gone_;
   };
 
+  // True for the router's attempts after the first (stream info attempt count > 1).
+  static bool isRetry(Upstream::LoadBalancerContext* context);
+  // Creates this worker's scan timer on first use; false if the context has no downstream connection.
+  bool ensureTimer(Upstream::LoadBalancerContext* context);
   // The request's RequestDeadline from the deadline header, or none (absent or not a decimal integer).
   absl::optional<int64_t> deadlineOf(Upstream::LoadBalancerContext* context) const;
   int64_t nowUnixNs() const;
@@ -80,10 +91,12 @@ private:
   // kept; without, the lowest-cost host. kind names the decision in the trace (admit, rescan, nofilter).
   Upstream::HostConstSharedPtr decide(absl::optional<int64_t> remaining_ns, const char* kind);
   Upstream::HostSelectionResponse enqueue(Upstream::LoadBalancerContext* context, int64_t deadline_unix_ns);
+  Upstream::HostSelectionResponse waitAsRetry(Upstream::LoadBalancerContext* context, int64_t deadline_unix_ns);
 
   const Http::LowerCaseString deadline_header_;
   const std::chrono::milliseconds queue_tick_;
-  std::list<Entry> queue_;
+  std::list<Entry> queue_;         // first attempts waiting (FilterWaitQueue, FIFO)
+  std::list<Entry> retry_waiters_; // refused LB retries, re-checked every scan, never dropped
   Event::TimerPtr timer_; // created on the first enqueue, on this worker's dispatcher
   uint64_t next_decision_{0};
 };

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "envoy/network/connection.h"
+#include "envoy/stream_info/stream_info.h"
 
 #include "source/common/protobuf/utility.h"
 
@@ -44,6 +45,11 @@ PeakEwmaDeadlineLoadBalancer::deadlineOf(Upstream::LoadBalancerContext* context)
     return absl::nullopt;
   }
   return deadline_unix_ns;
+}
+
+bool PeakEwmaDeadlineLoadBalancer::isRetry(Upstream::LoadBalancerContext* context) {
+  const StreamInfo::StreamInfo* info = context != nullptr ? context->requestStreamInfo() : nullptr;
+  return info != nullptr && info->attemptCount().value_or(1) > 1;
 }
 
 int64_t PeakEwmaDeadlineLoadBalancer::nowUnixNs() const {
@@ -115,6 +121,13 @@ PeakEwmaDeadlineLoadBalancer::chooseHost(Upstream::LoadBalancerContext* context)
   if (!deadline.has_value()) {
     return {decide(absl::nullopt, "nofilter")}; // no RequestDeadline: never filtered, never waits
   }
+  if (isRetry(context)) { // an LB retry: picked at once, refused (re-checked each scan) if nothing is kept
+    Upstream::HostConstSharedPtr host = decide(*deadline - nowUnixNs(), "retry");
+    if (host != nullptr) {
+      return {host};
+    }
+    return waitAsRetry(context, *deadline);
+  }
   if (!queue_.empty()) {
     return enqueue(context, *deadline); // FIFO: never overtake a waiting request at admission
   }
@@ -125,23 +138,44 @@ PeakEwmaDeadlineLoadBalancer::chooseHost(Upstream::LoadBalancerContext* context)
   return enqueue(context, *deadline);
 }
 
-Upstream::HostSelectionResponse
-PeakEwmaDeadlineLoadBalancer::enqueue(Upstream::LoadBalancerContext* context, int64_t deadline_unix_ns) {
+bool PeakEwmaDeadlineLoadBalancer::ensureTimer(Upstream::LoadBalancerContext* context) {
   if (timer_ == nullptr) {
     const Network::Connection* connection =
         context != nullptr ? context->downstreamConnection() : nullptr;
     if (connection == nullptr) {
-      return {nullptr, std::string(kDroppedDetails)}; // no worker dispatcher to wait on: fail now
+      return false;
     }
     timer_ = connection->dispatcher().createTimer([this]() { scan(); });
+  }
+  if (!timer_->enabled()) {
+    timer_->enableTimer(queue_tick_);
+  }
+  return true;
+}
+
+Upstream::HostSelectionResponse
+PeakEwmaDeadlineLoadBalancer::enqueue(Upstream::LoadBalancerContext* context, int64_t deadline_unix_ns) {
+  if (!ensureTimer(context)) {
+    return {nullptr, std::string(kDroppedDetails)}; // no worker dispatcher to wait on: fail now
   }
   auto gone = std::make_shared<bool>(false);
   const int64_t now = nowUnixNs();
   queue_.push_back(Entry{context, deadline_unix_ns, now, gone});
   trace_.queueEvent("queued", 0, deadline_unix_ns - now, "");
-  if (!timer_->enabled()) {
-    timer_->enableTimer(queue_tick_);
+  return {nullptr, std::make_unique<Handle>(std::move(gone))};
+}
+
+Upstream::HostSelectionResponse
+PeakEwmaDeadlineLoadBalancer::waitAsRetry(Upstream::LoadBalancerContext* context, int64_t deadline_unix_ns) {
+  if (!ensureTimer(context)) {
+    // No dispatcher to re-check on. A nullptr host would fail the whole request, so the retry waits on a handle
+    // that is never completed: the earlier attempt answers, and the router cancels the handle.
+    return {nullptr, std::make_unique<Handle>(std::make_shared<bool>(false))};
   }
+  auto gone = std::make_shared<bool>(false);
+  const int64_t now = nowUnixNs();
+  retry_waiters_.push_back(Entry{context, deadline_unix_ns, now, gone});
+  trace_.queueEvent("retry_waiting", 0, deadline_unix_ns - now, "");
   return {nullptr, std::make_unique<Handle>(std::move(gone))};
 }
 
@@ -176,7 +210,27 @@ void PeakEwmaDeadlineLoadBalancer::scan() {
     }
     ++it;
   }
-  if (!queue_.empty() && timer_ != nullptr) {
+  // Refused LB retries: re-picked every scan (as Go re-ticks a refused LbRetry); never dropped.
+  for (auto it = retry_waiters_.begin(); it != retry_waiters_.end();) {
+    const int64_t now = nowUnixNs();
+    const int64_t remaining = it->deadline_unix_ns - now;
+    const int64_t waited = now - it->queued_unix_ns;
+    if (*it->gone) {
+      trace_.queueEvent("retry_gone", waited, remaining, "");
+      it = retry_waiters_.erase(it);
+      continue;
+    }
+    Upstream::HostConstSharedPtr host = decide(remaining, "retry_rescan"); // none once late: stays refused
+    if (host != nullptr) {
+      Upstream::LoadBalancerContext* context = it->context;
+      it = retry_waiters_.erase(it);
+      trace_.queueEvent("retry_sent", waited, remaining, host->address()->asString());
+      context->onAsyncHostSelection(std::move(host), "");
+      continue;
+    }
+    ++it;
+  }
+  if ((!queue_.empty() || !retry_waiters_.empty()) && timer_ != nullptr) {
     timer_->enableTimer(queue_tick_);
   }
 }

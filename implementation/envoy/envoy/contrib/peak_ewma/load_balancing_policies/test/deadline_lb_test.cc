@@ -12,6 +12,7 @@
 #include "test/mocks/event/mocks.h"
 #include "test/mocks/network/connection.h"
 #include "test/mocks/runtime/mocks.h"
+#include "test/mocks/stream_info/mocks.h"
 #include "test/mocks/upstream/cluster_info.h"
 #include "test/mocks/upstream/host.h"
 #include "test/mocks/upstream/load_balancer_context.h"
@@ -41,6 +42,7 @@ constexpr int64_t kMs = 1'000'000;
 struct Request {
   NiceMock<Upstream::MockLoadBalancerContext> context;
   Http::TestRequestHeaderMapImpl headers;
+  NiceMock<StreamInfo::MockStreamInfo> stream_info; // attempt_count_: 1 first attempt, > 1 an LB retry
 };
 
 class PeakEwmaDeadlineTest : public ::testing::Test {
@@ -78,8 +80,10 @@ protected:
   }
 
   // A request with deadline now + remaining_ns (no header if remaining_ns is nullopt).
-  std::unique_ptr<Request> request(absl::optional<int64_t> remaining_ns) {
+  std::unique_ptr<Request> request(absl::optional<int64_t> remaining_ns, uint32_t attempt = 1) {
     auto r = std::make_unique<Request>();
+    r->stream_info.attempt_count_ = attempt;
+    ON_CALL(r->context, requestStreamInfo()).WillByDefault(Return(&r->stream_info));
     if (remaining_ns.has_value()) {
       r->headers.addCopy(Http::LowerCaseString("x-request-deadline"), std::to_string(now_ns_ + *remaining_ns));
     }
@@ -216,6 +220,74 @@ TEST_F(PeakEwmaDeadlineTest, CancelledRequestIsRemovedWithoutCallback) {
   EXPECT_CALL(r->context, onAsyncHostSelection(_, _)).Times(0);
   timer->invokeCallback();
   EXPECT_EQ(lb_->queueLength(), 0u);
+}
+
+TEST_F(PeakEwmaDeadlineTest, RetryIsPickedAtOnceEvenWhileFirstAttemptsWait) {
+  setHost(0, 1000, 9); // cost 10 s
+  setHost(1, 1000, 9); // cost 10 s
+  expectTimer();
+  auto first = request(5000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&first->context).host, nullptr); // waits in the FIFO
+  setHost(1, 1000, 1);                                        // host 1 now costs 2 s
+  auto retry = request(9000 * kMs, 2);
+  auto response = lb_->chooseHost(&retry->context);
+  EXPECT_EQ(response.host, hosts_[1]); // not behind the FIFO
+  EXPECT_EQ(lb_->queueLength(), 1u);
+  EXPECT_EQ(lb_->retryWaiters(), 0u);
+}
+
+TEST_F(PeakEwmaDeadlineTest, RefusedRetryIsRecheckedAndSentLater) {
+  setHost(0, 1000, 9);
+  setHost(1, 1000, 9);
+  Event::MockTimer* timer = expectTimer();
+  auto retry = request(5000 * kMs, 2);
+  auto response = lb_->chooseHost(&retry->context);
+  EXPECT_EQ(response.host, nullptr);
+  EXPECT_NE(response.cancelable, nullptr); // refused: the router waits on it
+  EXPECT_EQ(lb_->retryWaiters(), 1u);
+  EXPECT_EQ(lb_->queueLength(), 0u); // not a FIFO entry
+
+  EXPECT_CALL(retry->context, onAsyncHostSelection(_, _)).Times(0);
+  timer->invokeCallback(); // still nothing fits
+  EXPECT_EQ(lb_->retryWaiters(), 1u);
+  EXPECT_TRUE(timer->enabled_);
+  testing::Mock::VerifyAndClearExpectations(&retry->context);
+
+  setHost(0, 1000, 1); // host 0 now costs 2 s
+  EXPECT_CALL(retry->context, onAsyncHostSelection(_, _))
+      .WillOnce([this](Upstream::HostConstSharedPtr&& host, std::string&&) { EXPECT_EQ(host, hosts_[0]); });
+  timer->invokeCallback();
+  EXPECT_EQ(lb_->retryWaiters(), 0u);
+}
+
+TEST_F(PeakEwmaDeadlineTest, RefusedRetryIsNeverDroppedPastItsDeadline) {
+  setHost(0, 1000, 9);
+  setHost(1, 1000, 9);
+  Event::MockTimer* timer = expectTimer();
+  auto retry = request(5000 * kMs, 2);
+  EXPECT_EQ(lb_->chooseHost(&retry->context).host, nullptr);
+  now_ns_ += 6000 * kMs; // past its deadline
+  EXPECT_CALL(retry->context, onAsyncHostSelection(_, _)).Times(0); // no 503 for the whole request
+  timer->invokeCallback();
+  timer->invokeCallback();
+  EXPECT_EQ(lb_->retryWaiters(), 1u);
+  EXPECT_TRUE(timer->enabled_);
+}
+
+TEST_F(PeakEwmaDeadlineTest, CancelledRetryIsRemovedWithoutCallback) {
+  setHost(0, 1000, 9);
+  setHost(1, 1000, 9);
+  Event::MockTimer* timer = expectTimer();
+  auto retry = request(5000 * kMs, 2);
+  auto response = lb_->chooseHost(&retry->context);
+  ASSERT_NE(response.cancelable, nullptr);
+  response.cancelable->cancel(); // the earlier attempt answered: the router ends the request
+  response.cancelable.reset();
+  setHost(1, 1000, 0);
+  EXPECT_CALL(retry->context, onAsyncHostSelection(_, _)).Times(0);
+  timer->invokeCallback();
+  EXPECT_EQ(lb_->retryWaiters(), 0u);
+  EXPECT_FALSE(timer->enabled_);
 }
 
 } // namespace

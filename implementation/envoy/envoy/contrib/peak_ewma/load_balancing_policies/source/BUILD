@@ -62,6 +62,7 @@ envoy_cc_library(
         "//envoy/event:timer_interface",
         "//envoy/http:header_map_interface",
         "//envoy/network:connection_interface",
+        "//envoy/stream_info:stream_info_interface",
         "//source/common/protobuf:utility_lib",
         "@abseil-cpp//absl/strings",
         "@abseil-cpp//absl/types:optional",
