@@ -72,7 +72,8 @@ private:
  *   evals: t_unix_ns,decision,kind,host,active,ewma_ms,cost,remaining_ns,eligible,chosen,provisional_ms   (one
  *          row per host per decision; kind is admit, rescan, nofilter, retry or retry_rescan; remaining_ns empty
  *          for nofilter; eligible/chosen 0 or 1; provisional_ms: the host's ProvisionalCurrentRTT)
- *   queue: t_unix_ns,event,wait_ns,remaining_ns,host   (event is queued, sent, dropped or gone; host only for sent)
+ *   queue: t_unix_ns,event,wait_ns,remaining_ns,host,refused   (event is queued, sent, dropped, gone, retry_waiting,
+ *          retry_sent or retry_gone; host only for sent / retry_sent; refused only for retry_sent / retry_gone)
  * Each file is created on its first row. Monotonic times are converted to Unix ns with an offset taken once at
  * construction.
  */
@@ -90,7 +91,9 @@ public:
   void eval(uint64_t decision, const char* kind, const std::string& host, double active, double ewma_ms,
             double cost, bool has_remaining, int64_t remaining_ns, bool eligible, bool chosen,
             double provisional_ms);
-  void queueEvent(const char* event, int64_t wait_ns, int64_t remaining_ns, const std::string& host);
+  // refused: for retry_sent / retry_gone, the refused picks of that LB retry; < 0 writes an empty value.
+  void queueEvent(const char* event, int64_t wait_ns, int64_t remaining_ns, const std::string& host,
+                  int64_t refused = -1);
   int64_t unixNowNs() const { return monoNowNs() + unix_minus_mono_ns_; }
 
 private:

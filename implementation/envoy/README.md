@@ -116,7 +116,9 @@ see `VENDORED.md`) logs every EWMA update and every pick. The wrapper merges the
 `ingress.peak_ewma_picks.csv` (`t_ns,server_a,active_a,ewma_a_ms,cost_a,server_b,active_b,ewma_b_ms,cost_b,chosen`),
 with `t_ns` on the `forwards.csv` time base. `peak_ewma_deadline` writes `ingress.peak_ewma_evals.csv`
 (`t_ns,worker,decision,kind,server_id,active,ewma_ms,cost,remaining_ns,eligible,chosen`, every backend at every
-decision) and `ingress.peak_ewma_queue.csv` (`t_ns,worker,event,wait_ns,remaining_ns,server_id`) instead of picks. Plot them (needs plotly, as `bench.py plot` does):
+decision) and `ingress.peak_ewma_queue.csv` (`t_ns,worker,event,wait_ns,remaining_ns,server_id,refused`; `refused`: the refused
+picks of an LB retry, on its `retry_sent` / `retry_gone` event) instead of picks. A refused retry's re-checks are
+not traced one by one in the evals. Plot them (needs plotly, as `bench.py plot` does):
 
 ```
 python3 implementation/envoy/wrappers/plot_peak_ewma.py <results dir>   # writes plots/peak_ewma.html

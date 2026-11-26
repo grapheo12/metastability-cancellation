@@ -223,7 +223,10 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
     chosen = ties[random_.random() % ties.size()];
   }
 
-  if (trace_.enabled()) {
+  // A refused retry is re-checked every scan until its request ends; its refused re-checks are counted on its
+  // retry_sent / retry_gone queue event instead of traced one by one (they would dominate the trace).
+  const bool traced = !(absl::string_view(kind) == "retry_rescan" && chosen == hosts.size());
+  if (trace_.enabled() && traced) {
     for (size_t i = 0; i < hosts.size(); ++i) {
       auto* data = getPeakEwmaData(hosts[i]);
       trace_.eval(decision, kind, hosts[i]->address()->asString(),
@@ -300,7 +303,7 @@ PeakEwmaDeadlineLoadBalancer::waitAsRetry(Upstream::LoadBalancerContext* context
   }
   auto gone = std::make_shared<bool>(false);
   const int64_t now = nowUnixNs();
-  retry_waiters_.push_back(Entry{context, deadline_unix_ns, now, gone});
+  retry_waiters_.push_back(Entry{context, deadline_unix_ns, now, gone, 1}); // its first pick was refused
   trace_.queueEvent("retry_waiting", 0, deadline_unix_ns - now, "");
   return {nullptr, std::make_unique<Handle>(std::move(gone))};
 }
@@ -343,7 +346,7 @@ void PeakEwmaDeadlineLoadBalancer::scan() {
     const int64_t remaining = it->deadline_unix_ns - now;
     const int64_t waited = now - it->queued_unix_ns;
     if (*it->gone) {
-      trace_.queueEvent("retry_gone", waited, remaining, "");
+      trace_.queueEvent("retry_gone", waited, remaining, "", static_cast<int64_t>(it->refused));
       it = retry_waiters_.erase(it);
       continue;
     }
@@ -351,11 +354,13 @@ void PeakEwmaDeadlineLoadBalancer::scan() {
     if (host != nullptr) {
       Upstream::LoadBalancerContext* context = it->context;
       it = retry_waiters_.erase(it);
-      trace_.queueEvent("retry_sent", waited, remaining, host->address()->asString());
+      trace_.queueEvent("retry_sent", waited, remaining, host->address()->asString(),
+                        static_cast<int64_t>(it->refused));
       registerPending(context, host);
       context->onAsyncHostSelection(std::move(host), "");
       continue;
     }
+    ++it->refused;
     ++it;
   }
   if ((!queue_.empty() || !retry_waiters_.empty()) && timer_ != nullptr) {

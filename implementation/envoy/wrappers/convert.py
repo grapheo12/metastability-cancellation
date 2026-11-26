@@ -188,7 +188,7 @@ def ingress_summary(rows, backends, config, run_start_unix_ns, run_end_s, filter
 #   <prefix>.picks.<n>.csv  t_unix_ns,host_a,active_a,ewma_a_ms,cost_a,host_b,active_b,ewma_b_ms,cost_b,chosen
 #   <prefix>.evals.<n>.csv  t_unix_ns,decision,kind,host,active,ewma_ms,cost,remaining_ns,eligible,chosen,provisional_ms
 #                           (files from before provisional_ms have 10 columns; merged with an empty value)
-#   <prefix>.queue.<n>.csv  t_unix_ns,event,wait_ns,remaining_ns,host
+#   <prefix>.queue.<n>.csv  t_unix_ns,event,wait_ns,remaining_ns,host,refused   (older files: no refused)
 #   <prefix>.anxious.0.csv  t_unix_ns,event,seq,host,current_ns,remaining_ns,in_flight,anxious   (AnxiousRetry:
 #                           event eval (in_flight, anxious) or retry (seq, host, current_ns, remaining_ns))
 #   <prefix>.exec.0.csv     t_unix_ns,host,exec_ns,backend,ewma_exec_ns,ewma_anti_ns   (one row per backend
@@ -201,7 +201,7 @@ PEAK_EWMA_UPDATES_HEADER = "t_ns,server_id,rtt_ms,dt_ns,alpha,ewma_before_ms,ewm
 PEAK_EWMA_PICKS_HEADER = "t_ns,server_a,active_a,ewma_a_ms,cost_a,server_b,active_b,ewma_b_ms,cost_b,chosen"
 PEAK_EWMA_EVALS_HEADER = ("t_ns,worker,decision,kind,server_id,active,ewma_ms,cost,remaining_ns,eligible,chosen,"
                           "provisional_ms")
-PEAK_EWMA_QUEUE_HEADER = "t_ns,worker,event,wait_ns,remaining_ns,server_id"
+PEAK_EWMA_QUEUE_HEADER = "t_ns,worker,event,wait_ns,remaining_ns,server_id,refused"
 ANXIOUS_HEADER = "t_ns,event,seq,server_id,current_ns,remaining_ns,in_flight,anxious"
 EXEC_HEADER = "t_ns,server_id,exec_ns,backend,ewma_exec_ns,ewma_anti_ns"
 
@@ -210,7 +210,7 @@ _PEAK_EWMA_KINDS = {
     "ewma": (7, (1,), "peak_ewma_updates", PEAK_EWMA_UPDATES_HEADER, False),
     "picks": (10, (1, 5), "peak_ewma_picks", PEAK_EWMA_PICKS_HEADER, False),
     "evals": (11, (3,), "peak_ewma_evals", PEAK_EWMA_EVALS_HEADER, True),
-    "queue": (5, (4,), "peak_ewma_queue", PEAK_EWMA_QUEUE_HEADER, True),
+    "queue": (6, (4,), "peak_ewma_queue", PEAK_EWMA_QUEUE_HEADER, True),
     "anxious": (8, (3,), "anxious", ANXIOUS_HEADER, False),
     "exec": (6, (1, 3), "exec", EXEC_HEADER, False),
 }
@@ -231,7 +231,7 @@ def _trace_rows(prefix, kind):
             next(f, None)
             for line in f:
                 parts = line.rstrip("\n").split(",")
-                if kind == "evals" and len(parts) == width - 1:  # before provisional_ms
+                if kind in ("evals", "queue") and len(parts) == width - 1:  # before provisional_ms / refused
                     parts.append("")
                 if len(parts) == width and parts[0].lstrip("-").isdigit():
                     rows.append((n, parts))
@@ -280,16 +280,13 @@ def exec_ewmas(exec_rows, n_backends):
     return out
 
 
-def retry_counts(evals_rows):
-    """lb_retry_refused: peak_ewma_deadline decisions for an LB retry (kind retry or retry_rescan) that chose no host,
-    one per refused pick as in Go (a refused LbRetry is re-picked at every tick). Merged evals rows:
-    t_ns,worker,decision,kind,server_id,...,chosen."""
-    decisions = {}
-    for row in evals_rows:
-        if row[3] in ("retry", "retry_rescan"):
-            key = (row[1], row[2])
-            decisions[key] = decisions.get(key, False) or row[10] == "1"
-    return {"lb_retry_refused": sum(1 for chosen in decisions.values() if not chosen)}
+def retry_counts(queue_rows):
+    """lb_retry_refused: refused picks of peak_ewma_deadline LB retries, one per refused pick as in Go (a refused
+    LbRetry is re-picked at every tick), from the refused counts of the retry_sent / retry_gone queue events
+    (merged queue rows: t_ns,worker,event,wait_ns,remaining_ns,server_id,refused). A retry still waiting when
+    the trace ends is not counted."""
+    return {"lb_retry_refused": sum(int(row[6]) for row in queue_rows
+                                    if row[2] in ("retry_sent", "retry_gone") and row[6] != "")}
 
 
 def filter_counts(queue_rows):

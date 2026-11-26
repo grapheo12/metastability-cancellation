@@ -115,6 +115,7 @@ private:
     int64_t deadline_unix_ns;
     int64_t queued_unix_ns;
     std::shared_ptr<bool> gone; // set by the handle's cancel(): the stream ended while waiting
+    uint64_t refused{0};        // refused LB retries: picks refused so far (the first one included)
   };
 
   // The router's handle on a waiting request. cancel() only marks the entry; the next scan removes it.

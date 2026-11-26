@@ -141,14 +141,16 @@ void PeakEwmaTrace::eval(uint64_t decision, const char* kind, const std::string&
 }
 
 void PeakEwmaTrace::queueEvent(const char* event, int64_t wait_ns, int64_t remaining_ns,
-                               const std::string& host) {
+                               const std::string& host, int64_t refused) {
   std::FILE* f =
-      enabled_ ? file(queue_, "queue", "t_unix_ns,event,wait_ns,remaining_ns,host\n") : nullptr;
+      enabled_ ? file(queue_, "queue", "t_unix_ns,event,wait_ns,remaining_ns,host,refused\n") : nullptr;
   if (f == nullptr) {
     return;
   }
-  std::fprintf(f, "%lld,%s,%lld,%lld,%s\n", static_cast<long long>(unixNowNs()), event,
-               static_cast<long long>(wait_ns), static_cast<long long>(remaining_ns), host.c_str());
+  const std::string refused_text = refused >= 0 ? std::to_string(refused) : std::string();
+  std::fprintf(f, "%lld,%s,%lld,%lld,%s,%s\n", static_cast<long long>(unixNowNs()), event,
+               static_cast<long long>(wait_ns), static_cast<long long>(remaining_ns), host.c_str(),
+               refused_text.c_str());
 }
 
 // Peak EWMA Load Balancer Implementation.

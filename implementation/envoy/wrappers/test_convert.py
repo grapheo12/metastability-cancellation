@@ -89,13 +89,12 @@ class UpstreamAttempts(unittest.TestCase):
             self.assertEqual(convert.lb_retries(rows), 1)  # r1 had two attempts, r2 one
 
     def test_retry_counts(self):
-        # merged evals: t_ns,worker,decision,kind,server_id,active,ewma_ms,cost,remaining_ns,eligible,chosen
-        rows = [["1", "0", "5", "retry", "0", "9", "1000", "10000", "5000", "0", "0"],
-                ["1", "0", "5", "retry", "1", "9", "1000", "10000", "5000", "0", "0"],   # refused
-                ["2", "0", "6", "retry_rescan", "1", "1", "1000", "2000", "4990", "1", "1"],  # sent
-                ["3", "1", "5", "retry_rescan", "0", "9", "1000", "10000", "4980", "0", "0"],  # refused (other worker)
-                ["4", "0", "7", "admit", "0", "9", "1000", "10000", "5000", "0", "0"]]
-        self.assertEqual(convert.retry_counts(rows), {"lb_retry_refused": 2})
+        # merged queue rows: t_ns,worker,event,wait_ns,remaining_ns,server_id,refused
+        rows = [["1", "0", "retry_waiting", "0", "5000", "", ""],
+                ["2", "0", "retry_sent", "20", "4980", "1", "3"],   # refused 3 times, then sent
+                ["3", "1", "retry_gone", "50", "4950", "", "6"],    # refused 6 times, then its request ended
+                ["4", "0", "queued", "0", "5000", "", ""]]
+        self.assertEqual(convert.retry_counts(rows), {"lb_retry_refused": 9})
 
 
 class PeakEwmaTraceMerge(unittest.TestCase):
@@ -165,9 +164,9 @@ class PeakEwmaDeadlineTrace(unittest.TestCase):
                                   "200,1,0,nofilter,0,0,0,10,,1,1,6468.5",
                                   "300,0,1,rescan,1,1,400,800,3999999799,1,1,"])
             q = open(out + ".peak_ewma_queue.csv").read().splitlines()
-            self.assertEqual(q, [convert.PEAK_EWMA_QUEUE_HEADER, "100,0,queued,0,3999999999,",
-                                 "150,1,queued,0,10,", "160,1,queued,0,500,", "250,1,dropped,100,-90,",
-                                 "300,0,sent,200,3999999799,1", "400,1,gone,240,260,"])
+            self.assertEqual(q, [convert.PEAK_EWMA_QUEUE_HEADER, "100,0,queued,0,3999999999,,",
+                                 "150,1,queued,0,10,,", "160,1,queued,0,500,,", "250,1,dropped,100,-90,,",
+                                 "300,0,sent,200,3999999799,1,", "400,1,gone,240,260,,"])
             # three queued; the longest total queue is 3 (at t = 160, over both workers)
             self.assertEqual(convert.filter_counts(merged["queue"]),
                              {"filter_queued": 3, "filter_sent_from_queue": 1, "filter_dropped": 1,
