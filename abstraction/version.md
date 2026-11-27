@@ -220,3 +220,4 @@
 | 0.49.1 | 2026-11-25T00:00:00Z | Child bump: server 0.14.1 (sleeper 0.1.1) |
 | 0.50.0 | 2026-11-27T00:00:00Z | Server parameters `service_scenario` and `scenario_log_path`; glossary ServiceScenario, ScenarioState, ScenarioSchedule, MarkovSchedule, ScenarioClock, StalledState, ScenarioLog. Child bump: server 0.15.0 (service_scenario 0.1.0, new) |
 | 0.50.1 | 2026-11-27T00:00:00Z | Child bump: sampling 0.4.0 (stream kind `STREAM_SERVER_SCENARIO = 7`) |
+| 0.50.2 | 2026-11-27T00:00:00Z | Child bump: server 0.15.1 (service_scenario 0.1.1) |
