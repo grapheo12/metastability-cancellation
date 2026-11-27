@@ -79,3 +79,4 @@
 | 0.16.0 | 2026-11-27T00:00:00Z | Child bump: config 0.27.0 (ScenarioAssignment) |
 | 0.17.0 | 2026-11-27T00:00:00Z | Output directory: `server_<k>.scenario.csv`. Child bump: experiment_executor 0.14.0 (ScenarioAssignment) |
 | 0.18.0 | 2026-11-27T00:00:00Z | Child bump: config 0.28.0 (`arrival_rng`, `forward_mode`) |
+| 0.19.0 | 2026-11-27T00:00:00Z | Child bump: config 0.29.0 (`lb_filter_margin`) |
