@@ -11,7 +11,8 @@
 ### `serve_heartbeat(task: StreamTask, config: ServerConfig, queue: WorkQueue) -> nothing`
 Writes the `200` headers, then one HeartbeatLine every `heartbeat_interval_ms`, starting at once, until the stream
 ends (RST, connection close, write error) or the server shuts down. Before each line it calls
-`worker_pool.freeze_wait(queue)`. Runs on the stream's own coroutine, started by the Connection Handler's router for
+`worker_pool.freeze_wait(queue)`, so it writes nothing during a WorkerFreeze (for good) or a StalledState (until the
+state is left, then the next line at once, `seq` continuing). Runs on the stream's own coroutine, started by the Connection Handler's router for
 `GET /heartbeat`. See [design.md#heartbeatsender](design.md#heartbeatsender).
 
 ## Outputs / wire-visible behavior
