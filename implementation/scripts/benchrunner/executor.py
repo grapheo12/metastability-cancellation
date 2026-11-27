@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.13.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.14.0)
 """run_point: ServerLifecycle, IngressLifecycle, ClientRun and point outputs for one SweepPoint."""
 
 import json
@@ -169,6 +169,11 @@ def start_servers(point, config, servers, rds):
             arg_words(point.server_args)
         if point.freeze is not None and point.freeze["instance"] == k:  # FreezeTarget: only this instance
             words += ["--freeze_after_ms", format_arg(point.freeze["freeze_after_ms"])]
+        # Design: abstraction/benchmark_runner/experiment_executor/design.md#serverlifecycle
+        scen = point.scenarios[k] if point.scenarios is not None else None
+        if scen is not None:  # ScenarioAssignment: its JSON (one word) and its ScenarioLog
+            words += ["--service_scenario", scen["service_scenario"],
+                      "--scenario_log_path", f"{rd}/server_{k}.scenario.csv"]
         start_program(m, f"server {k}", words, f"{rd}/server_{k}.out", _server_pid_file(m, k),
                       config.run.server_ready_timeout_s)
 
@@ -324,6 +329,12 @@ def collect_outputs(point, servers, client, rd_servers, rd_client, pdir, ingress
         m.transport.fetch(f"{rd}/server_{k}.queue.csv", queue_csv)
         if not os.path.exists(queue_csv):
             print(f"point {point.id}: server_{k}.queue.csv missing (left out of queue_length)")
+        # Design: abstraction/benchmark_runner/experiment_executor/design.md#point-outputs
+        if point.scenarios is not None and point.scenarios[k] is not None:  # ScenarioLog: optional, like the queue log
+            scen_csv = os.path.join(pdir, f"server_{k}.scenario.csv")
+            m.transport.fetch(f"{rd}/server_{k}.scenario.csv", scen_csv)
+            if not os.path.exists(scen_csv):
+                print(f"point {point.id}: server_{k}.scenario.csv missing")
         if gc_trace:
             write_gc_events(point, k, pdir, m.gc_trace_regex)  # GcEvents
         c = _last_counters(out)
