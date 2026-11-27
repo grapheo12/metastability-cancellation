@@ -1,6 +1,6 @@
 // Command loadgen runs the closed-loop Poisson load generator.
 //
-// Source: abstraction/load_generator/api.md (load_generator v0.8.2)
+// Source: abstraction/load_generator/api.md (load_generator v0.9.1)
 package main
 
 import (
@@ -22,6 +22,7 @@ func main() {
 	fs.StringVar(&p.SloMs, "slo_ms", p.SloMs, "SLO in ms (required)")
 	fs.StringVar(&p.DurationS, "duration_s", p.DurationS, "active phase length in s (required)")
 	fs.StringVar(&p.Seed, "seed", p.Seed, "base seed")
+	fs.StringVar(&p.ArrivalRng, "arrival_rng", p.ArrivalRng, "ArrivalRng: sampling (native is not supported here)")
 	fs.StringVar(&p.NWaitingRequests, "n_waiting_requests", p.NWaitingRequests, "most requests one client keeps outstanding (1..=1000)")
 	fs.StringVar(&p.RetryTimeoutMs, "retry_timeout_ms", p.RetryTimeoutMs, "RetryTimer of each request copy in ms (> 0)")
 	fs.StringVar(&p.MaxRetries, "max_retries", p.MaxRetries, "request copies sent after the first (>= 0)")

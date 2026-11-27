@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/run_controller/design.md (run_controller v0.7.0)
+// Source: abstraction/load_generator/run_controller/design.md (run_controller v0.8.0)
 package loadgen
 
 import (
@@ -58,6 +58,15 @@ func Validate(p Params) (Config, error) {
 	}
 	if c.Seed, err = strconv.ParseUint(p.Seed, 10, 64); err != nil {
 		return c, errors.New("seed must be an unsigned 64-bit integer")
+	}
+	// ArrivalRng: native is an OptionalValue this implementation does not realize.
+	// Design: abstraction/load_generator/run_controller/design.md#configuration-validation
+	switch p.ArrivalRng {
+	case "sampling":
+	case "native":
+		return c, errors.New("arrival_rng native is not supported by this implementation")
+	default:
+		return c, errors.New("arrival_rng must be sampling or native")
 	}
 	if _, port, err := net.SplitHostPort(p.Target); err != nil || port == "" {
 		return c, errors.New("target must be host:port")

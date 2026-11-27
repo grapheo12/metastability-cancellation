@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/client/design.md (client v0.9.0)
+// Source: abstraction/load_generator/client/design.md (client v0.10.0)
 package loadgen
 
 import (
@@ -121,6 +121,7 @@ type copyEnd struct {
 	copy     int
 	reset    bool   // the client reset the stream before the answer
 	deadline uint64 // the copy's RequestDeadline (0 if none)
+	header   string // its x-request-deadline header
 }
 
 func scriptedServer(t *testing.T, delays []time.Duration) (*h2client.Conn, chan copyEnd) {
@@ -145,9 +146,9 @@ func scriptedServer(t *testing.T, delays []time.Duration) (*h2client.Conn, chan 
 			w.WriteHeader(protocol.StatusOK)
 			slack := -int64(n + 1)
 			w.Write(protocol.BuildBody(id, uint64(1000+n), &slack, 128))
-			done <- copyEnd{copy: n, deadline: dl}
+			done <- copyEnd{copy: n, deadline: dl, header: req.Header.Get(protocol.RequestDeadlineHeader)}
 		case <-req.Context().Done():
-			done <- copyEnd{copy: n, reset: true, deadline: dl}
+			done <- copyEnd{copy: n, reset: true, deadline: dl, header: req.Header.Get(protocol.RequestDeadlineHeader)}
 		}
 	})
 	go func() {
@@ -371,9 +372,30 @@ func TestRetryCopiesShareDeadline(t *testing.T) {
 	}
 	want := uint64(unix + r.SendNs + cfg.SloNs)
 	for i := 0; i < 2; i++ {
-		if e := <-done; e.deadline != want {
+		e := <-done
+		if e.deadline != want {
 			t.Fatalf("copy %d deadline %d, want %d", e.copy, e.deadline, want)
 		}
+		if h, ok := protocol.ParseDeadlineHeader(e.header); !ok || uint64(h) != want { // RequestDeadlineHeader
+			t.Fatalf("copy %d header %q, want %d", e.copy, e.header, want)
+		}
+	}
+}
+
+// Design: abstraction/load_generator/run_controller/design.md#configuration-validation
+func TestValidateArrivalRng(t *testing.T) {
+	p := DefaultParams()
+	p.NumClients, p.GlobalRate, p.RequestBytes, p.SloMs, p.DurationS = "1", "1", "128", "300", "10"
+	if _, err := Validate(p); err != nil || p.ArrivalRng != "sampling" {
+		t.Fatalf("default sampling: %v", err)
+	}
+	p.ArrivalRng = "native" // OptionalValue not realized in Go
+	if _, err := Validate(p); err == nil || err.Error() != "arrival_rng native is not supported by this implementation" {
+		t.Fatalf("native: %v", err)
+	}
+	p.ArrivalRng = "xoshiro"
+	if _, err := Validate(p); err == nil || err.Error() != "arrival_rng must be sampling or native" {
+		t.Fatalf("unknown: %v", err)
 	}
 }
 

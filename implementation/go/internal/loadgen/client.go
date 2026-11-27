@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/client/design.md (client v0.9.0)
+// Source: abstraction/load_generator/client/design.md (client v0.10.0)
 package loadgen
 
 import (
@@ -74,6 +74,8 @@ func RunClient(clientID uint32, conn *h2client.Conn, cfg Config, rng *sampling.R
 	}()
 
 	d := cfg.DurationNs
+	// ArrivalRng: arrival_rng = sampling only (native is rejected by Validate); one gap per scheduled arrival.
+	// Design: abstraction/load_generator/client/design.md#arrivalrng
 	tSched := addGap(0, rng.ExponentialNs(cfg.PerClientRate))
 	for seq := uint64(0); tSched < d; seq++ {
 		sleepUntil(runStart, tSched)
@@ -104,6 +106,7 @@ func RunClient(clientID uint32, conn *h2client.Conn, cfg Config, rng *sampling.R
 type pendingRequest struct {
 	id       uint64
 	body     []byte
+	deadline uint64        // RequestDeadline, also sent as the RequestDeadlineHeader of every copy
 	rec      RequestRecord // id, client, seq, scheduled and first-send times
 	conn     *h2client.Conn
 	cfg      Config
@@ -129,7 +132,7 @@ func startRequest(clientID, seq uint32, tSched int64, conn *h2client.Conn, cfg C
 	// RequestDeadline: fixed for the request; every RequestCopy sends this one body.
 	// Design: abstraction/load_generator/client/design.md#requestdeadline
 	deadline := runStartUnixNs + uint64(sendNs+cfg.SloNs)
-	r := &pendingRequest{id: id, body: protocol.BuildRequestBody(id, deadline, cfg.RequestBytes), conn: conn, cfg: cfg,
+	r := &pendingRequest{id: id, body: protocol.BuildRequestBody(id, deadline, cfg.RequestBytes), deadline: deadline, conn: conn, cfg: cfg,
 		runStart: runStart, events: events,
 		rec: RequestRecord{RequestID: id, ClientID: clientID, Seq: seq, ScheduledNs: tSched, Sent: true}}
 	r.rec.SendNs = sendNs
@@ -202,6 +205,9 @@ func (r *pendingRequest) sendCopy(k uint32) {
 	req, _ := http.NewRequestWithContext(ctx, protocol.PingMethod, "http://"+r.conn.Authority+protocol.PingPath, bytes.NewReader(r.body))
 	req.Header.Set("content-type", protocol.ContentTypeJSON)
 	req.Header.Set("content-length", strconv.Itoa(len(r.body)))
+	// RequestDeadlineHeader: the body's RequestDeadline again, on every copy.
+	// Design: abstraction/load_generator/client/design.md#requestdeadline
+	req.Header.Set(protocol.RequestDeadlineHeader, strconv.FormatUint(r.deadline, 10))
 	req.ContentLength = int64(len(r.body))
 	r.mu.Lock()
 	r.cancels = append(r.cancels, cancel)

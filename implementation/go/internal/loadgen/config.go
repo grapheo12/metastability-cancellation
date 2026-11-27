@@ -1,7 +1,7 @@
 // Package loadgen implements the load generator: one file per component of
 // abstraction/load_generator.
 //
-// Source: abstraction/load_generator/design.md (load_generator v0.8.2)
+// Source: abstraction/load_generator/design.md (load_generator v0.9.1)
 package loadgen
 
 import (
@@ -44,6 +44,7 @@ type Params struct {
 	SloMs            string
 	DurationS        string
 	Seed             string
+	ArrivalRng       string // ArrivalRng: sampling (the only value realized here) or native
 	OutputPath       string
 	NWaitingRequests string
 	RetryTimeoutMs   string
@@ -55,7 +56,7 @@ type Params struct {
 
 // DefaultParams returns the defaults from abstraction/load_generator/api.md#program-parameters.
 func DefaultParams() Params {
-	return Params{Target: "127.0.0.1:8080", Seed: "0", OutputPath: "results", NWaitingRequests: "100",
+	return Params{Target: "127.0.0.1:8080", Seed: "0", ArrivalRng: "sampling", OutputPath: "results", NWaitingRequests: "100",
 		RetryTimeoutMs: "150", MaxRetries: "1", InitialStallMs: "1000", SloCancel: "true", DrainTimeoutMs: "10000"}
 }
 

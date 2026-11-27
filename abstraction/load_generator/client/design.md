@@ -387,6 +387,9 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 - Schedule times saturate at `math.MaxInt64` (`addGap`) instead of overflowing.
 - Tests: `client_test.go` runs a client against a one-worker server with a 200 ms StallGate. With a cap of 10, at least 2 and at most 10 requests are outstanding at once and records come back in `seq` order. With a cap of 1, each send waits for the previous request (closed loop). Those two set a 10 s RetryTimer, so they never retry. `TestRetryTimerWorkedExamples` drives `startRequest` against a scripted prior-knowledge h2c server (`http2.Server.ServeConn`) that delays each copy of an id by a per-copy duration and reports whether the copy was answered or reset; it checks the design's worked examples (fast answer, retry answered, late original ignored, SLO resetting both copies, last copy answered late with no reset, `R = 0` slow answer and `R = 0` reset at the SLO) with times scaled down.
 
+- RequestDeadlineHeader: `pendingRequest.deadline` keeps the RequestDeadline, and `sendCopy` sets `x-request-deadline` to `strconv.FormatUint(deadline, 10)` on every copy. `TestRetryCopiesShareDeadline` also checks each copy's header with `protocol.ParseDeadlineHeader`.
+- ArrivalRng: only `arrival_rng = sampling` is realized; the sender draws its gaps from the `rng` the Run Controller passes. `native` is rejected by `Validate` (see the Run Controller).
+
 ### Traceability
 
 Generated from the `// Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
@@ -396,13 +399,14 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | Design subsection | Implementation (file:line) |
 |---|---|
 | [SemiOpenLoopClient](#semiopenloopclient) | [client.go:51](../../../implementation/go/internal/loadgen/client.go#L51), [client_test.go:46](../../../implementation/go/internal/loadgen/client_test.go#L46) |
-| [GatedArrival](#gatedarrival) | [client.go:81](../../../implementation/go/internal/loadgen/client.go#L81), [client_test.go:78](../../../implementation/go/internal/loadgen/client_test.go#L78) |
-| [start_request](#start_request) | [client.go:126](../../../implementation/go/internal/loadgen/client.go#L126), [client.go:165](../../../implementation/go/internal/loadgen/client.go#L165) |
-| [RequestDeadline](#requestdeadline) | [client.go:131](../../../implementation/go/internal/loadgen/client.go#L131), [client_test.go:362](../../../implementation/go/internal/loadgen/client_test.go#L362) |
-| [RetryTimer](#retrytimer) | [client.go:199](../../../implementation/go/internal/loadgen/client.go#L199), [client.go:242](../../../implementation/go/internal/loadgen/client.go#L242), [client_test.go:191](../../../implementation/go/internal/loadgen/client_test.go#L191) |
-| [StallWindow](#stallwindow) | [client.go:137](../../../implementation/go/internal/loadgen/client.go#L137), [client_test.go:309](../../../implementation/go/internal/loadgen/client_test.go#L309) |
-| [SLOCancellation](#slocancellation) | [client.go:143](../../../implementation/go/internal/loadgen/client.go#L143) |
-| [DrainDeadline](#draindeadline) | [client.go:143](../../../implementation/go/internal/loadgen/client.go#L143), [client_test.go:412](../../../implementation/go/internal/loadgen/client_test.go#L412) |
-| [Outcome classification](#outcome-classification) | [client.go:174](../../../implementation/go/internal/loadgen/client.go#L174), [client.go:258](../../../implementation/go/internal/loadgen/client.go#L258), [client_test.go:214](../../../implementation/go/internal/loadgen/client_test.go#L214), [metrics_test.go:48](../../../implementation/go/internal/loadgen/metrics_test.go#L48) |
+| [GatedArrival](#gatedarrival) | [client.go:83](../../../implementation/go/internal/loadgen/client.go#L83), [client_test.go:78](../../../implementation/go/internal/loadgen/client_test.go#L78) |
+| [ArrivalRng](#arrivalrng) | [client.go:79](../../../implementation/go/internal/loadgen/client.go#L79) |
+| [start_request](#start_request) | [client.go:129](../../../implementation/go/internal/loadgen/client.go#L129), [client.go:168](../../../implementation/go/internal/loadgen/client.go#L168) |
+| [RequestDeadline](#requestdeadline) | [client.go:134](../../../implementation/go/internal/loadgen/client.go#L134), [client.go:210](../../../implementation/go/internal/loadgen/client.go#L210), [client_test.go:363](../../../implementation/go/internal/loadgen/client_test.go#L363) |
+| [RetryTimer](#retrytimer) | [client.go:202](../../../implementation/go/internal/loadgen/client.go#L202), [client.go:248](../../../implementation/go/internal/loadgen/client.go#L248), [client_test.go:192](../../../implementation/go/internal/loadgen/client_test.go#L192) |
+| [StallWindow](#stallwindow) | [client.go:140](../../../implementation/go/internal/loadgen/client.go#L140), [client_test.go:310](../../../implementation/go/internal/loadgen/client_test.go#L310) |
+| [SLOCancellation](#slocancellation) | [client.go:146](../../../implementation/go/internal/loadgen/client.go#L146) |
+| [DrainDeadline](#draindeadline) | [client.go:146](../../../implementation/go/internal/loadgen/client.go#L146), [client_test.go:434](../../../implementation/go/internal/loadgen/client_test.go#L434) |
+| [Outcome classification](#outcome-classification) | [client.go:177](../../../implementation/go/internal/loadgen/client.go#L177), [client.go:264](../../../implementation/go/internal/loadgen/client.go#L264), [client_test.go:215](../../../implementation/go/internal/loadgen/client_test.go#L215), [metrics_test.go:48](../../../implementation/go/internal/loadgen/metrics_test.go#L48) |
 | [State machine](#state-machine) | [client.go:51](../../../implementation/go/internal/loadgen/client.go#L51) |
 <!-- trace:end -->
