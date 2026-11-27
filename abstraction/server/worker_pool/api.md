@@ -7,6 +7,7 @@
 | `n_worker_threads` | integer, `1 ..= 2^32-1` | `1` | Number of workers. Same as [../../api.md#server-parameters](../../api.md#server-parameters) |
 | `initial_stall_ms` | integer, ms, `>= 0` | `1000` | StallGate: no job is popped until this long after the first push. `0`: no stall. Same as [../../api.md#server-parameters](../../api.md#server-parameters) |
 | `freeze_after_ms` | integer, ms, `>= 1`, or empty | empty | WorkerFreeze: workers stop for good this long after the first push. Empty: never. Same as [../../api.md#server-parameters](../../api.md#server-parameters) |
+| `service_scenario` | JSON string, or empty | empty | The ServiceScenario, already parsed by the server ([../service_scenario/api.md#parameters](../service_scenario/api.md#parameters)): its ScenarioStall and the service time at pop ([design.md#scenariostall](design.md#scenariostall)). Same as [../../api.md#server-parameters](../../api.md#server-parameters) |
 | `queue_discipline` | `fifo` \| `edf` | `fifo` | QueueDiscipline of the WorkQueue: push order, or EarliestDeadlineFirst ([design.md#earliestdeadlinefirst](design.md#earliestdeadlinefirst)). Same as [../../api.md#server-parameters](../../api.md#server-parameters) |
 | `queue_sample_interval_ms` | integer, ms, `>= 1` | `10` | Time between QueueLengthLog samples. Same as [../../api.md#server-parameters](../../api.md#server-parameters) |
 
@@ -22,7 +23,7 @@ One admitted `POST /ping`, ready to run. Built by the Connection Handler when it
 | `task` | reference to a `StreamTask` ([../connection_handler/api.md#streamtask](../connection_handler/api.md#streamtask)) | The request's stream. The worker reads only its `cancelled` flag (the RST flag) |
 | `request_id` | u64 | The RequestId parsed from the body |
 | `client_id` | u32 | `request_id >> 32`, equal to the connection's bound client id |
-| `service_us` | u64, µs | The ServiceTime drawn for this request when it was admitted |
+| `service_us` | u64, µs | The ServiceTime drawn for this request when it was admitted; with a ServiceScenario, the ConstantServiceTime set by `queue_pop` ([design.md#scenariostall](design.md#scenariostall)) |
 | `deadline_unix_ns` | u64, Unix ns | The RequestDeadline from the body, or `NO_DEADLINE = 2^64 - 1` if it had none. Read only by the `edf` QueueDiscipline |
 | `reply` | one-shot slot of `Response` or `Aborted` | Filled exactly once, by the worker that ran the job or by `queue_close`. The stream waits on it |
 
@@ -40,24 +41,26 @@ The set of `n_worker_threads` running workers. See [design.md#workerpool](design
 
 ## Functions
 
-### `queue_new(initial_stall_ms: u64, discipline: fifo | edf, freeze_after_ms: u64 | none) -> WorkQueue`
-Creates an empty, open queue with the given QueueDiscipline, whose StallGate opens `initial_stall_ms` after the first push, and whose WorkerFreeze (unless `none`) starts `freeze_after_ms` after it. Called once per process by the Listener
+### `queue_new(initial_stall_ms: u64, discipline: fifo | edf, freeze_after_ms: u64 | none, scenario: ServiceScenario | none) -> WorkQueue`
+Creates an empty, open queue with the given QueueDiscipline, whose StallGate opens `initial_stall_ms` after the first push, whose WorkerFreeze (unless `none`) starts `freeze_after_ms` after it, and which follows `scenario` (unless `none`) from the first push. Called once per process by the Listener
 ([../design.md#listener](../design.md#listener)). See [design.md#workqueue](design.md#workqueue).
 
 ### `queue_push(queue, job: PingJob) -> ok | Closed`
 Adds `job`: at the tail (`fifo`) or by its `(deadline_unix_ns, push_seq)` key (`edf`). Never blocks. The first successful push arms the StallGate
-([design.md#stallgate](design.md#stallgate)) and the WorkerFreeze ([design.md#workerfreeze](design.md#workerfreeze)). Returns `Closed`, and leaves `job.reply` untouched, if the queue has
+([design.md#stallgate](design.md#stallgate)), the WorkerFreeze ([design.md#workerfreeze](design.md#workerfreeze)) and the ScenarioClock ([design.md#scenariostall](design.md#scenariostall)). Returns `Closed`, and leaves `job.reply` untouched, if the queue has
 been closed. Called by Connection Handlers. See [design.md#workqueue](design.md#workqueue).
 
 ### `queue_pop(queue) -> PingJob | None`
-Removes and returns the next job in the discipline's order, waiting while the queue is empty, the StallGate is not yet open or the WorkerFreeze has started, and the
-queue is open. Returns `None` once the queue is
-closed. Called by workers only. See [design.md#workqueue](design.md#workqueue).
+Removes and returns the next job in the discipline's order, waiting while the queue is empty, the StallGate is not yet open, the WorkerFreeze has started or the ServiceScenario is in a StalledState, and the
+queue is open. With a ServiceScenario, sets the job's `service_us` to the ConstantServiceTime of the state at the pop. Returns `None` once the queue is
+closed. Called by workers only. See [design.md#workqueue](design.md#workqueue) and [design.md#scenariostall](design.md#scenariostall).
 
 ### `freeze_wait(queue) -> nothing`
-Returns at once if the WorkerFreeze has not started. Once it has, blocks until `queue_close`, then returns. Called
-by the Ping Handler at each check of a running request, so that a frozen worker stops mid-request. See
-[design.md#workerfreeze](design.md#workerfreeze).
+Returns at once if the WorkerFreeze has not started and the ServiceScenario (if any) is not in a StalledState. Once
+the WorkerFreeze has started, blocks until `queue_close`; in a StalledState, blocks until the state is left or
+`queue_close`. Called by the Ping Handler at each check of a running request, so that a frozen or stalled worker stops
+mid-request, and by the HeartbeatSender before each line. Without `freeze_after_ms` and without a ServiceScenario it
+takes no lock. See [design.md#workerfreeze](design.md#workerfreeze) and [design.md#scenariostall](design.md#scenariostall).
 
 ### `queue_close(queue) -> nothing`
 Closes the queue, fills `reply` of every job still queued with `Aborted`, and wakes every waiting worker.
@@ -90,6 +93,8 @@ Returns once every worker has returned. Workers return only after `queue_close`.
 - **Start:** `queue_new`, then `pool_start`, before the Listener accepts its first connection.
 - **Run:** after the StallGate opens, workers run PingJobs in the discipline's order, up to `n_worker_threads` at a time.
   After the WorkerFreeze starts, they run none, and the ones running stop at their next check, until `queue_close`.
+  With a ServiceScenario, each popped job runs with the ConstantServiceTime of the state at its pop; in a
+  StalledState workers pop nothing and running jobs stop at their next check, until the state is left.
 - **Sampler:** if started, `queue_sampler` runs from just after `listening on` until `sampler_stop`, which the
   Listener calls before `queue_close`.
 - **Stop:** `queue_close` drops the queued jobs (each gets `Aborted`). A burn that is running is not interrupted:
@@ -98,6 +103,7 @@ Returns once every worker has returned. Workers return only after `queue_close`.
 ## Uses
 
 - [../ping_handler/api.md](../ping_handler/api.md): the function that runs one admitted `/ping` (CancelCheckPoints, burn, response); it is given the WorkQueue for `freeze_wait`
+- [../service_scenario/api.md](../service_scenario/api.md): `ServiceScenario`, `scenario_arm`, `state_at`, `next_change_at`
 - [../message_buffer/api.md](../message_buffer/api.md): `MessageBuffer` (passed through, never used directly)
 - [../connection_handler/api.md](../connection_handler/api.md): `StreamTask`, `Response`
 - [../cancel_tracker/api.md](../cancel_tracker/api.md): `CancelRegistry`, `CancelCounters`, passed through to the Ping Handler
