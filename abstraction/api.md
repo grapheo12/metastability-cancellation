@@ -4,6 +4,10 @@ The system ships as three programs: **server**, **loadgen** and **ingress**. Eac
 on the command line as `--<parameter_name> <value>`. Invalid or missing required parameters make the
 program exit with a non-zero status and a one-line error message, before any network activity.
 
+A parameter value marked **OptionalValue** need not be realized by every implementation. An implementation that
+does not realize it rejects it like an invalid value, before any network activity, with the one-line error
+`<parameter> <value> is not supported by this implementation`; it never runs it as some other value.
+
 A fourth program, **bench** (the Benchmark Runner), runs on an operator machine and drives the other
 three on remote machines. Its interface is in [Benchmark runner](#benchmark-runner).
 
@@ -48,6 +52,7 @@ CancelCounters ([Server outputs](#server-outputs)).
 | `drain_timeout_ms` | integer, ms, `> 0` | `10000` | With `slo_cancel = false`, how long after `duration_s` outstanding requests may still finish before the DrainDeadline cancels them. Unused when `slo_cancel = true` |
 | `duration_s` | float, s, `> 0` | required | Length of the active phase. No request is sent at or after this time |
 | `seed` | unsigned 64-bit integer | `0` | Base seed for arrival sampling |
+| `arrival_rng` | `sampling` \| `native` (OptionalValue) | `sampling` | ArrivalRng: the testbed's sampling streams, the same schedule in every implementation for one `seed`, or the implementation's own generator seeded `seed + client index`, reproducible only within that implementation ([load_generator/client/design.md](load_generator/client/design.md#arrivalrng)) |
 | `n_waiting_requests` | integer, `1 ..= MAX_WAITING_REQUESTS` (`1000`) | `100` | Most requests one client keeps outstanding at once. An arrival that comes due at the cap waits for a slot. `1` is a closed loop ([load_generator/client/design.md](load_generator/client/design.md#semiopenloopclient)) |
 | `retry_timeout_ms` | float, ms, `> 0` | `150` | RetryTimer of each RequestCopy, from that copy's send. When it fires the client sends the next RequestCopy. The last copy has no RetryTimer and waits for its answer or the SLO ([load_generator/client/design.md](load_generator/client/design.md#retrytimer)) |
 | `max_retries` | integer, `>= 0`, with `n_waiting_requests × (1 + max_retries) <= MAX_WAITING_REQUESTS` | `1` | RequestCopies sent after the first. `0` disables retries |

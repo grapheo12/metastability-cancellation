@@ -26,7 +26,8 @@ Runs one SemiOpenLoopClient, with at most `n_waiting_requests` requests outstand
 ([../run_controller/design.md#startup](../run_controller/design.md#startup)). See
 [design.md#semiopenloopclient](design.md#semiopenloopclient).
 
-- `rng` must be `rng_new(derive_seed(seed, STREAM_CLIENT_ARRIVALS, client_id))`.
+- `rng` is the client's ArrivalRng ([design.md#arrivalrng](design.md#arrivalrng)): with `arrival_rng = sampling`,
+  `rng_new(derive_seed(seed, STREAM_CLIENT_ARRIVALS, client_id))`.
 - `conn` (`H2Connection`) is an open h2c connection owned only by this client, opened by the Run
   Controller. It carries up to `n_waiting_requests × (1 + max_retries)` concurrent streams of unresolved requests
   ([design.md#retrytimer](design.md#retrytimer)).
