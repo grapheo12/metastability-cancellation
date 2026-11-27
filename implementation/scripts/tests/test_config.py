@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.30.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.31.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -213,6 +213,12 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(sorted({x.arg("ingress", "lb_filter_margin") for x in p}), [1.1, 2.0])  # sweepable
         p = cfg.expand_sweep(self.load(BASE.replace("cancel_rate = 100", "cancel_rate = 100\nlb_probe_tau_ms = 4000")))[0]
         self.assertEqual(p.arg("ingress", "lb_probe_tau_ms"), 4000)
+        tb = "\n".join(f"{k} = {v}" for k, v in [("lb_tb_slo_ms", 4000), ("lb_tb_init_rate", "[50, 100]"),
+                        ("lb_tb_max_tokens", 10), ("lb_tb_mult_dec", 2), ("lb_tb_add_inc_limit", 2),
+                        ("lb_tb_add_inc_frac", 0.1), ("lb_tb_min_rate_frac", 0.1)])
+        p = cfg.expand_sweep(self.load(BASE.replace("cancel_rate = 100", "cancel_rate = 100\n" + tb)))
+        self.assertEqual(sorted({x.arg("ingress", "lb_tb_init_rate") for x in p}), [50, 100])  # TokenBucketFilter, sweepable
+        self.assertEqual([p[0].arg("ingress", k) for k in ("lb_tb_slo_ms", "lb_tb_min_rate_frac")], [4000, 0.1])
 
     # Design: abstraction/benchmark_runner/config/design.md#benchconfig
     def test_lb_filter_passes_through(self):
