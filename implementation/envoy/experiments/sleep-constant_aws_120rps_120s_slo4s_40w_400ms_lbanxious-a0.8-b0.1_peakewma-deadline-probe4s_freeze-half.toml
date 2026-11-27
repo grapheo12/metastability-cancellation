@@ -1,0 +1,78 @@
+# FilterProbe (tau = SLO = 4 s): anxious + PeakEwmaDeadline at 120 req/s, SLO 4 s, swept over lb_filter_margin 1.0 and 2.0.
+# Since the vendored-code rules (2026-11-27) the Envoy-only behaviour has its own parameter values: lb_policy
+# peak_ewma, lb_filter deadline_provisional_rtt, forward_mode hedge, arrival_rng native. impl/go rejects them,
+# so the Go stack needs its own copy (lb_policy ewma, lb_filter deadline_mean, no forward_mode / arrival_rng).
+# impl/envoy: 2 Go servers, Envoy as the Ingress (lb_policy = ewma), Nighthawk as the load generator, AnxiousRetry
+# LB retries (lb_retry_policy = anxious, alpha 0.8, beta 0.1, one retry), as the Go anxious runs: an attempt is
+# retried elsewhere once moving it is expected to finish at least 80% sooner and where it is it is expected to finish
+# later than 0.1 x its time left. 120 s run; one of the two servers stalls at 60 s (WorkerFreeze, FreezeTarget =
+# instance 0 on metafail-exp-2). No heartbeats. Swept: lb_filter none (Peak EWMA) and deadline_mean
+# (peak_ewma_deadline, ProvisionalCurrentRTT filter). Envoy: the testbed_anxious upstream filter + router retry hook,
+# a retry is a hedge avoiding the attempt's backend (first answer wins, losers reset). On the Go stack the same file
+# runs the Go Ingress's EwmaPolicy (with and without deadline_mean) and its anxious RetryPolicy.
+# Servers: 40 workers sleeping a constant 400 ms (sleep_constant, ConstantServiceTime = round(1e6 / 2.5) us),
+# 100 req/s each.
+# Load: 120 req/s Poisson from 16 clients, SLO 4 s (10 x the mean service time), 120 s, DrainDeadline 30 s.
+#
+# Meant to be run ON metafail-exp-1 (client = "local"), detached, from a checkout of impl/envoy:
+#   python3 implementation/scripts/bench.py run implementation/envoy/experiments/sleep-constant_aws_120rps_120s_slo4s_40w_400ms_lbanxious-a0.8-b0.1_peakewma-deadline-probe4s_freeze-half.toml
+[repo]
+url = "https://github.com/grapheo12/metastability-cancellation.git"
+
+[[machines.server]]
+host = "172.31.30.174"   # metafail-exp-2
+user = "ubuntu"
+ssh_key = "~/.ssh/id_ed25519_bench"
+data_addr = "172.31.30.174"
+
+[[machines.server]]
+host = "172.31.21.15"    # metafail-exp-3
+user = "ubuntu"
+ssh_key = "~/.ssh/id_ed25519_bench"
+data_addr = "172.31.21.15"
+
+[machines.client]
+host = "local"           # metafail-exp-1, where this runner runs
+
+[server]
+listen_port = 8080
+instances = 1   # per server machine: 2 servers in total
+workload = "sleep_constant"   # ConstantServiceTime: every request sleeps exactly 400 ms
+response_rate = 2.5   # per worker: 400 ms each (100 req/s per 40-worker server)
+initial_stall_ms = 0
+n_worker_threads = 40
+queue_discipline = "edf"
+response_bytes = 128
+freeze_after_ms = 60000   # half of load_gen.duration_s
+freeze_instance = 0       # FreezeTarget: only the metafail-exp-2 server stalls
+
+[load_gen]
+arrival_rng = "native"   # Nighthawk's own generator per worker, seeded seed + k
+num_clients = 16
+global_rate = 120   # 60% of 2 x 100 req/s before the stall, 120% of the remaining server after it
+request_bytes = 128
+slo_ms = 4000   # 10 x the 400 ms mean service time
+duration_s = 120
+n_waiting_requests = 500
+max_retries = 0           # no client retries
+initial_stall_ms = 0      # no StallWindow
+slo_cancel = false        # late requests run to completion; DrainDeadline ends the rest
+drain_timeout_ms = 30000  # DrainDeadline: 30 s after duration_s
+
+[ingress]
+forward_mode = "hedge"   # HedgedForwarding: the only forwarding Envoy realizes
+machine = "client"   # Ingress next to the load generator on metafail-exp-1
+listen_port = 9090
+lb_policy = "peak_ewma"   # Envoy's contrib Peak EWMA (PeakEwmaRtt, PeakEwmaCost)
+heartbeat_timeout_ms = 0     # no Heartbeat Monitor
+lb_retry_policy = "anxious"  # AnxiousRetry (abstraction/ingress/retry_policy/design.md#anxious)
+lb_max_retries = 1
+lb_retry_anxiety_ratio = 0.8  # alpha
+lb_retry_late_factor = 0.1    # beta
+lb_filter = "deadline_provisional_rtt"  # PeakEwmaDeadline
+lb_filter_margin = [1.0, 2.0]  # FilterMargin gamma
+lb_probe_tau_ms = 4000  # FilterProbe tau = the SLO
+
+[run]
+sweep_order = ["ingress.lb_filter_margin"]
+cooldown_s = 2
