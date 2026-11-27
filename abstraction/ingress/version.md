@@ -61,3 +61,4 @@
 | 0.18.0 | 2026-11-27T00:00:00Z | Parameter `lb_probe_tau_ms` and its validation. Child bump: load_balancer 0.20.0 |
 | 0.18.1 | 2026-11-27T00:00:00Z | `lb_probe_tau_ms` row: nothing-pending condition. Child bump: load_balancer 0.21.0 |
 | 0.18.2 | 2026-11-27T00:00:00Z | Child bump: load_balancer 0.22.0 (ProbeSample) |
+| 0.19.0 | 2026-11-27T00:00:00Z | `lb_filter = token_bucket` and the `lb_tb_*` parameters with their validation. Child bump: load_balancer 0.23.0 |

@@ -22,6 +22,7 @@ lb = { policy, filter: lb_filter, beta: ewma_beta, filter_margin: lb_filter_marg
        picks: list of PickRecord (empty),                                       # PickLog, also under log_lock
        peak: array[B] (PeakEwmaRtt), pending: array[B] (PendingStarts),         # lb_policy = peak_ewma only
        last_sent: array[B] of u64 = 0, probe_tau_ms: lb_probe_tau_ms,          # FilterProbe
+       bucket: array[B] of TokenBucket,                                         # TokenBucketFilter (lb_filter = token_bucket)
        last_fold_ns: u64 per Ingress worker = 0 }
 
 function pick(lb, remaining_ns, attempt, record = true, exclude = none, avoid = {}):   # remaining_ns: i64 or none (the request's time to its deadline);
@@ -335,6 +336,8 @@ function choose(lb, remaining_ns, exclude = none, avoid = {}):
     if lb.policy == peak_ewma: maybe_fold(lb)        # PeakEwmaRtt: fold new RTT samples at most every 100 ms
     if lb.filter == deadline_provisional_rtt:
         return peak_ewma_deadline_choose(lb, L, remaining_ns)   # PeakEwmaDeadline: its own filter and choice
+    if lb.filter == token_bucket:
+        return token_bucket_choose(lb, L, remaining_ns)         # TokenBucketFilter: tokens instead of a deadline test
     if lb.filter != none and remaining_ns is not none:
         L = deadline_filter(lb, L, remaining_ns)     # DeadlineFilter
         if L is empty: return Dropped
@@ -413,6 +416,7 @@ it would among `L`. Everything but the per-backend test is shared by the strateg
 | `deadline_mean_queue_plus_share` | `(n + 1/k) × e <= T` | each request ahead at a full service time, the request's own at `1/k` of one |
 | `deadline_mmk` | `Pr(t > T \| N = n) <= DEADLINE_FILTER_MISS` | M/M/k on-time probability `>= 0.99` (see [Model](#model)) |
 | `deadline_provisional_rtt` (OptionalValue; needs `lb_policy = peak_ewma`) | `γ ×` ProvisionalCurrentRtt `<= T` (`γ = lb_filter_margin`) | the backend's RTT average, as if its oldest pending forward answered now; its own choice and wait queues ([PeakEwmaDeadline](#peakewmadeadline)) |
+| `token_bucket` (OptionalValue; needs `lb_policy = peak_ewma`) | its TokenBucket holds a whole token | not a deadline test: a per-backend rate limit adapted by AIMD; the PeakEwmaDeadline's choice and wait queues ([TokenBucketFilter](#tokenbucketfilter)) |
 
 `n`, `k`, `e` and `T` are as defined in the [Model](#model): `outstanding`, `max(WorkerCount, 1)`, EwmaExecTime and
 `remaining_ns`.
@@ -650,7 +654,7 @@ answered now. It is not stored: it is computed at each decision and then forgott
 pending[s] = multiset of u64 (monotonic ns)   # PendingStarts: one per forward picked for s whose client request
                                               # has not ended yet; shared by all workers, under its own lock
 
-procedure pending_add(lb, s, request):        # at each pick that returns s, under deadline_provisional_rtt
+procedure pending_add(lb, s, request):        # at each pick that returns s, under deadline_provisional_rtt or token_bucket
     t = monotonic_now_ns(); pending[s].insert(t); request.pending.append((s, t))
     last_sent[s] = t                            # LastSentTime (FilterProbe)
 
@@ -827,6 +831,108 @@ function probe_answer(lb, s, t):          # in fold, for a sample of s at monoto
 ProbeSample, worked example: average 2604 ms (refused with 4 s left at `γ = 2`); the probe answers in 401 ms 0.40 s after
 the last sample. With the time-based weight the average would become `0.0392 × 401 + 0.9608 × 2604 = 2517.6` ms (still
 refused); as a ProbeSample it becomes 401 ms, and the backend passes again (`2 × 401 = 802 <= 4000`).
+
+## TokenBucketFilter
+
+`lb_filter = token_bucket` (OptionalValue, with `lb_policy = peak_ewma`) is the **TokenBucketFilter**. It limits how
+fast each backend is sent attempts instead of testing a deadline. Each backend `s` has one **TokenBucket**, kept by
+the Ingress and shared by all Ingress workers. Every attempt sent to `s` (a first attempt, one sent from the wait
+queue, an LbRetry) takes one token. The bucket refills at the **TokenRate** `r` tokens/s, which adapts by AIMD from
+the latencies of the attempts `s` answers.
+
+Parameters (Ingress, [api.md](api.md#parameters)): `lb_tb_slo_ms` (`slo`, required), `lb_tb_init_rate` (`init_r`,
+default 50), `lb_tb_max_tokens` (`max_tokens`, default 10), `lb_tb_mult_dec` (default 2), `lb_tb_add_inc_limit`
+(default 2), `lb_tb_add_inc_frac` (default 0.1) and `lb_tb_min_rate_frac` (default 0.1). Derived:
+`add_inc = lb_tb_add_inc_frac × init_r`, `r_min = lb_tb_min_rate_frac × init_r`, `slo_ns = round(slo × 1e6)`.
+
+```
+TokenBucket = { tokens: binary64 = 0,               # starts empty
+                rate: binary64 = init_r,            # TokenRate, tokens/s
+                last_refill_ns: u64 = Ingress start (monotonic ns),
+                last_decrease_ns: u64 or none = none,
+                lock: mutex }                       # every function below holds bucket[s].lock throughout
+
+procedure refill(b, now_ns):                        # monotonic now_ns >= b.last_refill_ns
+    b.tokens = min(max_tokens, b.tokens + b.rate * float(now_ns - b.last_refill_ns) / 1e9)
+    b.last_refill_ns = now_ns
+
+function has_token(lb, s, now_ns):                  # -> boolean
+    refill(lb.bucket[s], now_ns); return lb.bucket[s].tokens >= 1
+
+function take_token(lb, s, now_ns):                 # -> boolean
+    refill(lb.bucket[s], now_ns)
+    if lb.bucket[s].tokens < 1: return false
+    lb.bucket[s].tokens = lb.bucket[s].tokens - 1; return true
+
+procedure token_rate_sample(lb, s, latency_ns):     # TokenRate: an attempt at s answered (response headers)
+    b = lb.bucket[s]; now = monotonic_now_ns()
+    refill(b, now)                                  # the old rate holds up to now
+    if latency_ns > slo_ns:                                                       # slow
+        if b.last_decrease_ns is none or now - b.last_decrease_ns >= slo_ns:
+            b.rate = max(r_min, b.rate / lb_tb_mult_dec); b.last_decrease_ns = now
+    else if float(latency_ns) < float(slo_ns) / lb_tb_add_inc_limit:              # fast
+        b.rate = b.rate + add_inc                    # no upper bound: max_tokens bounds a burst
+    # otherwise (slo / add_inc_limit <= latency <= slo): no change
+
+function token_bucket_choose(lb, L, remaining_ns):  # L after LiveSet, exclude and avoid; -> s | Dropped
+    now = monotonic_now_ns()
+    if remaining_ns is not none and remaining_ns <= 0: return Dropped            # already late: no backend
+    if remaining_ns is none: K = L                                               # no RequestDeadline: never filtered
+    else: K = [ s for s in L if has_token(lb, s, now) ]
+    if K is empty: return Dropped
+    best = min(peak_ewma_cost(lb, s) for s in K)
+    T = [ s for s in K if peak_ewma_cost(lb, s) == best ]
+    s = T[0] if len(T) == 1 else T[native_random_u64() mod len(T)]               # ties: the implementation's random source
+    if not take_token(lb, s, now):
+        if remaining_ns is none: return s           # never filtered: sent without a token
+        return Dropped                              # another worker took it first: re-checked at the next scan
+    return s
+```
+
+- **Latency of an attempt.** `token_rate_sample` is called by the Frontend when an attempt's response headers arrive,
+  whatever the status. `latency_ns` runs from the attempt's request being sent to its response headers (monotonic
+  ns). An attempt that ends without response headers (cancelled because another attempt answered first, reset, a
+  connection error) gives no sample.
+- **Decrease at most once per SLO.** One stall makes every pending attempt at `s` slow at once. Halving on each of them
+  would drive `r` to the floor within milliseconds, so a slow answer halves `r` only if `slo` has passed since the last
+  halving. Others in that window change nothing.
+- **Floor.** `r` never drops below `r_min > 0`, so a backend keeps receiving some attempts. With no attempts there
+  would be no answers and no increase, and a recovered backend would stay shut out.
+- **Waiting.** `admit_peak`, `retry_peak` and `scan_peak` of the [PeakEwmaDeadline](#peakewmadeadline) are used
+  unchanged with `choose = token_bucket_choose`:
+  - a first attempt that finds no token waits in its worker's FIFO and is answered `503` once its RequestDeadline
+    passes;
+  - a refused LbRetry is re-tried at every 10 ms scan;
+  - `pending_add` and `pending_release` run as there.
+- **Race.** Two workers may both see a token at `s` and only one can take it. `has_token` and `take_token` are
+  separate locked steps, so the second take fails and that decision is `Dropped`. Its request waits, as if no backend
+  had a token, and is re-checked at the next scan. It never takes a token from another backend in the same decision.
+- **Ordering.** The tie-break draw happens only when `T` has more than one backend, after every `has_token`.
+  `token_bucket_choose` makes no other random draw.
+- **Not used:** FilterMargin and FilterProbe. `lb_filter_margin` and `lb_probe_tau_ms` are validated but ignored.
+
+Worked example, refill (`max_tokens = 10`):
+
+| Before | `r` | Elapsed | After | Check |
+|---|---|---|---|---|
+| 0 | 50 | 30 ms | 1.5 | 0 + 50 × 0.030 = 1.5: one take leaves 0.5 |
+| 0.5 | 50 | 0 ms | 0.5 | no token: Dropped (waits) |
+| 0.5 | 50 | 10 ms | 1.0 | 0.5 + 0.5 = 1.0 >= 1: a token |
+| 0 | 50 | 300 ms | 10 | min(10, 15) = 10: the cap |
+
+Worked example, TokenRate (`init_r = 50`, `slo = 4000 ms`, `mult_dec = 2`, `add_inc_limit = 2`, so fast is
+`< 2000 ms`; `add_inc = 0.1 × 50 = 5`, `r_min = 0.1 × 50 = 5`):
+
+| Answer at | Latency | Last halving | `r` before → after | Check |
+|---|---|---|---|---|
+| 0 s | 4500 ms | none | 50 → 25 | slow, no earlier halving |
+| 1 s | 4500 ms | 0 s | 25 → 25 | slow, 1 s < 4 s since the last halving |
+| 4 s | 4500 ms | 0 s | 25 → 12.5 | slow, 4 s >= 4 s |
+| 8 s | 4500 ms | 4 s | 12.5 → 6.25 | 12.5 / 2 |
+| 12 s | 4500 ms | 8 s | 6.25 → 5 | max(5, 3.125) = 5: the floor |
+| 13 s | 1500 ms | 12 s | 5 → 10 | fast: 1500 < 2000 |
+| 14 s | 2000 ms | 12 s | 10 → 10 | not < 2000: no change |
+| 15 s | 4000 ms | 12 s | 10 → 10 | not > 4000: no change |
 
 ## PickLog
 

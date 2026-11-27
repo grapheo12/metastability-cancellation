@@ -27,3 +27,4 @@
 | 0.20.0 | 2026-11-27T00:00:00Z | FilterProbe: `lb_probe_tau_ms` (τ, default 0 = off); a refused backend gets the request with probability `1 − e^(−Δt/τ)` (Δt since its LastSentTime), at every decision; probes win over kept backends; worked example |
 | 0.21.0 | 2026-11-27T00:00:00Z | FilterProbe flips only for a refused backend with nothing pending (a stalled backend keeps its unanswered forwards pending and is never probed) |
 | 0.22.0 | 2026-11-27T00:00:00Z | ProbeSample: a probe's answer (the first RTT sample of the probed backend after the probe was sent) is folded with weight 1, replacing the PeakEwmaRtt; worked example |
+| 0.23.0 | 2026-11-27T00:00:00Z | TokenBucketFilter (`lb_filter = token_bucket`): per-backend TokenBucket, TokenRate AIMD (halve at most once per SLO, floor r_min, additive increase), `token_bucket_choose` with the PeakEwmaDeadline's waiting; `token_rate_sample`; parameters `lb_tb_*`; worked examples |

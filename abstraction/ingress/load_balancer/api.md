@@ -7,9 +7,16 @@ From the Ingress parameters ([../api.md#program-parameters](../api.md#program-pa
 | Parameter | Type / unit / constraint | Default | Meaning |
 |---|---|---|---|
 | `lb_policy` | `round_robin` \| `least_outstanding` \| `power_of_two` \| `ewma` \| `peak_ewma` (OptionalValue) | `least_outstanding` | The LbPolicy; `peak_ewma` uses PeakEwmaRtt and PeakEwmaCost ([design.md#peakewmartt](design.md#peakewmartt)) |
-| `lb_filter` | `none` \| `deadline_mean` \| `deadline_mean_per_worker` \| `deadline_mean_queue_plus_share` \| `deadline_mmk` \| `deadline_provisional_rtt` (OptionalValue) | `none` | The DeadlineFilter's DeadlineStrategy, or off ([design.md#deadlinefilter](design.md#deadlinefilter)); `deadline_provisional_rtt` needs `lb_policy = peak_ewma` and is the PeakEwmaDeadline ([design.md#peakewmadeadline](design.md#peakewmadeadline)) |
+| `lb_filter` | `none` \| `deadline_mean` \| `deadline_mean_per_worker` \| `deadline_mean_queue_plus_share` \| `deadline_mmk` \| `deadline_provisional_rtt` \| `token_bucket` (OptionalValue) | `none` | The DeadlineFilter's DeadlineStrategy, or off ([design.md#deadlinefilter](design.md#deadlinefilter)); `deadline_provisional_rtt` needs `lb_policy = peak_ewma` and is the PeakEwmaDeadline ([design.md#peakewmadeadline](design.md#peakewmadeadline)); `token_bucket` (OptionalValue, needs `lb_policy = peak_ewma`) is the TokenBucketFilter: a per-backend token bucket whose refill rate adapts by AIMD ([design.md#tokenbucketfilter](design.md#tokenbucketfilter)) |
 | `lb_filter_margin` | float, `>= 1`, finite | `1` | FilterMargin `γ` of the PeakEwmaDeadline: a backend is refused when `γ ×` its ProvisionalCurrentRtt exceeds the request's time left; `1` is the plain test. Used only by `lb_filter = deadline_provisional_rtt`, validated always ([design.md#peakewmadeadline](design.md#peakewmadeadline)) |
 | `lb_probe_tau_ms` | float, ms, `>= 0`, finite | `0` | FilterProbe `τ`: a backend the PeakEwmaDeadline refuses still gets the request with probability `1 − e^(−Δt/τ)` if it has nothing pending, Δt the time since it last got one; `0` turns probing off. Used only by `lb_filter = deadline_provisional_rtt`, validated always ([design.md#filterprobe](design.md#filterprobe)) |
+| `lb_tb_slo_ms` | float, ms, `> 0`, finite; required with `lb_filter = token_bucket` | `0` (unset) | TokenRate: the SLO an answered attempt's latency is judged against. Validated always (`0` or finite `> 0`), used only by `lb_filter = token_bucket` ([design.md#tokenbucketfilter](design.md#tokenbucketfilter)) |
+| `lb_tb_init_rate` | float, tokens/s, `> 0`, finite | `50` | TokenRate `init_r`: every backend's refill rate at start ([design.md#tokenbucketfilter](design.md#tokenbucketfilter)) |
+| `lb_tb_max_tokens` | float, tokens, `>= 1`, finite | `10` | TokenBucket capacity `max_tokens` ([design.md#tokenbucketfilter](design.md#tokenbucketfilter)) |
+| `lb_tb_mult_dec` | float, `> 1`, finite | `2` | TokenRate `mult_dec_const`: a slow answer sets `r = r / mult_dec`, at most once per `lb_tb_slo_ms` ([design.md#tokenbucketfilter](design.md#tokenbucketfilter)) |
+| `lb_tb_add_inc_limit` | float, `>= 1`, finite | `2` | TokenRate `add_inc_limit`: an answer faster than `lb_tb_slo_ms / add_inc_limit` raises `r` ([design.md#tokenbucketfilter](design.md#tokenbucketfilter)) |
+| `lb_tb_add_inc_frac` | float, `>= 0`, finite | `0.1` | TokenRate `add_inc_const = lb_tb_add_inc_frac × init_r`, added per fast answer ([design.md#tokenbucketfilter](design.md#tokenbucketfilter)) |
+| `lb_tb_min_rate_frac` | float, `0 < x <= 1`, finite | `0.1` | TokenRate floor `r_min = lb_tb_min_rate_frac × init_r` ([design.md#tokenbucketfilter](design.md#tokenbucketfilter)) |
 | `ewma_beta` | float, `0 <= ewma_beta <= 1` | `0.7` | Weight of the old value in each EwmaLatency update ([design.md#ewmalatency](design.md#ewmalatency)) |
 
 ## Constants
@@ -129,13 +136,18 @@ average at a later pick. Called by the Frontend when a forward's response header
 [design.md#peakewmartt](design.md#peakewmartt).
 
 ### `pending_add(lb, s: u32, request) -> nothing` and `pending_release(lb, request) -> nothing`
-With `lb_filter = deadline_provisional_rtt`: a pick for `s` records a PendingStart; the end of the client request
+With `lb_filter = deadline_provisional_rtt` or `token_bucket`: a pick for `s` records a PendingStart; the end of the client request
 (answered, dropped or reset) releases all of its own. See [design.md#provisionalcurrentrtt](design.md#provisionalcurrentrtt).
 
 ### `admit_peak(lb, worker, request, deadline: i64 | none)`, `retry_peak(lb, worker, request, deadline, exclude, avoid)`, `scan_peak(lb, worker)`
 The PeakEwmaDeadline's admission, LbRetry pick and 10 ms scan, with one wait queue and one retry list per Ingress
-worker; used in place of `admit` and `scan` when `lb_filter = deadline_provisional_rtt`. See
-[design.md#peakewmadeadline](design.md#peakewmadeadline).
+worker; used in place of `admit` and `scan` when `lb_filter = deadline_provisional_rtt` or `token_bucket` (then with the
+TokenBucketFilter's choice). See [design.md#peakewmadeadline](design.md#peakewmadeadline).
+
+### `token_rate_sample(lb, s: u32, latency_ns: u64) -> nothing`
+With `lb_filter = token_bucket`: adapts backend `s`'s TokenRate by AIMD. Called by the Frontend when an attempt's
+response headers arrive, whatever the status, with the time from sending that attempt; an attempt that never gets
+response headers is not reported. See [design.md#tokenbucketfilter](design.md#tokenbucketfilter).
 
 ### `stats_snapshot(lb) -> list of BackendStats values`
 Reads every counter, `ewma_latency_ns`, `ewma_exec_ns` and `ewma_anti_exec_ns` (acquire), in `server_id` order, for the summary.

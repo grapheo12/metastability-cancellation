@@ -57,11 +57,11 @@ function validate(params):
     1 <= num_clients <= MAX_CLIENTS                         else error
     lb_policy in {round_robin, least_outstanding, power_of_two, ewma, peak_ewma}  else error
     lb_filter in {none, deadline_mean, deadline_mean_per_worker, deadline_mean_queue_plus_share, deadline_mmk,
-                  deadline_provisional_rtt}                 else error   # default none
-    if lb_filter == deadline_provisional_rtt: lb_policy == peak_ewma
-                                                            else error "lb_filter deadline_provisional_rtt needs lb_policy peak_ewma"
-    if lb_policy == peak_ewma: lb_filter in {none, deadline_provisional_rtt}
-                                                            else error "lb_policy peak_ewma needs lb_filter none or deadline_provisional_rtt"
+                  deadline_provisional_rtt, token_bucket}   else error   # default none
+    if lb_filter in {deadline_provisional_rtt, token_bucket}: lb_policy == peak_ewma
+                                                            else error "lb_filter <lb_filter> needs lb_policy peak_ewma"
+    if lb_policy == peak_ewma: lb_filter in {none, deadline_provisional_rtt, token_bucket}
+                                                            else error "lb_policy peak_ewma needs lb_filter none, deadline_provisional_rtt or token_bucket"
     every OptionalValue given is realized here              else error "<parameter> <value> is not supported by this implementation"
     0 <= ewma_beta <= 1 and finite                          else error "ewma_beta must be a number in [0, 1]"
     cancel_rate >= 0 and finite                             else error
@@ -76,6 +76,14 @@ function validate(params):
     lb_retry_anxiety_ratio >= 0 and finite                   else error             # default 0.3
     lb_filter_margin >= 1 and finite                         else error "lb_filter_margin must be a finite number >= 1"   # default 1
     lb_probe_tau_ms >= 0 and finite                          else error "lb_probe_tau_ms must be a finite number >= 0"   # default 0
+    lb_tb_slo_ms >= 0 and finite                             else error "lb_tb_slo_ms must be a finite number > 0"   # default 0 (unset)
+    if lb_filter == token_bucket: lb_tb_slo_ms > 0           else error "lb_tb_slo_ms is required with lb_filter token_bucket"
+    lb_tb_init_rate > 0 and finite                           else error "lb_tb_init_rate must be a finite number > 0"        # default 50
+    lb_tb_max_tokens >= 1 and finite                         else error "lb_tb_max_tokens must be a finite number >= 1"      # default 10
+    lb_tb_mult_dec > 1 and finite                            else error "lb_tb_mult_dec must be a finite number > 1"         # default 2
+    lb_tb_add_inc_limit >= 1 and finite                      else error "lb_tb_add_inc_limit must be a finite number >= 1"   # default 2
+    lb_tb_add_inc_frac >= 0 and finite                       else error "lb_tb_add_inc_frac must be a finite number >= 0"    # default 0.1
+    0 < lb_tb_min_rate_frac <= 1                             else error "lb_tb_min_rate_frac must be a number in (0, 1]"     # default 0.1
     lb_retry_late_factor >= 0 and finite                     else error             # default 10
     return IngressConfig(..., duration_ns = round(duration_s * 1e9) if cancel_rate > 0,
                          initial_stall_ns = initial_stall_ms * 1_000_000)
