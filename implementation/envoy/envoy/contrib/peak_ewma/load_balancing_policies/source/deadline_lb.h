@@ -80,11 +80,16 @@ struct PendingRequests : public Upstream::HostLbPolicyData {
   // FilterProbe's LastSentTime: monotonic ns of the last request handed to this host (0: never).
   void markSent(int64_t now_ns) { last_sent_ns_.store(now_ns, std::memory_order_relaxed); }
   int64_t lastSent() const { return last_sent_ns_.load(std::memory_order_relaxed); }
+  // ProbeSample: monotonic ns a probe was sent to this host (0: none). takeProbeAnswer(t) is true for the first
+  // sample at t >= that time and clears the mark (compare-and-swap: exactly one caller sees true).
+  void markProbe(int64_t now_ns) { probe_sent_ns_.store(now_ns, std::memory_order_relaxed); }
+  bool takeProbeAnswer(int64_t t_ns);
 
 private:
   mutable absl::Mutex mu_;
   std::multiset<int64_t> starts_ ABSL_GUARDED_BY(mu_);
   std::atomic<int64_t> last_sent_ns_{0};
+  std::atomic<int64_t> probe_sent_ns_{0};
 };
 
 // A request's pending entries (one per host handed to it, retries included); removed from the hosts'
@@ -107,6 +112,8 @@ public:
                                const Upstream::ClusterInfo& cluster_info, TimeSource& time_source,
                                const DeadlineConfig& config);
 
+  // ProbeSample: a probe's answer is folded into the PeakEwmaRtt with weight 1.
+  bool fullWeightSample(const Upstream::HostConstSharedPtr& host, uint64_t timestamp_ns) override;
   Upstream::HostSelectionResponse chooseHost(Upstream::LoadBalancerContext* context) override;
 
   // One FilterWaitQueue re-check; run by this worker's timer every queue_tick (public for tests).

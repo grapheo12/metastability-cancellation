@@ -46,7 +46,7 @@ void GlobalHostStats::setActiveRequestsStat(double active_requests) {
   active_requests_stat_.set(static_cast<uint64_t>(active_requests));
 }
 
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.21.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.22.0)
 // impl/envoy: PeakEwmaTrace (see peak_ewma_lb.h).
 
 namespace {
@@ -445,7 +445,10 @@ void PeakEwmaLoadBalancer::processHostSamples(Upstream::HostConstSharedPtr host,
       continue;
     }
 
-    double alpha = calculateTimeBasedAlpha(timestamp_ns, reference_time);
+    // Design: abstraction/ingress/load_balancer/design.md#filterprobe
+    // impl/envoy: a probe's answer (ProbeSample) is folded with alpha = 1.
+    double alpha = fullWeightSample(host, timestamp_ns) ? 1.0
+                                                        : calculateTimeBasedAlpha(timestamp_ns, reference_time);
     const double ewma_before = current_ewma;
     current_ewma = updateEwmaWithSample(current_ewma, rtt_ms, alpha);
     // impl/envoy: trace this EWMA update.

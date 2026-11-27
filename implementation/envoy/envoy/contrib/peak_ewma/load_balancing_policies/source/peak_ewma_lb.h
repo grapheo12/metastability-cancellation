@@ -156,6 +156,8 @@ protected:
   // EWMA calculation helpers.
   double calculateTimeBasedAlpha(uint64_t later_time_ns, uint64_t earlier_time_ns);
   double updateEwmaWithSample(double current_ewma, double new_rtt_ms, double alpha);
+  // impl/envoy: true folds this sample with alpha = 1 (it replaces the EWMA); the deadline policy's ProbeSample.
+  virtual bool fullWeightSample(const Upstream::HostConstSharedPtr&, uint64_t) { return false; }
 
   // Core infrastructure.
   const Upstream::PrioritySet& priority_set_;

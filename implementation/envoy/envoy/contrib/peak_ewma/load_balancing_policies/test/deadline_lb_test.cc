@@ -1,8 +1,9 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.21.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.22.0)
 // impl/envoy (cancellation testbed): tests of the peak_ewma_deadline load balancer (deadline_lb.h): the deadline
 // filter over every host, the lowest-cost choice, and the per-worker FIFO wait queue.
 
 #include <chrono>
+#include <cmath>
 #include <memory>
 #include <string>
 
@@ -207,6 +208,32 @@ TEST_F(PeakEwmaDeadlineProbeTest, HostWithSomethingPendingIsNeverProbed) {
   setHost(1, 9000, 0);
   auto r = request(4000 * kMs);
   EXPECT_EQ(lb_->chooseHost(&r->context).host, hosts_[1]); // host 0 is cheaper but pending: only host 1 probed
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#filterprobe
+TEST_F(PeakEwmaDeadlineProbeTest, ProbeAnswerReplacesTheAverageLaterSamplesAreTimeWeighted) {
+  setHost(0, 2604, 0); // the worked example's average; 2604 ms > 2000 ms left: refused
+  setHost(1, 9000, 0);
+  ON_CALL(random_, random()).WillByDefault(Return(0)); // heads
+  auto probe = request(2000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&probe->context).host, hosts_[0]); // both refused, never sent: the cheaper is probed
+  probe.reset();
+  auto data = hosts_[0]->typedLbPolicyData<PeakEwmaHostLbPolicyData>();
+  ASSERT_TRUE(data.has_value());
+  advance(400);
+  data->recordRttSample(401, static_cast<uint64_t>(mono_ns_)); // the probe's answer
+  advance(200);                                                // past the aggregation interval
+  auto fold1 = request(absl::nullopt);
+  lb_->chooseHost(&fold1->context);
+  EXPECT_DOUBLE_EQ(data->getEwmaRtt(), 401.0); // ProbeSample: weight 1 (time-based would give 2517.6)
+  fold1.reset();
+  advance(400);
+  data->recordRttSample(2000, static_cast<uint64_t>(mono_ns_)); // an ordinary sample: the mark was cleared
+  advance(200);
+  auto fold2 = request(absl::nullopt);
+  lb_->chooseHost(&fold2->context);
+  const double a = 1.0 - std::exp(-0.6 / 10.0); // dt 0.6 s since the probe's answer, tau 10 s
+  EXPECT_NEAR(data->getEwmaRtt(), a * 2000 + (1 - a) * 401, 1e-6);
 }
 
 // Design: abstraction/ingress/load_balancer/design.md#filterprobe

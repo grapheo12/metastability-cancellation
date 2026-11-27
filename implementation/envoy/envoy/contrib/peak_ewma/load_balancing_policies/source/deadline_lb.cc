@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.21.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.22.0)
 // Source: abstraction/protocol/design.md (protocol v0.8.0)
 #include "contrib/peak_ewma/load_balancing_policies/source/deadline_lb.h"
 
@@ -41,6 +41,15 @@ absl::optional<int64_t> PendingRequests::oldest() const {
     return absl::nullopt;
   }
   return *starts_.begin();
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#filterprobe
+bool PendingRequests::takeProbeAnswer(int64_t t_ns) {
+  int64_t p = probe_sent_ns_.load(std::memory_order_relaxed);
+  if (p == 0 || t_ns < p) {
+    return false;
+  }
+  return probe_sent_ns_.compare_exchange_strong(p, 0, std::memory_order_relaxed); // one of two folders wins
 }
 
 // Design: abstraction/ingress/load_balancer/design.md#provisionalcurrentrtt
@@ -263,6 +272,14 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
     chosen = ties[random_.random() % ties.size()];
   }
 
+  // Design: abstraction/ingress/load_balancer/design.md#filterprobe
+  if (probing && chosen < hosts.size()) { // ProbeSample: the probed host's next sample is this probe's answer
+    auto pending = hosts[chosen]->typedLbPolicyData<PendingRequests>();
+    if (pending.has_value()) {
+      pending->markProbe(now_mono);
+    }
+  }
+
   // A refused retry is re-checked every scan until its request ends; its refused re-checks are counted on its
   // retry_sent / retry_gone queue event instead of traced one by one (they would dominate the trace).
   const bool traced = !(absl::string_view(kind) == "retry_rescan" && chosen == hosts.size());
@@ -276,6 +293,13 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
     }
   }
   return chosen < hosts.size() ? hosts[chosen] : nullptr;
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#filterprobe
+bool PeakEwmaDeadlineLoadBalancer::fullWeightSample(const Upstream::HostConstSharedPtr& host,
+                                                    uint64_t timestamp_ns) {
+  auto pending = host->typedLbPolicyData<PendingRequests>();
+  return pending.has_value() && pending->takeProbeAnswer(static_cast<int64_t>(timestamp_ns)); // ProbeSample
 }
 
 Upstream::HostSelectionResponse

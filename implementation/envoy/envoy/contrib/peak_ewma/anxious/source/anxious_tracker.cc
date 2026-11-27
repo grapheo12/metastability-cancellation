@@ -1,5 +1,5 @@
 // Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.8.0)
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.21.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.22.0)
 #include "contrib/peak_ewma/anxious/source/anxious_tracker.h"
 
 #include <algorithm>
