@@ -99,6 +99,62 @@ class RunTest(unittest.TestCase):
         _, out = self.run_tool(write=True)
         self.assertIn("UNCOVERED abstraction/x/design.md#requestid", out)
 
+    def write(self, path, text):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text)
+
+    def read_design(self):
+        with open(self.design) as f:
+            return f.read()
+
+    def test_not_traced(self):
+        self.write(self.design, DESIGN.replace("<!-- trace:begin -->", "### Not traced\n\n| Design subsection | Reason |\n"
+                   "|---|---|\n| [State machine (per `/ping` StreamTask)](#state-machine-per-ping-streamtask) | not realized |\n\n"
+                   "<!-- trace:begin -->"))
+        self.write(self.code, "// Design: abstraction/x/design.md#requestid\nvar c = 1\n")
+        self.assertEqual(self.run_tool(write=True)[0], 0)
+        self.assertEqual(self.run_tool(write=False), (0, "OK\n"))
+        self.assertIn("| [State machine (per `/ping` StreamTask)](#state-machine-per-ping-streamtask) | not traced |",
+                      self.read_design())
+
+    def test_not_traced_problems(self):
+        self.write(self.design, DESIGN.replace("<!-- trace:begin -->", "### Not traced\n\n| Design subsection | Reason |\n"
+                   "|---|---|\n| [RequestId](#requestid) | x |\n| [Gone](#gone) | x |\n\n<!-- trace:begin -->"))
+        status, out = self.run_tool(write=True)
+        self.assertEqual(status, 1)
+        self.assertIn("LISTED BUT TRACED abstraction/x/design.md#requestid", out)
+        self.assertIn("UNKNOWN ANCHOR abstraction/x/design.md#gone", out)
+
+    def test_two_language_sections(self):
+        # A Go section and an Envoy section in one file: each run fills only its own table, and the other section's
+        # heading is not part of the spec part.
+        envoy = "\n## Design specific to Envoy\n\n### Not traced\n\n| Design subsection | Reason |\n|---|---|\n" \
+                "| [RequestId](#requestid) | unchanged upstream code: `up.cc` |\n\n<!-- trace:begin -->\n<!-- trace:end -->\n"
+        self.write(self.design, DESIGN + envoy)
+        self.write(os.path.join(self.root, "implementation", "envoy", "glue.py"),
+                   "# Design: abstraction/x/design.md#state-machine-per-ping-streamtask\nx = 1\n")
+        self.write(os.path.join(self.root, "implementation", "envoy", "lb.cc"),
+                   "// Design: abstraction/x/design.md#state-machine-per-ping-streamtask\nint y;\n")
+        self.write(os.path.join(self.root, "implementation", "envoy", "upstream.cc"), "int z;\n")
+        self.assertEqual(self.run_tool(write=True)[0], 0)
+        out = io.StringIO()
+        st = tracegen.run(self.root, "implementation/envoy", "Envoy", [".cc", ".h", ".py:#"], "//", True, out)
+        self.assertEqual((st, out.getvalue()), (0, "OK\n"))
+        text = self.read_design()
+        go, envoy_part = text.split("## Design specific to Envoy")
+        self.assertIn("[a.go:5]", go)
+        self.assertNotIn("glue.py", go)
+        self.assertIn("| [RequestId](#requestid) | not traced |", envoy_part)
+        self.assertIn("[glue.py:2](../../implementation/envoy/glue.py#L2), [lb.cc:2](../../implementation/envoy/lb.cc#L2)",
+                      envoy_part)
+        self.assertNotIn("design-specific-to-go", text)
+        out = io.StringIO()
+        self.assertEqual(tracegen.run(self.root, "implementation/envoy", "Envoy", [".cc", ".py:#"], "//", False, out), 0)
+
+    def test_parse_exts(self):
+        self.assertEqual(tracegen.parse_exts([".cc", ".py:#", ".h:"], "//"), [(".cc", "//"), (".py", "#"), (".h", "//")])
+
 
 if __name__ == "__main__":
     unittest.main()
