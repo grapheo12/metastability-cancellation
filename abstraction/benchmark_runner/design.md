@@ -102,3 +102,34 @@ are command-line arguments. Running setup once also means every point measures t
 If the operator interrupts `bench run` (e.g. Ctrl-C), the executor stops the current point's servers
 ([experiment_executor/design.md#serverlifecycle](experiment_executor/design.md#serverlifecycle)), marks that point
 `failed` with reason `interrupted`, writes the plots for the points finished so far, and exits `1`.
+
+## Design specific to Python
+
+Shared tool `implementation/scripts/` (tooling language Python 3.11+; see `AGENTS.md` "Shared tooling"). Identical on
+every `impl/<lang>` branch. Plotting needs `plotly` (`python3 -m pip install -r implementation/scripts/requirements.txt`).
+Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts`.
+
+### Python choices
+
+- Entry point `bench.py` (argparse subcommands `run`, `setup`, `plot`, `retry-timeout`, `stable-eta`). The package `benchrunner/` has one module per leaf: `config.py`, `transport.py`, `remote_setup.py`, `executor.py`, `plotter.py`, `retry_timeout.py`.
+- `bench retry-timeout` is `bench_retry_timeout` and `bench stable-eta` is `bench_stable_eta`: they need neither a config nor plotly, compute every rate first and print only if all succeed.
+- The operator repository is found with `git rev-parse --show-toplevel` from the script's own directory, so `bench.py` can be run from any working directory.
+- `check_placement_support` also refuses `gc_trace` when the manifest has no `gc_trace_env` (GcTraceHook).
+- `check_placement_support` raises `PinError`, which `bench_run` already maps to exit `2`. `warn_unpinned` prints to standard error right after the `setup done` log line.
+- `run` checks that `plotly` can be imported *before* setup and exits `2` if it can't, so a long sweep never ends without plots. `setup` doesn't need it.
+- An operator interrupt is Python's `KeyboardInterrupt`. `run_point` finishes its cleanup and re-raises it, and `bench_run` catches it, plots, and exits `1`.
+- ServerMachines: `bench_run` opens one Transport per server machine. The parallel setup is `remote_setup.setup_machines(server_ts, client_t, config, pin)` (a `ThreadPoolExecutor` with one worker per machine), which returns the list of server `MachineReady` and the client's; when the client is the same machine as one server machine, it reuses that server machine's setup. `warn_unpinned` warns for the server role if any server machine lacks `taskset`.
+
+### Traceability
+
+Generated from the `# Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Python --impl implementation/scripts --ext .py --comment '#' --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [Structure](#structure) | [bench.py:91](../../implementation/scripts/bench.py#L91) |
+| [Run flow](#run-flow) | [bench.py:44](../../implementation/scripts/bench.py#L44), [bench.py:62](../../implementation/scripts/bench.py#L62), [bench.py:72](../../implementation/scripts/bench.py#L72), [bench.py:91](../../implementation/scripts/bench.py#L91), [bench.py:138](../../implementation/scripts/bench.py#L138), [bench.py:153](../../implementation/scripts/bench.py#L153), [bench.py:165](../../implementation/scripts/bench.py#L165), [remote_setup.py:196](../../implementation/scripts/benchrunner/remote_setup.py#L196) |
+| [Why setup happens once](#why-setup-happens-once) | [bench.py:105](../../implementation/scripts/bench.py#L105) |
+| [Interrupts](#interrupts) | [bench.py:129](../../implementation/scripts/bench.py#L129) |
+<!-- trace:end -->

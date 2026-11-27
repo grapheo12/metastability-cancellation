@@ -344,3 +344,45 @@ evidence exists.
 | 2 | (10, 1, 5, 3) and (7, 0, 4, 0) | (17, 1, 9, 3) |
 | 2 | (10, 1, 5, 3) and (7, 0, 4, absent: an older server) | (17, 1, 9, 3) |
 | 2 | (10, 1, 5, 3) and missing | not written; point fails |
+
+## Design specific to Python
+
+Shared tool `implementation/scripts/` (tooling language Python 3.11+; see `AGENTS.md` "Shared tooling"). Identical on
+every `impl/<lang>` branch. Plotting needs `plotly` (`python3 -m pip install -r implementation/scripts/requirements.txt`).
+Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts`.
+
+### Python choices
+
+- `ingress.liveness.csv` is one more name in `collect_outputs`'s Ingress fetch loop; the transport's `fetch` already tolerates a missing file, and no message is printed for it. `test_ingress_outputs_from_ingress_host` checks that it is fetched when present and silent when absent.
+- FreezeTarget: `start_servers` appends `["--freeze_after_ms", format_arg(point.freeze["freeze_after_ms"])]` to the words of the instance `k == point.freeze["instance"]` only. `test_freeze_target_only_on_its_instance` checks that instance 0 of two ends with it and instance 1 lacks it.
+- `run_point` uses `try / except / finally`. `finally` always stops the Ingress, then the servers, and collects outputs. `KeyboardInterrupt` is recorded as reason `interrupted` and re-raised after the `failed` marker is written.
+- Waiting uses `time.monotonic()` deadlines and `time.sleep(POLL_INTERVAL_S)`.
+- `params.json`, `placement.json` and the `server_counters*.json` files are written with `json.dump(..., indent=2)`. `placement.json` is written right after `params.json`, before any remote command, so even a point that fails early records its placement.
+- `ingress_host` is chosen once in `run_point` from `point.ingress_machine`; points read from older `params.json` files without it default to the client machine. `collect_outputs` takes the Ingress's machine and remote directory as extra arguments.
+- GcEvents: `gc_trace_prefix(config, server)` adds `env` plus `MachineReady.gc_trace_env` after the ProcessPlacement prefix in `start_servers`. `collect_outputs` takes `gc_trace=` (from `BenchConfig.gc_trace`) and calls `write_gc_events`, which reads `server_<k>.out` line by line, takes the first `process_start_unix_ns` line (`re.fullmatch`) and every line the hook's regex matches with `re.match` (anchored at the start), and writes the CSV with the three durations copied as matched. `seconds_to_ns` uses `str.partition` and integer arithmetic only. Tests: `GcEventsTest` (worked example, warnings, prefix) and the server-start test.
+- `collect_outputs` fetches `ingress.forwards.csv` in the same loop as the other Ingress outputs and prints the missing-file warning right after it; `tests/test_executor.py` checks the warning and the fetch.
+- BackgroundProgram is `start_program(m, name, words, log, pid_file, ready_timeout_s)` and `stop_program(m, pid_file, stop_timeout_s)`; `start_servers`, `stop_servers`, `start_ingress` and `stop_ingress` are thin wrappers.
+- Leftover cleanup (`stop_leftover_servers`) lists the existing `server_*.pid` files with one `ls` per server machine, as specified.
+- Several ServerMachines: `run_point`, `start_servers`, `stop_servers`, `write_placement` and `collect_outputs` take the list of server `MachineReady` and, where needed, the parallel list of their remote point directories; `_as_list` also accepts a single machine (one ServerMachine), which the unit tests use. The instance-to-machine map is `point.hosts()`; `local_index(hosts, k)` gives the port offset. Tests: `test_local_index_worked_example`, `test_instances_across_server_machines`, `test_outputs_fetched_from_each_instances_machine`.
+- - `placement_prefix` returns plain words. They go through the same `join` (POSIX quoting) as the rest of the command line, so `GOMAXPROCS=4` and `0-3` are passed unquoted and unchanged.
+- `client_run`'s timeout: `point.arg("loadgen", "slo_cancel") is False` (the TOML boolean, so an absent parameter keeps the SLO bound) adds `drain_timeout_ms / 1000`, default 10000 ms. `ClientRunTimeoutTest` checks the worked example (245 s) and the defaults.
+- ScenarioAssignment: `start_servers` appends `--service_scenario <json> --scenario_log_path <rd>/server_<k>.scenario.csv` after `--freeze_after_ms` when `point.scenarios[k]` is set (a SweepPoint without `scenarios` has none); the JSON is one word, quoted by `join`. `collect_outputs` fetches `server_<k>.scenario.csv` only for those instances and prints one warning if it is missing. Tests: `test_scenario_only_on_its_instance`, `test_scenario_log_fetched_when_assigned`.
+- `COUNTER_KEYS` includes `rejected_past_deadline`; the sum uses `c.get(key, 0)`, so an older server's line without it counts 0. `test_counters_summed_over_instances` mixes a four-key and a three-key instance.
+
+### Traceability
+
+Generated from the `# Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Python --impl implementation/scripts --ext .py --comment '#' --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [run_point](#run_point) | [executor.py:58](../../../implementation/scripts/benchrunner/executor.py#L58) |
+| [BackgroundProgram](#backgroundprogram) | [executor.py:115](../../../implementation/scripts/benchrunner/executor.py#L115), [executor.py:133](../../../implementation/scripts/benchrunner/executor.py#L133) |
+| [ServerLifecycle](#serverlifecycle) | [executor.py:45](../../../implementation/scripts/benchrunner/executor.py#L45), [executor.py:161](../../../implementation/scripts/benchrunner/executor.py#L161), [executor.py:173](../../../implementation/scripts/benchrunner/executor.py#L173), [executor.py:182](../../../implementation/scripts/benchrunner/executor.py#L182), [executor.py:190](../../../implementation/scripts/benchrunner/executor.py#L190), [test_executor.py:252](../../../implementation/scripts/tests/test_executor.py#L252), [test_executor.py:274](../../../implementation/scripts/tests/test_executor.py#L274), [test_executor.py:279](../../../implementation/scripts/tests/test_executor.py#L279), [test_executor.py:304](../../../implementation/scripts/tests/test_executor.py#L304), [test_executor.py:322](../../../implementation/scripts/tests/test_executor.py#L322) |
+| [IngressLifecycle](#ingresslifecycle) | [executor.py:67](../../../implementation/scripts/benchrunner/executor.py#L67), [executor.py:200](../../../implementation/scripts/benchrunner/executor.py#L200), [executor.py:209](../../../implementation/scripts/benchrunner/executor.py#L209) |
+| [ClientRun](#clientrun) | [executor.py:214](../../../implementation/scripts/benchrunner/executor.py#L214), [test_executor.py:59](../../../implementation/scripts/tests/test_executor.py#L59), [test_executor.py:88](../../../implementation/scripts/tests/test_executor.py#L88) |
+| [ProcessPlacement](#processplacement) | [executor.py:236](../../../implementation/scripts/benchrunner/executor.py#L236), [executor.py:247](../../../implementation/scripts/benchrunner/executor.py#L247), [test_executor.py:29](../../../implementation/scripts/tests/test_executor.py#L29), [test_executor.py:39](../../../implementation/scripts/tests/test_executor.py#L39) |
+| [GcEvents](#gcevents) | [executor.py:256](../../../implementation/scripts/benchrunner/executor.py#L256), [executor.py:264](../../../implementation/scripts/benchrunner/executor.py#L264), [executor.py:275](../../../implementation/scripts/benchrunner/executor.py#L275), [test_executor.py:194](../../../implementation/scripts/tests/test_executor.py#L194), [test_executor.py:202](../../../implementation/scripts/tests/test_executor.py#L202), [test_executor.py:221](../../../implementation/scripts/tests/test_executor.py#L221), [test_executor.py:241](../../../implementation/scripts/tests/test_executor.py#L241) |
+| [Point outputs](#point-outputs) | [executor.py:310](../../../implementation/scripts/benchrunner/executor.py#L310), [executor.py:333](../../../implementation/scripts/benchrunner/executor.py#L333), [executor.py:365](../../../implementation/scripts/benchrunner/executor.py#L365), [test_executor.py:113](../../../implementation/scripts/tests/test_executor.py#L113), [test_executor.py:142](../../../implementation/scripts/tests/test_executor.py#L142), [test_executor.py:167](../../../implementation/scripts/tests/test_executor.py#L167), [test_executor.py:341](../../../implementation/scripts/tests/test_executor.py#L341), [test_executor.py:361](../../../implementation/scripts/tests/test_executor.py#L361) |
+<!-- trace:end -->

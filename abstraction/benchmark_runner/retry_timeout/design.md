@@ -336,3 +336,40 @@ Boundary and closed-form cases:
   but correct.
 - `rho0` close to `1`: the grid still spans `[rho0, RHO_MAX]` with `FEEDBACK_GRID` intervals; a StableLoad above
   `RHO_MAX` is reported as none.
+
+## Design specific to Python
+
+Shared tool `implementation/scripts/` (tooling language Python 3.11+; see `AGENTS.md` "Shared tooling"). Standard
+library only (`math`), so `bench retry-timeout` runs without plotly.
+Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts`.
+
+### Python choices
+
+- File `benchrunner/retry_timeout.py`. `RetryTimeoutResult` and `StableEtaResult` are `dataclass`es. `erlang_c`, `sojourn_tail`, `eta_target`, `solve_timeout`, `feedback_points`, `validate`, `retry_timeout`, `max_stable_eta`, `format_results` and `format_stable_eta` follow the design's functions; `BISECTION_STEPS`, `THETA_EQ_MU_REL = 1e-12`, `FEEDBACK_GRID`, `RHO_MAX`, `ROOT_STEPS`, `ETA_STEPS` and `NO_RETRY_TIMEOUT_MS` name its constants.
+- Infinity is `math.inf`; "none" is `None`. `fixed_or` is `_fixed_or`. In `feedback_points`, the grid is a list built once per call and the scans use `next(...)` over index ranges.
+- Python floats are IEEE 754 doubles; `math.exp` is the exponential. `fixed(x, d)` is the format spec `.{d}f`, which rounds the double's exact value correctly. `shortest(x)` is `repr(x)`, or `str(int(x))` for integral values; `round(x, 3)` is Python's `round`.
+- `workers` must be an `int` that is not a `bool`; numbers are `int` or `float` (not `bool`) and finite.
+- `bench.py` adds the argparse subcommands `retry-timeout` and `stable-eta` (`--workers` as `int`, `--mean_service_ms` and the rates as `float`, `nargs="+"`; `retry-timeout` also `--eta` as `float`, default `1.0`). Argparse reports usage errors with exit `2`. `bench_retry_timeout` and `bench_stable_eta` compute every rate before printing anything and turn a `ValueError` into `error: <message>` on stderr with exit `2`.
+- Tests: `tests/test_retry_timeout.py` checks the worked examples (to ±0.0005 ms and the defining equation), M/M/1 against `−ln(1 − ρ)/(μ − λ)`, the `theta = mu` branch and its neighbors, the low-load limit and monotonic tail, a large `k`, every validation message, the EtaSlack and RetryFeedback examples (each crossing is a fixed point to 1e-9), the MaxStableEta examples including the unbounded case, the exact CLI output of both commands and their error exit, and Theorem 1 of Convergence numerically (`test_iteration_converges_to_stable_rho`: the iteration from `rho0` rises to `feedback_points`' StableLoad to 1e-9, or passes 1 when there is none). The Lean proofs in `proofs/` are spec, not part of this tool.
+
+### Traceability
+
+Generated from the `# Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Python --ext .py --comment '#' --impl implementation/scripts --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [Model](#model) | [retry_timeout.py:143](../../../implementation/scripts/benchrunner/retry_timeout.py#L143) |
+| [ErlangC](#erlangc) | [retry_timeout.py:43](../../../implementation/scripts/benchrunner/retry_timeout.py#L43), [test_retry_timeout.py:53](../../../implementation/scripts/tests/test_retry_timeout.py#L53) |
+| [SojournTail](#sojourntail) | [retry_timeout.py:52](../../../implementation/scripts/benchrunner/retry_timeout.py#L52), [test_retry_timeout.py:30](../../../implementation/scripts/tests/test_retry_timeout.py#L30), [test_retry_timeout.py:37](../../../implementation/scripts/tests/test_retry_timeout.py#L37) |
+| [EtaSlack](#etaslack) | [retry_timeout.py:89](../../../implementation/scripts/benchrunner/retry_timeout.py#L89), [test_retry_timeout.py:94](../../../implementation/scripts/tests/test_retry_timeout.py#L94) |
+| [TimeoutSolve](#timeoutsolve) | [retry_timeout.py:19](../../../implementation/scripts/benchrunner/retry_timeout.py#L19), [retry_timeout.py:94](../../../implementation/scripts/benchrunner/retry_timeout.py#L94), [retry_timeout.py:143](../../../implementation/scripts/benchrunner/retry_timeout.py#L143), [test_retry_timeout.py:46](../../../implementation/scripts/tests/test_retry_timeout.py#L46) |
+| [RetryFeedback](#retryfeedback) | [retry_timeout.py:111](../../../implementation/scripts/benchrunner/retry_timeout.py#L111), [test_retry_timeout.py:94](../../../implementation/scripts/tests/test_retry_timeout.py#L94) |
+| [MaxStableEta](#maxstableeta) | [retry_timeout.py:32](../../../implementation/scripts/benchrunner/retry_timeout.py#L32), [retry_timeout.py:156](../../../implementation/scripts/benchrunner/retry_timeout.py#L156), [test_retry_timeout.py:140](../../../implementation/scripts/tests/test_retry_timeout.py#L140) |
+| [Convergence](#convergence) | [test_retry_timeout.py:120](../../../implementation/scripts/tests/test_retry_timeout.py#L120) |
+| [Validation](#validation) | [retry_timeout.py:73](../../../implementation/scripts/benchrunner/retry_timeout.py#L73), [test_retry_timeout.py:58](../../../implementation/scripts/tests/test_retry_timeout.py#L58) |
+| [Output format](#output-format) | [retry_timeout.py:185](../../../implementation/scripts/benchrunner/retry_timeout.py#L185), [retry_timeout.py:197](../../../implementation/scripts/benchrunner/retry_timeout.py#L197), [test_retry_timeout.py:74](../../../implementation/scripts/tests/test_retry_timeout.py#L74), [test_retry_timeout.py:153](../../../implementation/scripts/tests/test_retry_timeout.py#L153) |
+| [Worked examples](#worked-examples) | [test_retry_timeout.py:17](../../../implementation/scripts/tests/test_retry_timeout.py#L17) |
+| [Failure and edge cases](#failure-and-edge-cases) | [bench.py:153](../../../implementation/scripts/bench.py#L153), [bench.py:165](../../../implementation/scripts/bench.py#L165) |
+<!-- trace:end -->

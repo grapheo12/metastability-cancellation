@@ -83,3 +83,30 @@ string is a shell command by contract.
 Both machines are set up in parallel, and the run continues only if both succeed. If both machines are the same
 host with the same `workdir` (e.g. two `local` machines), the two setups would race on one clone. So setup runs
 **once** for that pair, and both MachineReady values share the result.
+
+## Design specific to Python
+
+Shared tool `implementation/scripts/` (tooling language Python 3.11+; see `AGENTS.md` "Shared tooling"). Identical on
+every `impl/<lang>` branch. Plotting needs `plotly` (`python3 -m pip install -r implementation/scripts/requirements.txt`).
+Tests: `python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts`.
+
+### Python choices
+
+- The operator-side git queries (`symbolic-ref`, `status --porcelain --untracked-files=no`, `rev-parse`, `ls-remote`) run through `subprocess.run(["git", "-C", repo_root, ...])`.
+- The manifest is parsed with `tomllib`. Its errors are `PinError`, because they are found while pinning.
+- `thread_env` is checked with the regular expression `[A-Za-z_][A-Za-z0-9_]*` (`re.fullmatch`). `BuildManifest.thread_env`, `MachineReady.thread_env` and `MachineReady.cpu_pinning` are dataclass fields with defaults `None`, `None`, `False`. In the same-machine case the client's MachineReady copies both from the server's.
+- GcTraceHook: `_gc_trace_hook` checks the two keys together. `gc_trace_env` words are `NAME=value` with `NAME` matching the same pattern as `thread_env` and no whitespace. `gc_trace_regex` must compile with `re` and have the named groups in `GC_TRACE_GROUPS`. Both become optional dataclass fields (default `None`) of `BuildManifest` and `MachineReady`, passed by keyword. `test_gc_trace_hook` also runs the regex of `implementation/go/benchmark_manifest.toml` on a real gctrace line, when that file exists.
+- The two machines are set up in parallel with `concurrent.futures.ThreadPoolExecutor(max_workers=2)`. The same-machine case is detected by equal `(host, user, ssh_port, workdir)`, and then setup runs once.
+
+### Traceability
+
+Generated from the `# Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Python --impl implementation/scripts --ext .py --comment '#' --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [SourcePin](#sourcepin) | [remote_setup.py:76](../../../implementation/scripts/benchrunner/remote_setup.py#L76) |
+| [BuildManifest](#buildmanifest) | [remote_setup.py:36](../../../implementation/scripts/benchrunner/remote_setup.py#L36), [remote_setup.py:101](../../../implementation/scripts/benchrunner/remote_setup.py#L101), [remote_setup.py:132](../../../implementation/scripts/benchrunner/remote_setup.py#L132), [test_remote_setup.py:32](../../../implementation/scripts/tests/test_remote_setup.py#L32), [test_remote_setup.py:47](../../../implementation/scripts/tests/test_remote_setup.py#L47), [test_remote_setup.py:74](../../../implementation/scripts/tests/test_remote_setup.py#L74) |
+| [Machine setup](#machine-setup) | [remote_setup.py:158](../../../implementation/scripts/benchrunner/remote_setup.py#L158), [remote_setup.py:196](../../../implementation/scripts/benchrunner/remote_setup.py#L196), [test_remote_setup.py:100](../../../implementation/scripts/tests/test_remote_setup.py#L100) |
+<!-- trace:end -->
