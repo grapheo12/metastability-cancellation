@@ -14,5 +14,5 @@ gc_trace_regex = '^gc (?P<cycle>\d+) @(?P<start_s>[0-9.]+)s \d+%: (?P<stw_start_
 
 [binaries]
 server = "bin/server"
-loadgen = "bin/loadgen"
-ingress = "bin/ingress"
+loadgen = "bin/loadgen.py"
+ingress = "bin/ingress.py"

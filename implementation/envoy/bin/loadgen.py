@@ -11,7 +11,9 @@ Mapping:
   n_waiting_requests -> --max-active-requests and --max-pending-requests per worker
   duration_s         -> --duration (whole seconds)
   drain_timeout_ms   -> --timeout: Nighthawk's bound on draining in-flight requests at the end (DrainDeadline)
-Supported: max_retries = 0 and slo_cancel = false only (no RequestCopies, no SLO cancellation yet).
+  arrival_rng        -> native only: per-worker mt19937_64 seeded seed + k (NH_POISSON_SEED)
+Rejected as not supported (exit 2): arrival_rng sampling, max_retries other than 0 (no RequestCopies), slo_cancel
+true (no SLOCancellation), a duration_s that is not a whole number of seconds.
 """
 import argparse
 import json
@@ -34,6 +36,12 @@ def parse_bool(s):
     raise argparse.ArgumentTypeError("must be true or false")
 
 
+def fail(message):
+    """A one-line validation error and exit status 2, before any network activity."""
+    print(message, file=sys.stderr)
+    sys.exit(2)
+
+
 def parse(argv):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     a = p.add_argument
@@ -51,18 +59,20 @@ def parse(argv):
     a("--slo_cancel", default=True, type=parse_bool)
     a("--drain_timeout_ms", default=10000, type=float)
     a("--output_path", default="results")
+    a("--arrival_rng", default="sampling")
     args = p.parse_args(argv)
-    bad = []
-    if args.max_retries != 0:
-        bad.append(f"max_retries={args.max_retries} (only 0)")
-    if args.slo_cancel:
-        bad.append("slo_cancel=true (only false: no SLO cancellation yet)")
-    if args.duration_s != int(args.duration_s) or args.duration_s < 1:
-        bad.append("duration_s must be a whole number >= 1 (Nighthawk's --duration is in seconds)")
     if args.request_bytes < 76:
-        bad.append("request_bytes < 76")
-    if bad:
-        p.error("not supported on impl/envoy yet: " + "; ".join(bad))
+        fail("request_bytes must be >= 76")
+    if args.arrival_rng not in ("sampling", "native"):
+        fail("arrival_rng must be sampling or native")
+    if args.arrival_rng == "sampling":
+        fail("arrival_rng sampling is not supported by this implementation")
+    if args.max_retries != 0:
+        fail(f"max_retries {args.max_retries} is not supported by this implementation")
+    if args.slo_cancel:
+        fail("slo_cancel true is not supported by this implementation")
+    if args.duration_s != int(args.duration_s) or args.duration_s < 1:
+        fail(f"duration_s {args.duration_s:g} is not supported by this implementation")
     return args
 
 

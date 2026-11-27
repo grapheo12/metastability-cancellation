@@ -40,7 +40,7 @@ Nighthawk reports at least 900 `benchmark.http_2xx`, no other status class or fa
 
 ## Experiments
 
-`bin/ingress` and `bin/loadgen` are drop-in replacements for the Go Ingress and LoadGenerator: they take the Go
+`bin/ingress.py` and `bin/loadgen.py` are drop-in replacements for the Go Ingress and LoadGenerator: they take the Go
 programs' flags, run Envoy and Nighthawk, and write the Go programs' output files (`wrappers/convert.py`), so
 `implementation/scripts/bench.py run|plot` works unchanged with `benchmark_manifest.toml`. Configs are in
 `experiments/`. The `/ping` server is the Go one (`../go`).

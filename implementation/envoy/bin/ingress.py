@@ -3,22 +3,17 @@
 command line (abstraction/ingress/api.md#program-parameters), and writes its outputs (forwards.csv, summary.json)
 from Envoy's access log when interrupted (SIGINT/SIGTERM), as the BenchmarkRunner expects.
 
-Supported: a static cluster of --backends, lb_policy round_robin | least_outstanding | power_of_two | ewma (Envoy's
-contrib Peak EWMA policy: power of two choices on cost = EWMA RTT x (active requests + 1), defaults; --ewma_beta is
-not used by it). lb_filter none, or deadline_mean with lb_policy ewma: the testbed's peak_ewma_deadline policy (the
-DeadlineFilter over every backend with cost = EWMA RTT x (active + 1) <= time left, lowest cost among those kept,
-and a per-worker FilterWaitQueue re-checked every 10 ms; vendored envoy/contrib/peak_ewma/.../deadline_lb.h); it
-reads the RequestDeadline from the x-request-deadline header that the impl/envoy load generator sends.
-lb_retry_policy none, or timeout with lb_max_retries > 0: Envoy hedging (route retry_policy with per_try_timeout =
-lb_retry_timeout_ms, hedge_on_per_try_timeout, num_retries = lb_max_retries, no retry on errors); the first answer
-from any attempt is relayed and the other attempts are reset (Go: the newest answer, older attempts keep running).
-lb_retry_policy anxious with lb_max_retries > 0: the Go Ingress's AnxiousRetry (lb_retry_anxiety_ratio alpha,
-lb_retry_late_factor beta, ewma_beta): the cluster's upstream filter testbed_anxious keeps the AnxiousTracker
-(attempts in flight, EwmaExecTime / EwmaAntiServiceTime from the ExecReports) and the router asks it every 10 ms
-whether to retry a request's newest attempt (anxious and ExpectedLate); the retry is a hedge that avoids the
-attempt's backend (retry host predicate previous_hosts: RetryElsewhere).
-forwards.csv has one row per attempt, from the router's upstream log. No Heartbeat Monitor, no LoadCanceller.
-Anything else is a startup error.
+Realized (abstraction/ingress, Design specific to Envoy): a static cluster of --backends;
+lb_policy peak_ewma (Envoy's contrib Peak EWMA: PeakEwmaRtt, PeakEwmaCost) with lb_filter none, or with
+deadline_provisional_rtt (the testbed's peak_ewma_deadline policy: ProvisionalCurrentRtt <= time left over every
+backend, lowest PeakEwmaCost, per-worker wait queue; RequestDeadline from the x-request-deadline header);
+forward_mode hedge only (HedgedForwarding: the first answer of any attempt wins, the others are reset);
+lb_retry_policy none, timeout (TimeoutHedge: Envoy hedging on per_try_timeout) or anxious (the testbed_anxious
+upstream filter and the router's 10 ms retry hook, RetryElsewhere through previous_hosts).
+forwards.csv has one row per attempt, from the router's upstream log.
+Every other value is rejected as not supported (exit 2): lb_policy other than peak_ewma, the deadline_mean* and
+deadline_mmk strategies, forward_mode relay, heartbeat_timeout_ms > 0 (no Heartbeat Monitor) and cancel_rate > 0
+(no LoadCanceller).
 """
 import argparse
 import json
@@ -35,9 +30,42 @@ sys.path.insert(0, os.path.join(HERE, "..", "wrappers"))
 import convert  # noqa: E402
 
 ENVOY = os.path.join(HERE, "..", "build", "envoy-static")
-LB_POLICIES = {"round_robin": ("ROUND_ROBIN", None), "least_outstanding": ("LEAST_REQUEST", "all"),
-               "power_of_two": ("LEAST_REQUEST", 2), "ewma": ("PEAK_EWMA", None)}
+LB_POLICIES = ("round_robin", "least_outstanding", "power_of_two", "ewma", "peak_ewma")
+LB_FILTERS = ("none", "deadline_mean", "deadline_mean_per_worker", "deadline_mean_queue_plus_share", "deadline_mmk",
+              "deadline_provisional_rtt")
+RETRY_POLICIES = ("none", "timeout", "anxious")
 UNLIMITED = 1_000_000  # circuit-breaker limits: the Go Ingress has none
+
+
+def fail(message):
+    """A one-line validation error and exit status 2, before any network activity."""
+    print(message, file=sys.stderr)
+    sys.exit(2)
+
+
+def validate(args):
+    """The Ingress's configuration validation, in the spec's order, then what this implementation does not realize
+    rejected as not supported."""
+    if args.lb_policy not in LB_POLICIES:
+        fail("lb_policy must be " + ", ".join(LB_POLICIES[:-1]) + " or " + LB_POLICIES[-1])
+    if args.lb_filter not in LB_FILTERS:
+        fail("lb_filter must be " + ", ".join(LB_FILTERS[:-1]) + " or " + LB_FILTERS[-1])
+    if args.lb_filter == "deadline_provisional_rtt" and args.lb_policy != "peak_ewma":
+        fail("lb_filter deadline_provisional_rtt needs lb_policy peak_ewma")
+    if args.lb_policy == "peak_ewma" and args.lb_filter not in ("none", "deadline_provisional_rtt"):
+        fail("lb_policy peak_ewma needs lb_filter none or deadline_provisional_rtt")
+    if args.lb_policy != "peak_ewma":
+        fail(f"lb_policy {args.lb_policy} is not supported by this implementation")
+    if args.lb_retry_policy not in RETRY_POLICIES:
+        fail("lb_retry_policy must be one of none, timeout, anxious")
+    if args.forward_mode not in ("relay", "hedge"):
+        fail("forward_mode must be relay or hedge")
+    if args.forward_mode == "relay":
+        fail("forward_mode relay is not supported by this implementation")
+    if args.heartbeat_timeout_ms > 0:
+        fail(f"heartbeat_timeout_ms {args.heartbeat_timeout_ms} is not supported by this implementation")
+    if args.cancel_rate > 0:
+        fail(f"cancel_rate {args.cancel_rate:g} is not supported by this implementation")
 
 
 def parse(argv):
@@ -60,22 +88,9 @@ def parse(argv):
     a("--lb_retry_timeout_ms", default="150")
     a("--lb_retry_anxiety_ratio", default="0.3")
     a("--lb_retry_late_factor", default="10")
+    a("--forward_mode", default="relay")
     args = p.parse_args(argv)
-    unsupported = []
-    if args.lb_policy not in LB_POLICIES:
-        unsupported.append(f"lb_policy={args.lb_policy} (supported: {', '.join(LB_POLICIES)})")
-    if args.lb_filter != "none" and not (args.lb_filter == "deadline_mean" and args.lb_policy == "ewma"):
-        unsupported.append(f"lb_filter={args.lb_filter} with lb_policy={args.lb_policy} "
-                           "(supported: none, or deadline_mean with ewma)")
-    if args.lb_retry_policy not in ("none", "timeout", "anxious") and args.lb_max_retries > 0:
-        unsupported.append(f"lb_retry_policy={args.lb_retry_policy} with lb_max_retries={args.lb_max_retries} "
-                           "(supported: none, timeout, anxious)")
-    if args.heartbeat_timeout_ms > 0:
-        unsupported.append("heartbeat_timeout_ms > 0")
-    if args.cancel_rate > 0:
-        unsupported.append("cancel_rate > 0")
-    if unsupported:
-        p.error("not supported on impl/envoy yet: " + "; ".join(unsupported))
+    validate(args)
     return args
 
 
@@ -90,10 +105,10 @@ def anxious(args):
 
 
 def cluster_policy(args):
-    """(Envoy policy, LEAST_REQUEST choice count or None) for the parsed flags."""
-    if args.lb_policy == "ewma" and args.lb_filter == "deadline_mean":
-        return "PEAK_EWMA_DEADLINE", None
-    return LB_POLICIES[args.lb_policy]
+    """The Envoy load-balancing policy for the validated flags (lb_policy is peak_ewma)."""
+    if args.lb_filter == "deadline_provisional_rtt":
+        return "PEAK_EWMA_DEADLINE"
+    return "PEAK_EWMA"
 
 
 def free_port():
@@ -104,7 +119,7 @@ def free_port():
 
 def envoy_config(args, backends, admin_port, access_log, upstream_log=None):
     host, port = args.listen_addr.rsplit(":", 1)
-    policy, choice = cluster_policy(args)
+    policy = cluster_policy(args)
     cluster = {
         "name": "servers", "type": "STATIC",
         "connect_timeout": "5s",
@@ -139,11 +154,6 @@ def envoy_config(args, backends, admin_port, access_log, upstream_log=None):
             "name": "envoy.load_balancing_policies.peak_ewma_deadline",
             "typed_config": {"@type": "type.googleapis.com/envoy.extensions.load_balancing_policies."
                                       "peak_ewma_deadline.v3alpha.PeakEwmaDeadline"}}}]}
-    else:
-        cluster["lb_policy"] = policy
-    if policy == "LEAST_REQUEST":
-        cluster["least_request_lb_config"] = {
-            "choice_count": len(backends) if choice == "all" else choice}
     router = {"name": "envoy.filters.http.router", "typed_config": {
         "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"}}
     if upstream_log is not None:  # one line per upstream attempt (forwards.csv)
@@ -151,7 +161,8 @@ def envoy_config(args, backends, admin_port, access_log, upstream_log=None):
             "@type": "type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog",
             "path": upstream_log, "log_format": {"text_format_source": {
                 "inline_string": convert.UPSTREAM_LOG_FORMAT}}}}]
-    route = {"cluster": "servers", "timeout": "0s"}
+    # WorkerCount (x-worker-threads) is read by an Ingress, never relayed to the client.
+    route = {"cluster": "servers", "timeout": "0s", "response_headers_to_remove": ["x-worker-threads"]}
     if hedging(args):
         # The timeout RetryPolicy as Envoy hedging: after lb_retry_timeout_ms without an answer, one more attempt
         # through the load balancer, the slow one kept; never on errors (retriable-status-codes with no codes
@@ -216,7 +227,7 @@ def main():
     concurrency = os.environ.get("GOMAXPROCS") or str(os.cpu_count() or 1)
     env = dict(os.environ)
     trace_prefix = out + ".peak_ewma"
-    if cluster_policy(args)[0] in ("PEAK_EWMA", "PEAK_EWMA_DEADLINE") or anxious(args):  # trace (convert.merge_peak_ewma)
+    if cluster_policy(args) in ("PEAK_EWMA", "PEAK_EWMA_DEADLINE") or anxious(args):  # trace (convert.merge_peak_ewma)
         env["PEAK_EWMA_TRACE_PREFIX"] = trace_prefix
     envoy = subprocess.Popen([ENVOY, "--config-path", cfg_path, "--concurrency", concurrency,
                               "--use-dynamic-base-id", "-l", "warning", "--log-path", out + ".envoy.log"], env=env)
@@ -257,7 +268,7 @@ def main():
     trace = convert.merge_peak_ewma(trace_prefix, backends, run_start, out)
     if any(trace.values()):
         print("ingress: Peak EWMA trace: " + ", ".join(f"{len(v)} {k}" for k, v in trace.items() if v), flush=True)
-    counters = convert.filter_counts(trace["queue"]) if cluster_policy(args)[0] == "PEAK_EWMA_DEADLINE" else {}
+    counters = convert.filter_counts(trace["queue"]) if cluster_policy(args) == "PEAK_EWMA_DEADLINE" else {}
     counters["lb_retries"] = convert.lb_retries(attempts)
     counters.update(convert.retry_counts(trace["queue"]))
     exec_values = convert.exec_ewmas(trace["exec"], len(backends))  # AnxiousTracker's EWMAs, last values
