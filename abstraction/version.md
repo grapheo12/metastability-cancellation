@@ -224,3 +224,4 @@
 | 0.51.0 | 2026-11-27T00:00:00Z | Glossary ScenarioStall. Child bump: server 0.16.0 (worker_pool 0.7.0, ScenarioStall) |
 | 0.52.0 | 2026-11-27T00:00:00Z | Glossary ScenarioServiceTime. Child bump: server 0.17.0 (ping_handler 0.14.0) |
 | 0.53.0 | 2026-11-27T00:00:00Z | Glossary Heartbeat: paused by a StalledState. Child bump: server 0.18.0 (heartbeat 0.2.0) |
+| 0.54.0 | 2026-11-27T00:00:00Z | Glossary ScenarioAssignment. Child bump: benchmark_runner 0.16.0 (config 0.27.0) |

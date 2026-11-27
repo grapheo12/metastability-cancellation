@@ -36,8 +36,23 @@ A key set here overrides the SSH configuration ([../remote_transport/design.md#s
 | `instances` | integer `1..=64`, and `listen_port + instances - 1 <= 65535` | `1` | Runner-owned. Number of server processes on **each** server machine, all with the same program parameters. All of them, on every server machine, are the Ingress's backends ([design.md#servermachines](design.md#servermachines)). Cannot be swept |
 | `gc_trace` | boolean | `false` | Runner-owned. Turns on the servers' GcTrace through the BuildManifest's GcTraceHook ([../remote_setup/api.md#buildmanifest](../remote_setup/api.md#buildmanifest)); the run fails with exit `2` before setup if the hook is missing. Cannot be swept |
 | `freeze_instance` | integer, `0 ..= server_instances - 1` | unset | Runner-owned **FreezeTarget**: the only instance that gets `freeze_after_ms` (WorkerFreeze); requires `freeze_after_ms`. Unset: `freeze_after_ms`, if set, goes to every instance. Cannot be swept ([design.md#freezetarget](design.md#freezetarget)) |
+| `scenario` | string, the name of a `[scenarios.<name>]` table | unset | Runner-owned **ScenarioAssignment**: the ServiceScenario of every instance (unless `scenario_by_instance` names another); needs `workload = "sleep_constant"`. Cannot be swept ([design.md#scenarioassignment](design.md#scenarioassignment)) |
+| `scenario_by_instance` | inline table `"<instance id>" = "<scenario name>"`, ids in `0 ..= server_instances - 1` | empty | Runner-owned. Per-instance override of `scenario`. Cannot be swept ([design.md#scenarioassignment](design.md#scenarioassignment)) |
 | `threads`, `cpu_set` | see [ProcessPlacement keys](#processplacement-keys) | unset | Runner-owned. The server's ProcessPlacement. Cannot be swept |
-| any server parameter except `listen_addr`, `queue_log_path` | scalar or non-empty array | the program's default (`queue_sample_interval_ms`: 10) | See [../../api.md#server-parameters](../../api.md#server-parameters) |
+| any server parameter except `listen_addr`, `queue_log_path`, `service_scenario`, `scenario_log_path` | scalar or non-empty array | the program's default (`queue_sample_interval_ms`: 10) | See [../../api.md#server-parameters](../../api.md#server-parameters) |
+
+### `[scenarios.<name>]`
+
+One table per named ServiceScenario, used by `[server] scenario` and `scenario_by_instance`
+([design.md#scenarioassignment](design.md#scenarioassignment)). The keys are those of the server's `service_scenario`
+JSON ([../../server/service_scenario/design.md#servicescenario](../../server/service_scenario/design.md#servicescenario)),
+written as TOML, except `stream`, which the runner sets to the instance id.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `states` | inline table `<state> = { service_us = <integer> }` or `{ stall = true }` | required | The ScenarioStates |
+| `schedule` | array of `[<at_ms>, "<state>"]` | exactly one of `schedule`, `markov` | ScenarioSchedule |
+| `markov` | inline table `{ initial = "<state>", step_ms = <integer>, p = { <from> = { <to> = <number>, ... }, ... } }` | exactly one of `schedule`, `markov` | MarkovSchedule |
 
 ### `[load_gen]`
 
@@ -92,7 +107,7 @@ A **scalar** is a TOML string, integer, float or boolean. Arrays may not be nest
 ### `BenchConfig`
 
 The validated file with every default filled in: `repo_url`, `machines.server` (the list of ServerMachines), `machines.client`, `server`,
-`load_gen`, `ingress`, `run`, plus the server's `instances` and `gc_trace`. Program sections keep their keys in file order. See
+`load_gen`, `ingress`, `run`, `scenarios` (empty if absent), plus the server's `instances` and `gc_trace`. Program sections keep their keys in file order. See
 [design.md#benchconfig](design.md#benchconfig).
 
 ### `SweepPoint`
@@ -110,6 +125,7 @@ The validated file with every default filled in: `repo_url`, `machines.server` (
 | `ingress_machine` | `"client"` \| `"server"` | The IngressPlacement: the machine the Ingress runs on (`server` only with one server machine) |
 | `loadgen_target` | `host:port` | Where the load generator sends its requests: the Ingress, as seen from the client machine |
 | `freeze` | {`instance`: integer, `freeze_after_ms`: scalar} or none | The FreezeTarget: the one instance that gets `--freeze_after_ms`, and its value at this point. None without `freeze_instance` ([design.md#freezetarget](design.md#freezetarget)) |
+| `scenarios` | list, length `server_instances`, of {`name`: string, `service_scenario`: string (compact JSON)} or none | The ScenarioAssignment: each instance's scenario name and the `--service_scenario` it gets; none for an instance without one ([design.md#scenarioassignment](design.md#scenarioassignment)) |
 | `placement` | map program (`server`, `loadgen`, `ingress`) → {`threads`: integer or none, `cpu_set`: string or none} | Each program's ProcessPlacement (the server's applies to every instance). All three programs are always present; unset keys are none |
 
 It is serialized as `params.json` with these field names. See [design.md#sweepexpansion](design.md#sweepexpansion).
