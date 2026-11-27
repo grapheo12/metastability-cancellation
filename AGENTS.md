@@ -32,7 +32,9 @@ There should never be two language implementations on the same branch. Even when
 **Exception: `impl/envoy`.** That branch replaces the Ingress and the LoadGenerator with vendored Envoy and Nighthawk
 (C++, in `implementation/envoy/`) and keeps the Go `/ping` server: a copy of the server packages of `impl/go`
 (`implementation/go/`, server, protocol and sampling only) with their `Design specific to Go` sections. Changes to that
-Go server are made on `impl/go` and copied over, never the other way around.
+Go server are made on `impl/go` and copied over, never the other way around. Envoy and Nighthawk are vendored code and
+follow [Vendored code](#vendored-code); the design files they realize carry `Design specific to Envoy` sections, next
+to the Go ones where a file has both.
 
 
 Stick to this folder structure:
@@ -66,6 +68,7 @@ The `Design specific to <lang>` section must contain, for every design subsectio
 Conversely, implementation references must not exist only as a file-level comment. Comments inside the code body, adjacent to the relevant declarations, state transitions, algorithms, or tests, must link to the exact `design.md` subsection from which that code is derived.
 These links are a bidirectional traceability contract: every future design or implementation change must update both directions and keep file names, subsection anchors, and line numbers consistent. A change is incomplete if it leaves either direction stale.
 The code → design direction is written by hand as tags. The design → code direction is generated from those tags by `tracegen` ([Traceability generator (tracegen)](#traceability-generator-tracegen)), never edited by hand.
+In vendored code only the code we wrote or changed carries tags ([Vendored code](#vendored-code)).
 
 
 # Shared tooling
@@ -101,15 +104,76 @@ Current shared tools:
 | spec_tools (tracegen, linkcheck) | `implementation/spec_tools/` | Python 3, standard library only | [tracegen](#traceability-generator-tracegen), [linkcheck](#link-checker-linkcheck) |
 
 
+# Vendored code
+
+**VendoredCode** is a third-party source tree checked into an implementation directory so that it can be built and
+changed here, for example Envoy and Nighthawk in `implementation/envoy/` on `impl/envoy`. It realizes spec components
+together with our changes to it. These rules say what is written down where, and which code carries backlinks.
+
+- **Location.** A vendored tree lives under `implementation/<lang>/`, checked in directly (not as a submodule),
+  without its `.git` directory, and verified against upstream when it is copied.
+- **`VENDORED.md`.** Every `implementation/<lang>/` that holds vendored code has an `implementation/<lang>/VENDORED.md`
+  with two tables: one row per tree (Directory | Upstream | Commit | Date | Notes, the notes saying how the copy was
+  verified), and one row per local change (File | Change | Why | Kind | Spec). A row may cover several files of one
+  change. An added or changed file that no row names is a bug. **Kind** is one of:
+
+| Kind | Meaning | Spec column | Tags in the code |
+|---|---|---|---|
+| `spec` | realizes one or more design subsections | a link to each design anchor it realizes | `Source:` and `Design:` tags, as below |
+| `build` | build files, extension registration, version pins, wiring | `—` | none |
+| `upstream fix` | fixes a defect of upstream code we rely on | `—` | none |
+| `diagnostic` | traces or logs that change no behaviour the spec describes | `—` | none |
+
+- **Conformance.** Vendored code, changed or not, must behave as the spec says for every parameter value the
+  implementation accepts.
+  - We change vendored code only to realize the spec, or for a `build`, `upstream fix` or `diagnostic` reason.
+  - Behaviour the spec does not describe is specified on `main` first, in its own `[spec]` commit, before the code
+    changes. When it differs from what another implementation does, it becomes a named variant (a new parameter
+    value), never a redefinition of an existing one.
+  - Upstream behaviour we rely on unchanged must match the spec as well. If it does not, the spec gets a variant or our
+    change makes the code conform.
+  - An implementation (vendored or not) may leave a spec item unrealized only if it rejects, at validation, every
+    configuration that needs the item (exit status `2`, with an error naming the parameter and value), or if the spec
+    defines the item as optional.
+- **`## Design specific to <Impl>`.** `<Impl>` is the implementation's name (`Envoy` on `impl/envoy`). Every leaf
+  `design.md` that the vendored code and our changes realize, wholly or partly, and every `design.md` that one of its
+  tags names, gets this section in the [Section format](#section-format-in-designmd). Its `### <Impl> choices` says, for
+  each design subsection, which upstream component realizes it and what we changed so that it conforms (mechanism
+  only, never behaviour). Why each file changed is recorded in `VENDORED.md`, not here.
+- **Backlinks only for our code.**
+  - Upstream code we did not change carries no tags and no `Source:` header.
+  - A file we added carries the usual `Source:` header and `Design:` tags ([Tags in code](#tags-in-code)).
+  - In an upstream file we changed, a `Source:` comment goes directly above the first changed region, and a
+    `Design:` tag above each changed region of kind `spec`.
+  - Changes of kind `build`, `upstream fix` and `diagnostic` carry no tags.
+  - A design subsection realized only by unchanged upstream code is listed in the section's `### Not traced` table,
+    naming the upstream file(s).
+- **`### Not traced`.** Any `Design specific to <Lang>` section (vendored or not) may have this hand-written table,
+  placed before `### Traceability`: `| Design subsection | Reason |`, whose first column links the subsection's anchor.
+  The allowed reasons are: unchanged upstream code (naming the files); realized by another implementation on the same
+  branch (naming it, e.g. the Go server copy on `impl/envoy`); not realized here (naming the validation error that
+  rejects every configuration needing it, or the spec text that makes it optional). tracegen does not report these
+  subsections as UNCOVERED ([Traceability generator (tracegen)](#traceability-generator-tracegen)).
+- **Checks.** Each section states its tracegen command. On `impl/envoy` it is
+  `python3 implementation/spec_tools/tracegen.py --lang Envoy --impl implementation/envoy --ext .cc --ext .h --comment // --ext .py:# --write`.
+  tracegen walks the whole tree; untagged upstream files contribute nothing. linkcheck also checks
+  `implementation/<lang>/VENDORED.md`.
+- **Upgrading a vendored tree.** Copy the new upstream tree, re-apply every `VENDORED.md` change, update the tree's row
+  (commit, date), then run tracegen, linkcheck and the tests. A change that upstream now makes itself leaves
+  `VENDORED.md` together with its tags.
+
+
 # Traceability generator (tracegen)
 
 `tracegen` is part of the shared tool `implementation/spec_tools/` ([Shared tooling](#shared-tooling)). This
 section is its spec.
 
 - The implementation language is chosen with command-line options, so one copy serves every implementation:
-  `python3 implementation/spec_tools/tracegen.py --lang <Lang> --ext <source extension> --comment <line-comment prefix> [--impl <dir>] [--write]`,
+  `python3 implementation/spec_tools/tracegen.py --lang <Lang> --ext <source extension>[:<line-comment prefix>] --comment <line-comment prefix> [--impl <dir>] [--write]`,
   run from the repository root. The implementation directory defaults to `implementation/<lang in lowercase>`, and
-  `--impl` points it at a shared tool's directory instead. `--ext` may be repeated.
+  `--impl` points it at a shared tool's directory or a vendored tree instead. `--ext` may be repeated. An extension may
+  carry its own comment prefix after a colon (e.g. `--ext .py:#`), which overrides `--comment` for those files; the
+  extension is matched as the end of the file name.
 - The tool is a build tool: it carries no `Design:` tags itself, and its file header cites this section as its source.
 
 ## Tags in code
@@ -132,6 +196,11 @@ section is its spec.
 ### <Lang> choices
 <hand-written: data structures, libraries, deviations in mechanism (never in behavior) and why>
 
+### Not traced                     (optional, see Vendored code)
+| Design subsection | Reason |
+|---|---|
+| [<heading>](#<anchor>) | <unchanged upstream code: files / realized by <implementation> / not realized: <error>> |
+
 ### Traceability
 <one sentence naming the tool and the regenerate command>
 
@@ -142,16 +211,21 @@ section is its spec.
 <!-- trace:end -->
 ```
 
-There is one row per `## ` heading that appears **before** `## Design specific to <Lang>`, in document order. Links in
-a row are sorted by (file path, line) with duplicates removed.
+There is one row per `## ` heading of the **spec part**, the text before the first `## Design specific to ` heading
+of the file, in document order. A `design.md` may carry several such sections, one per implementation on the branch
+(e.g. `Go` and `Envoy` on `impl/envoy`); they are always the last sections, and each has its own markers. Links in a
+row are sorted by (file path, line) with duplicates removed. The row of a subsection listed in the section's
+`### Not traced` table has `not traced` as its implementation cell.
 
 ## Algorithm
 
 ```
-inputs: repo root, impl dir (implementation/<lang>), Lang, source extension, line-comment prefix, mode (check | write)
+inputs: repo root, impl dir (implementation/<lang>), Lang, extensions each with its line-comment prefix,
+        mode (check | write)
 
 refs = map (design path, anchor) -> list of (file path from root, line)
-for each source file under impl dir with the extension:
+for each source file under impl dir whose name ends with one of the extensions:
+    comment prefix = that extension's prefix (the first matching extension, in command-line order)
     pending = []
     for each line n (1-based), s = line with surrounding whitespace removed:
         if s starts with the comment prefix and contains a Design tag:
@@ -160,17 +234,21 @@ for each source file under impl dir with the extension:
             for k in pending: refs[k].append((file, n))
             pending = []
 
+header  = "## Design specific to <Lang>"
 designs = every design.md under abstraction/ (skipping directories whose name starts with ".")
-          that contains "## Design specific to <Lang>",
-          plus every design path named by a tag
+          that has a line equal to header, plus every design path named by a tag
 for each design in sorted(designs):
-    spec_part = text before "## Design specific to <Lang>"
-    headings  = the "## " headings of spec_part, in order
+    spec_part  = text before the first line that starts with "## Design specific to "
+    headings   = the "## " headings of spec_part, in order
+    section    = text from the header line to the next line that starts with "## Design specific to ", or the end
+    not_traced = the anchors linked in the first column of the "### Not traced" table of section (none if absent)
     report UNKNOWN ANCHOR for each tagged anchor of this design that no heading has
-    report UNCOVERED for each heading with no refs
+    report UNKNOWN ANCHOR for each anchor of not_traced that no heading has
+    report LISTED BUT TRACED for each anchor of not_traced that has refs
+    report UNCOVERED for each heading that has no refs and is not in not_traced
     table = rows as in Section format
-    if the section or either marker is missing: report NO SECTION; continue
-    updated = text with everything between the markers replaced by table
+    if the section, or either marker inside it, is missing: report NO SECTION; continue
+    updated = text with everything between the section's markers replaced by table
     if updated != text: in write mode save it, in check mode report STALE
 print OK, or PROBLEMS and exit non-zero if anything was reported
 ```
@@ -186,7 +264,8 @@ The output must be deterministic: the same tree always gives byte-identical tabl
 - Run `tracegen` in write mode after every implementation change, then in check mode. Check mode must report `OK`
   before committing. Exit status: `0` OK, `1` problems reported, `2` usage or I/O error.
 - Each `Design specific to <Lang>` section states the exact `tracegen` command for its language (e.g. for Go:
-  `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`).
+  `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`). A branch runs it once per
+  language section it carries (on `impl/envoy`: Go, Envoy, and the shared tools' language).
 - A spec change that adds, renames or removes a design subsection makes check mode fail on the impl branches
   (UNCOVERED or UNKNOWN ANCHOR) until the code tags follow. That is the intended signal that the implementation is
   behind the spec.
@@ -216,7 +295,8 @@ the anchor slug rule with tracegen. This section is its spec.
 - **Output:** one line per problem, `<PROBLEM> <file containing the link>: <target>`, in file order and then line
   order. Then `OK` or `PROBLEMS`. Exit status: `0` OK, `1` problems reported, `2` usage or I/O error.
 - **When to run:** as part of the [Spec self-check before committing](#spec-self-check-before-committing), and on
-  impl branches together with tracegen check mode. `main` does not carry spec_tools, so spec work on `main` runs
+  impl branches together with tracegen check mode. On a branch with vendored code, also check
+  `implementation/<lang>/VENDORED.md` (pass it as a path, with `abstraction/` and `AGENTS.md`). `main` does not carry spec_tools, so spec work on `main` runs
   linkcheck from an impl branch checkout (for example a `git worktree`) against the `main` working tree with
   `--root`.
 
@@ -400,8 +480,9 @@ guessing. A macro never pushes. At the end, report each commit created, per bran
 
 Definitions used below:
 - **Spec part** of a file in `abstraction/`: the whole file, except that in a `design.md` it is everything before
-  `## Design specific to <Lang>`. That section is always the **last** section of a `design.md` and exists only on
-  `impl/<lang>` branches.
+  the first `## Design specific to ` heading. Those sections are always the **last** sections of a `design.md`, exist
+  only on `impl/<lang>` branches, and number one per implementation the branch carries (e.g. `Go` and `Envoy` on
+  `impl/envoy`).
 - **Spec checks:** [linkcheck](#link-checker-linkcheck) reports `OK`, and the
   [Spec self-check before committing](#spec-self-check-before-committing) holds.
 
