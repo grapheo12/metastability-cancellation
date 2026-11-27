@@ -1,9 +1,11 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.26.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.27.0)
 """BenchConfig loading and validation, SweepExpansion, argument formatting."""
 
 import datetime
 import itertools
+import json
+import math
 import os
 import re
 import subprocess
@@ -28,7 +30,8 @@ PROGRAM_PARAMS = {
 # Design: abstraction/benchmark_runner/config/design.md#processplacement
 PLACEMENT_KEYS = ["threads", "cpu_set"]
 RUNNER_KEYS = {
-    "server": ["listen_port", "instances", "gc_trace", "freeze_instance"] + PLACEMENT_KEYS,
+    "server": ["listen_port", "instances", "gc_trace", "freeze_instance",
+               "scenario", "scenario_by_instance"] + PLACEMENT_KEYS,
     "load_gen": PLACEMENT_KEYS,
     "ingress": ["machine", "listen_port", "cancel_rate_fraction"] + PLACEMENT_KEYS,
 }
@@ -39,12 +42,14 @@ PROGRAM_OF = {"server": "server", "load_gen": "loadgen", "ingress": "ingress"}
 MAX_INSTANCES = 64
 MAX_SERVER_MACHINES = 16  # ServerMachines
 FORBIDDEN = {
-    "server": ["listen_addr", "queue_log_path"],
+    "server": ["listen_addr", "queue_log_path", "service_scenario", "scenario_log_path"],
     "load_gen": ["target", "output_path"],
     "ingress": ["listen_addr", "backends", "num_clients", "output_path"],
 }
 SECTIONS = ("server", "load_gen", "ingress")
-TOP_LEVEL = {"repo", "machines", "server", "load_gen", "ingress", "run"}
+TOP_LEVEL = {"repo", "machines", "server", "load_gen", "ingress", "run", "scenarios"}
+# Design: abstraction/benchmark_runner/config/design.md#scenarioassignment
+SCENARIO_KEYS = ("states", "schedule", "markov")
 REQUIRED_LOADGEN = ("num_clients", "duration_s", "slo_ms")
 
 
@@ -95,6 +100,9 @@ class BenchConfig:
     file_swept: list = None  # swept keys in file order, program parameters and sweepable runner keys
     gc_trace: bool = False  # [server] gc_trace: run the servers with the BuildManifest's GcTraceHook
     freeze_instance: object = None  # [server] freeze_instance (FreezeTarget): instance id, or None
+    scenarios: dict = None  # [scenarios.<name>] tables, file order; {} when absent (ScenarioAssignment)
+    scenario: str | None = None  # [server] scenario: every instance's scenario name, or None
+    scenario_by_instance: dict = None  # [server] scenario_by_instance: "<instance id>" -> name; {} when unset
 
     def swept_keys(self):
         if self.run.sweep_order is not None:
@@ -235,6 +243,7 @@ def load_config(path, runner_dir, now=None):
     instances = 1
     gc_trace = False
     freeze_instance = None
+    scenario, scenario_by = None, {}
     ingress_machine = "client"
     placement = {section: {"threads": None, "cpu_set": None} for section in SECTIONS}
     for section in SECTIONS:
@@ -266,6 +275,11 @@ def load_config(path, runner_dir, now=None):
                     ingress_machine = value
                 elif key == "freeze_instance":  # FreezeTarget; range checked by check_freeze_target
                     freeze_instance = value
+                # Design: abstraction/benchmark_runner/config/design.md#scenarioassignment
+                elif key == "scenario":  # checked by check_scenario_assignment
+                    scenario = value
+                elif key == "scenario_by_instance":
+                    scenario_by = value
                 elif key == "instances":
                     if not _is_int(value) or not 1 <= value <= MAX_INSTANCES:
                         raise ConfigError(f"{name} must be an integer in 1..=64")
@@ -306,6 +320,8 @@ def load_config(path, runner_dir, now=None):
         raise ConfigError("server.listen_port + server.instances - 1 must be <= 65535")
     check_ingress_placement(ingress_machine, ports, instances, len(machines["server"]))
     check_freeze_target(freeze_instance, params["server"], len(machines["server"]) * instances)
+    scenarios = check_scenario_assignment(doc.get("scenarios", {}), scenario, scenario_by, params["server"],
+                                          len(machines["server"]) * instances)
 
     run = doc.get("run", {})
     _check_keys(run, {"output_dir", "sweep_order", "cooldown_s", "on_failure", "server_ready_timeout_s",
@@ -332,7 +348,8 @@ def load_config(path, runner_dir, now=None):
         link=_link_table(run.get("link", {})),
     )
     config = BenchConfig(repo_url, machines, params, ports["server"], instances, ports["ingress"], ingress_machine,
-                         options, placement, fraction, file_swept, gc_trace, freeze_instance)
+                         options, placement, fraction, file_swept, gc_trace, freeze_instance,
+                         scenarios, scenario, dict(scenario_by))
     swept = [k for k in file_swept if k not in options.link]
     if sweep_order is not None:
         if sorted(sweep_order) != sorted(swept) or len(set(sweep_order)) != len(sweep_order):
@@ -410,6 +427,68 @@ def check_freeze_target(freeze_instance, server_params, total):
 
 
 # Design: abstraction/benchmark_runner/config/design.md#cancelratefraction
+def _scenario_value_ok(v):
+    """Only tables, arrays, strings, integers, finite floats and booleans (JSON can carry them)."""
+    if isinstance(v, dict):
+        return all(_scenario_value_ok(x) for x in v.values())
+    if isinstance(v, list):
+        return all(_scenario_value_ok(x) for x in v)
+    if isinstance(v, float):
+        return math.isfinite(v)
+    return isinstance(v, (str, int, bool))
+
+
+# Design: abstraction/benchmark_runner/config/design.md#scenarioassignment
+def check_scenario_assignment(scen, default, by, server_params, total):
+    """Names and shapes of [scenarios] and the ScenarioAssignment keys; returns the [scenarios] tables."""
+    if not isinstance(scen, dict):
+        raise ConfigError("[scenarios] must be a table")
+    for name, t in scen.items():
+        if not isinstance(t, dict):
+            raise ConfigError(f"scenarios.{name} must be a table")
+        for key in t:
+            if key == "stream":
+                raise ConfigError(f"scenarios.{name}.stream is set by the runner")
+            if key not in SCENARIO_KEYS:
+                raise ConfigError(f"unknown key scenarios.{name}.{key}")
+        if "states" not in t:
+            raise ConfigError(f"scenarios.{name}.states is required")
+        if ("schedule" in t) == ("markov" in t):
+            raise ConfigError(f"scenarios.{name} needs exactly one of schedule and markov")
+        if not _scenario_value_ok(t):
+            raise ConfigError(f"scenarios.{name} may hold only tables, arrays, strings, numbers and booleans")
+    if default is not None and not (isinstance(default, str) and default in scen):
+        raise ConfigError("server.scenario must name a [scenarios] table")
+    if not isinstance(by, dict):
+        raise ConfigError('server.scenario_by_instance must be a table of "<instance>" = "<scenario>"')
+    for k, name in by.items():
+        if not (k == "0" or re.fullmatch(r"[1-9][0-9]*", k)) or int(k) > total - 1:
+            raise ConfigError(f"server.scenario_by_instance: instance {k} must be in 0..={total - 1}")
+        if not (isinstance(name, str) and name in scen):
+            raise ConfigError(f"server.scenario_by_instance: {name} must name a [scenarios] table")
+    if default is not None or by:
+        w = server_params.get("workload")
+        if w is None or not all(v == "sleep_constant" for v in (w if isinstance(w, list) else [w])):
+            raise ConfigError('server.scenario needs server.workload = "sleep_constant"')
+    return scen
+
+
+# Design: abstraction/benchmark_runner/config/design.md#scenarioassignment
+def scenario_assignment(config):
+    """Per instance id: {"name", "service_scenario"} (compact JSON, stream = the id), or None."""
+    out = []
+    by = config.scenario_by_instance or {}
+    for k in range(config.total_instances()):
+        name = by.get(str(k), config.scenario)
+        if name is None:
+            out.append(None)
+            continue
+        obj = dict(config.scenarios[name])  # file order
+        obj["stream"] = k
+        out.append({"name": name, "service_scenario": json.dumps(obj, separators=(",", ":"))})
+    return out
+
+
 def derived_cancel_rate(global_rate, fraction):
     return float(global_rate) * float(fraction)  # IEEE 754 double, round to nearest even
 
@@ -428,6 +507,7 @@ class SweepPoint:
     linked: dict = None  # LinkedSweep: linked key -> this point's value; {} when unused
     server_hosts: list = None  # ServerMachines: server machine index of each instance id; None = all on machine 0
     freeze: dict = None  # FreezeTarget: {"instance", "freeze_after_ms"}, or None
+    scenarios: list = None  # ScenarioAssignment: per instance {"name", "service_scenario"} or None
 
     def hosts(self):
         return self.server_hosts if self.server_hosts is not None else [0] * self.server_instances
@@ -446,6 +526,7 @@ class SweepPoint:
             "loadgen_target": self.loadgen_target,
             "placement": self.placement,
             "freeze": self.freeze,
+            "scenarios": self.scenarios if self.scenarios is not None else [None] * self.server_instances,
         }
 
     def arg(self, program, name):
@@ -487,12 +568,13 @@ def expand_sweep(config):
         if config.freeze_instance is not None:
             freeze = {"instance": config.freeze_instance, "freeze_after_ms": dict(server_args)["freeze_after_ms"]}
             server_args = [(k, v) for k, v in server_args if k != "freeze_after_ms"]
+        scenarios = scenario_assignment(config)  # ScenarioAssignment: the same at every point
         # Design: abstraction/benchmark_runner/config/design.md#processplacement
         placement = {PROGRAM_OF[section]: dict(config.placement[section]) for section in SECTIONS}
         # Design: abstraction/benchmark_runner/config/design.md#servermachines
         points.append(SweepPoint(pid, swept, server_args, loadgen_args, ingress_args, config.total_instances(),
                                  config.ingress_machine, loadgen_target(config), placement, linked,
-                                 server_hosts(config), freeze))
+                                 server_hosts(config), freeze, scenarios))
     return points
 
 
