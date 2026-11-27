@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.13.0)
+# Source: abstraction/benchmark_runner/experiment_executor/design.md (experiment_executor v0.14.0)
 import contextlib
 import io
 import json
@@ -317,6 +317,45 @@ class ServerLifecycleTest(unittest.TestCase):
             executor.start_program = orig_start
         self.assertEqual(started[0][-2:], ["--freeze_after_ms", "60000"])
         self.assertNotIn("--freeze_after_ms", started[1])
+
+    # Design: abstraction/benchmark_runner/experiment_executor/design.md#serverlifecycle
+    def test_scenario_only_on_its_instance(self):
+        started = []
+        orig_start = executor.start_program
+        executor.start_program = lambda m, name, words, *rest: started.append(words)
+        try:
+            a = MachineReady(None, "a", "/wa", "/wa/repo", {"server": "/a/server"}, "10.0.0.1", "GOMAXPROCS", True)
+            config = SimpleNamespace(listen_port=8080, gc_trace=False, run=SimpleNamespace(server_ready_timeout_s=1.0))
+            p = point(instances=2)
+            p.freeze = {"instance": 0, "freeze_after_ms": 60000}
+            p.scenarios = [{"name": "s", "service_scenario": '{"states":{},"stream":0}'}, None]
+            executor.start_servers(p, config, [a], ["/rda"])
+        finally:
+            executor.start_program = orig_start
+        self.assertEqual(started[0][-6:], ["--freeze_after_ms", "60000", "--service_scenario",
+                                           '{"states":{},"stream":0}', "--scenario_log_path", "/rda/server_0.scenario.csv"])
+        self.assertNotIn("--service_scenario", started[1])
+        self.assertNotIn("--scenario_log_path", started[1])
+
+    # Design: abstraction/benchmark_runner/experiment_executor/design.md#point-outputs
+    def test_scenario_log_fetched_when_assigned(self):
+        with tempfile.TemporaryDirectory() as remote, tempfile.TemporaryDirectory() as pdir:
+            m = LocalMachine(remote)
+            for k in (0, 1):
+                with open(os.path.join(remote, f"server_{k}.out"), "w") as f:
+                    f.write(json.dumps(dict(zip(executor.COUNTER_KEYS, (0, 0, 0)))) + "\n")
+            with open(os.path.join(remote, "server_0.scenario.csv"), "w") as f:
+                f.write("t_ns,unix_ns,state\n0,5,fast\n")
+            with open(os.path.join(remote, "server_1.scenario.csv"), "w") as f:
+                f.write("t_ns,unix_ns,state\n")
+            p = point(instances=3)
+            p.scenarios = [{"name": "s", "service_scenario": "{}"}, None, {"name": "s", "service_scenario": "{}"}]
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                executor.collect_outputs(p, m, m, remote, remote, pdir)
+            self.assertTrue(os.path.exists(os.path.join(pdir, "server_0.scenario.csv")))
+            self.assertFalse(os.path.exists(os.path.join(pdir, "server_1.scenario.csv")))  # no scenario: not fetched
+            self.assertIn("server_2.scenario.csv missing", out.getvalue())  # a warning, never a failure
 
     # Design: abstraction/benchmark_runner/experiment_executor/design.md#point-outputs
     def test_outputs_fetched_from_each_instances_machine(self):
