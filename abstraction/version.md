@@ -231,3 +231,4 @@
 | 0.57.1 | 2026-11-27T00:00:00Z | Child bump: load_generator 0.9.1 (run_controller 0.8.0) |
 | 0.58.0 | 2026-11-27T00:00:00Z | Ingress parameter values `peak_ewma`, `deadline_provisional_rtt` (OptionalValues); glossary PeakEwmaRtt, PeakEwmaCost, ProvisionalCurrentRtt, PeakEwmaDeadline. Child bump: ingress 0.14.0 (load_balancer 0.18.0) |
 | 0.59.0 | 2026-11-27T00:00:00Z | Ingress parameter `forward_mode`; glossary HedgedForwarding. Child bump: ingress 0.15.0 (frontend 0.11.0) |
+| 0.59.1 | 2026-11-27T00:00:00Z | Child bump: ingress 0.15.1 (load_balancer 0.18.1) |
