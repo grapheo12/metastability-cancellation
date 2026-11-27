@@ -77,3 +77,4 @@
 | 0.14.1 | 2026-11-24T00:00:00Z | Child bump: result_plotter 0.23.1 |
 | 0.15.0 | 2026-11-24T00:00:00Z | Child bump: result_plotter 0.24.0 (EstimateErrorCdf) |
 | 0.16.0 | 2026-11-27T00:00:00Z | Child bump: config 0.27.0 (ScenarioAssignment) |
+| 0.17.0 | 2026-11-27T00:00:00Z | Output directory: `server_<k>.scenario.csv`. Child bump: experiment_executor 0.14.0 (ScenarioAssignment) |

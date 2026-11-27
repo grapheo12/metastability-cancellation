@@ -101,6 +101,9 @@ function start_servers(point, config, servers):
                 + args(point.server_args)
         if point.freeze is not none and point.freeze.instance == k:              # FreezeTarget
             args = args + ["--freeze_after_ms", format_arg(point.freeze.freeze_after_ms)]
+        if point.scenarios[k] is not none:                                       # ScenarioAssignment
+            args = args + ["--service_scenario", point.scenarios[k].service_scenario,
+                           "--scenario_log_path", RD_m + "/server_" + k + ".scenario.csv"]   # ScenarioLog
         words = placement_prefix("server", point, m) + gc_trace_prefix(config, m)       # GcEvents
                 + [m.binaries.server] + args
         start_program(m, words, RD_m + "/server_" + k + ".out",
@@ -133,6 +136,14 @@ With two instances and `freeze = {instance: 0, freeze_after_ms: 60000}`, instanc
 `... --freeze_after_ms 60000` and instance 1's do not have it. Each one's per-connection ServiceTime streams
 therefore start from the same seeds; the requests each receives differ, so their samples are not correlated in any
 way that matters for the measurements.
+
+The ScenarioAssignment ([../config/design.md#scenarioassignment](../config/design.md#scenarioassignment)) is the
+other per-instance exception: an instance with a scenario gets `--service_scenario` (its compact JSON, one word) and
+`--scenario_log_path` (its ScenarioLog, [../../server/api.md#scenariolog-output](../../server/api.md#scenariolog-output))
+after the shared arguments and after `--freeze_after_ms`; an instance without one gets neither. With
+`scenario_by_instance = { "0" = "stall_then_slow" }` and two instances, instance 0's arguments end in
+`... --service_scenario {"states":…,"stream":0} --scenario_log_path <RD>/server_0.scenario.csv`, and instance 1's do
+not have them.
 
 ## IngressLifecycle
 
@@ -300,6 +311,10 @@ function collect_outputs(point, config, servers, client, ingress_host, pdir):
         fetch(m.transport, RD_m/server_<k>.queue.csv, pdir/server_<k>.queue.csv)          # QueueLengthLog
         if pdir/server_<k>.queue.csv does not exist:
             print("point <id>: server_<k>.queue.csv missing (left out of queue_length)")
+        if point.scenarios[k] is not none:                                        # ScenarioLog
+            fetch(m.transport, RD_m/server_<k>.scenario.csv, pdir/server_<k>.scenario.csv)
+            if pdir/server_<k>.scenario.csv does not exist:
+                print("point <id>: server_<k>.scenario.csv missing")
         if config.server.gc_trace: write_gc_events(point, k, pdir, m.gc_trace_regex)       # GcEvents
         line = last line of pdir/server_<k>.out that starts with COUNTERS_PREFIX
         if line exists:
@@ -319,7 +334,7 @@ function validate_outputs(point, pdir):
 ```
 
 `server_counters.json` keeps its meaning (the system's CancelCounters) by summing the instances; per-instance files
-remain for inspection. The QueueLengthLog files are not required: a missing one prints one warning line and
+remain for inspection. The QueueLengthLog and ScenarioLog files are not required: a missing one prints one warning line and
 never fails the point; the Result Plotter leaves that point out of the `queue_length` figure. The same holds for
 `ingress.forwards.csv` and the forward timeline plots. Every fetch is best effort (`missing` is fine), so a failed point still keeps whatever
 evidence exists.
