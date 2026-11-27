@@ -14,7 +14,7 @@ PROGRAM_PARAMS = {
   "ingress":   ["lb_policy", "ewma_beta", "cancel_rate", "duration_s", "seed", "initial_stall_ms",
                 "heartbeat_timeout_ms", "lb_filter", "lb_retry_policy", "lb_max_retries",
                 "lb_retry_timeout_ms", "lb_retry_anxiety_ratio", "lb_retry_late_factor", "forward_mode",
-                "lb_filter_margin"],
+                "lb_filter_margin", "lb_probe_tau_ms"],
 }
 PLACEMENT_KEYS = ["threads", "cpu_set"]                                  # ProcessPlacement
 RUNNER_KEYS = { "server":    ["listen_port", "instances", "gc_trace", "freeze_instance",

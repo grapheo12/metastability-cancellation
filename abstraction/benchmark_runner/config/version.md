@@ -33,3 +33,4 @@
 | 0.27.0 | 2026-11-27T00:00:00Z | ScenarioAssignment: `[scenarios.<name>]` tables (`states`, `schedule` or `markov`; `stream` set by the runner); runner keys `server.scenario` and `server.scenario_by_instance` (not sweepable); `service_scenario` and `scenario_log_path` set by the runner; each instance gets its scenario as compact JSON with `stream` = instance id; `SweepPoint.scenarios`; validation and worked example |
 | 0.28.0 | 2026-11-27T00:00:00Z | PROGRAM_PARAMS: load generator `arrival_rng` (ArrivalRng), Ingress `forward_mode` (HedgedForwarding) |
 | 0.29.0 | 2026-11-27T00:00:00Z | PROGRAM_PARAMS: Ingress `lb_filter_margin` (FilterMargin) |
+| 0.30.0 | 2026-11-27T00:00:00Z | PROGRAM_PARAMS: Ingress `lb_probe_tau_ms` (FilterProbe) |
