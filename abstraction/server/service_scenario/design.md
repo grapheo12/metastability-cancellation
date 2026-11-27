@@ -246,3 +246,40 @@ ScenarioLog: `0,<arm>,fast`, `60000000000,<arm+60 s>,down`, `80000000000,<arm+80
 | markov with row `a: {a: 0.5, b: 0.4}` | `bad markov row a` (sums to 0.9) |
 | markov with no row for state `b` | `bad markov row b` |
 | `{"states": …, "schedule": …, "extra": 1}` | `unknown key extra` |
+
+## Design specific to Go
+
+Implementation: `implementation/go` (module `testbed`, Go 1.21, `golang.org/x/net v0.17.0`).
+Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./...`. On recent macOS the dynamic
+loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabled.
+
+### Go choices
+
+- File `internal/server/scenario.go`. `scenario_new` is `NewScenario(json, seed) (*Scenario, error)`; `ScenarioState` is a struct (`Name`, `ServiceUs`, `Stall`), and states are compared by pointer. `state_at` is `(*Scenario).StateAt(now)`, `next_change_at` is `(*Scenario).NextChangeAt(now) (time.Time, bool)` (`false` is none), `scenario_arm` is `(*Scenario).Arm(armedAt)`.
+- JSON is parsed with `encoding/json` and `UseNumber`, so integers are read with `strconv.ParseUint` (digits only: `1.5` and `1e3` are not integers) and probabilities with `strconv.ParseFloat`. A second value after the object is refused. Keys of one object are checked in bytewise order (`sort.Strings`), so the first error reported never depends on the JSON's key order. Duplicate keys keep the last value (`encoding/json`).
+- Monotonic ns are `time.Time` values with their monotonic reading. `Arm` takes one `time.Now()`: its monotonic reading is the ScenarioClock's origin, its wall reading (`UnixNano`) the ScenarioLog's arm time, so the arm is one clock read, not two. `clock` is `now.Sub(armedAt)` (monotonic), `0` for a reading not after the arm.
+- `next_change_at` values beyond `time.Duration` (about 292 years after the arm, possible only with a huge `at_ms` or `step_ms`) are returned as none: no run can tell them from a change that never comes. `markov_next` uses `bits.Mul64` to detect that overflow.
+- One `sync.Mutex` per scenario. The MarkovSchedule's `rng` is a `sampling.Rng` from `DeriveSeed(seed, StreamServerScenario, stream)`, used only under the lock. The arm notifies the writer by closing the channel `armedCh`.
+- The ScenarioLog writer is `ScenarioLogger`, a goroutine started by `StartScenarioLogger(sc, out)` and ended by `Stop()` (closes a stop channel and waits for a done channel), like the QueueLengthLog sampler. It waits for each `next_change_at` with a `time.Timer` in a `select` on the stop channel, and writes through a `bufio.Writer` flushed after each batch of rows. A write error prints one line to stderr and ends the writer (the file is closed); the server keeps serving, as for the QueueLengthLog.
+- Tests: `scenario_test.go` checks the ScenarioSchedule worked example (states and `next_change_at` at every row, the change list), the MarkovSchedule worked example (the derived seed, the six `next_unit` values, the states, a query older than the chain, the change list, the same states when jumping ahead, a separate stream), every validation row plus a few more, the edge cases (a reading before the arm, a second arm, an absorbing state), and the ScenarioLog of a schedule (a repeated entry writes no row) and of a Markov chain advanced by the writer alone (10 ms steps, exact `t_ns` and `unix_ns`).
+
+### Traceability
+
+Generated from the `// Design:` tags in the code by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [ServiceScenario](#servicescenario) | [scenario.go:60](../../../implementation/go/internal/server/scenario.go#L60), [scenario.go:108](../../../implementation/go/internal/server/scenario.go#L108) |
+| [ScenarioClock](#scenarioclock) | [scenario.go:255](../../../implementation/go/internal/server/scenario.go#L255), [scenario.go:271](../../../implementation/go/internal/server/scenario.go#L271) |
+| [ScenarioSchedule](#scenarioschedule) | [scenario.go:169](../../../implementation/go/internal/server/scenario.go#L169), [scenario.go:287](../../../implementation/go/internal/server/scenario.go#L287) |
+| [MarkovSchedule](#markovschedule) | [scenario.go:200](../../../implementation/go/internal/server/scenario.go#L200), [scenario.go:299](../../../implementation/go/internal/server/scenario.go#L299), [scenario.go:333](../../../implementation/go/internal/server/scenario.go#L333) |
+| [state_at and next_change_at](#state_at-and-next_change_at) | [scenario.go:344](../../../implementation/go/internal/server/scenario.go#L344), [scenario.go:362](../../../implementation/go/internal/server/scenario.go#L362) |
+| [StalledState](#stalledstate) | [scenario.go:36](../../../implementation/go/internal/server/scenario.go#L36) |
+| [ScenarioLog](#scenariolog) | [scenario.go:386](../../../implementation/go/internal/server/scenario.go#L386), [scenario.go:408](../../../implementation/go/internal/server/scenario.go#L408), [scenario.go:417](../../../implementation/go/internal/server/scenario.go#L417), [scenario.go:430](../../../implementation/go/internal/server/scenario.go#L430), [scenario_test.go:231](../../../implementation/go/internal/server/scenario_test.go#L231) |
+| [Ordering](#ordering) | [scenario.go:299](../../../implementation/go/internal/server/scenario.go#L299), [scenario_test.go:83](../../../implementation/go/internal/server/scenario_test.go#L83) |
+| [Concurrency](#concurrency) | [scenario.go:60](../../../implementation/go/internal/server/scenario.go#L60) |
+| [Failure and edge cases](#failure-and-edge-cases) | [scenario_test.go:190](../../../implementation/go/internal/server/scenario_test.go#L190) |
+| [Worked examples](#worked-examples) | [scenario_test.go:31](../../../implementation/go/internal/server/scenario_test.go#L31), [scenario_test.go:83](../../../implementation/go/internal/server/scenario_test.go#L83), [scenario_test.go:146](../../../implementation/go/internal/server/scenario_test.go#L146) |
+<!-- trace:end -->
