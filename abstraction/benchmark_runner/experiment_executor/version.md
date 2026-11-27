@@ -16,3 +16,4 @@
 | 0.11.0 | 2026-11-20T00:00:00Z | Load-generator timeout adds `drain_timeout_ms / 1000` when `slo_cancel = false` (DrainDeadline); worked example |
 | 0.12.0 | 2026-11-21T00:00:00Z | Point outputs fetch `ingress.picks.csv` (PickLog); its absence is not reported |
 | 0.13.0 | 2026-11-23T00:00:00Z | `server_counters.json` sums `rejected_past_deadline` too (COUNTER_KEYS); an absent key counts as 0; worked example |
+| 0.14.0 | 2026-11-27T00:00:00Z | ScenarioAssignment: an instance with a scenario gets `--service_scenario` and `--scenario_log_path <RD>/server_<k>.scenario.csv` after the shared arguments; the ScenarioLog is fetched as `server_<k>.scenario.csv` (optional, a warning if missing) |
