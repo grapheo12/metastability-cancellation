@@ -21,6 +21,7 @@ lb = { policy, filter: lb_filter, beta: ewma_beta, filter_margin: lb_filter_marg
        log: list of ForwardRecord (empty), log_lock: mutex,                     # ForwardLog
        picks: list of PickRecord (empty),                                       # PickLog, also under log_lock
        peak: array[B] (PeakEwmaRtt), pending: array[B] (PendingStarts),         # lb_policy = peak_ewma only
+       last_sent: array[B] of u64 = 0, probe_tau_ms: lb_probe_tau_ms,          # FilterProbe
        last_fold_ns: u64 per Ingress worker = 0 }
 
 function pick(lb, remaining_ns, attempt, record = true, exclude = none, avoid = {}):   # remaining_ns: i64 or none (the request's time to its deadline);
@@ -651,6 +652,7 @@ pending[s] = multiset of u64 (monotonic ns)   # PendingStarts: one per forward p
 
 procedure pending_add(lb, s, request):        # at each pick that returns s, under deadline_provisional_rtt
     t = monotonic_now_ns(); pending[s].insert(t); request.pending.append((s, t))
+    last_sent[s] = t                            # LastSentTime (FilterProbe)
 
 procedure pending_release(lb, request):       # when the client request ends (answered, dropped or reset)
     for (s, t) in request.pending: pending[s].remove_one(t)
@@ -695,7 +697,7 @@ ones, and one wait queue per Ingress worker. The RequestDeadline comes from the 
 ```
 function peak_ewma_deadline_choose(lb, L, remaining_ns):   # L after LiveSet, exclude and avoid; -> s | Dropped
     now = monotonic_now_ns()
-    best = +infinity; keep = {}
+    best = +infinity; keep = {}; probe = {}
     for s in L:
         (p, has_pending) = provisional_rtt(lb, s, now)
         if remaining_ns is none:            ok = true                       # no RequestDeadline: never filtered
@@ -703,6 +705,9 @@ function peak_ewma_deadline_choose(lb, L, remaining_ns):   # L after LiveSet, ex
         else if peak[s].rtt_ms <= 0 and not has_pending: ok = true          # unmeasured and idle: eligible
         else:                               ok = not (lb.filter_margin * p * 1e6 > float(remaining_ns))   # FilterMargin γ; products rounded left to right
         if ok: keep[s] = peak_ewma_cost(lb, s); best = min(best, keep[s])
+        else if filter_probe(lb, s, now, remaining_ns): probe[s] = peak_ewma_cost(lb, s)   # FilterProbe
+    if probe is not empty:                                # a probe wins over the kept backends
+        keep = probe; best = min(probe values)
     T = [ s for s in L if s in keep and keep[s] == best ]
     if T is empty: return Dropped
     if len(T) == 1: return T[0]
@@ -764,6 +769,41 @@ backend 1 stays at an average of 420 ms with 30 forwards in progress:
 | 59 s | 400 ms, 30, 400 × 31 = 12400 | 420 × 31 = 13020 | both | 0 | 12400 < 13020 |
 | 70 s | 8787 ms, 300, 400 × 301 = 120400 | 13020 | both (8787 <= 17000) | 1 | 13020 < 120400 |
 | 80 s | 19119 ms, 500, — | 13020 | 1 only (19119 > 17000) | 1 | the filter |
+
+## FilterProbe
+
+A backend the PeakEwmaDeadline refuses gets no request, so no answer can lower its RTT average: a healthy backend whose
+average rose once (a burst, a short queue) could be refused for good. The **FilterProbe** sends it a request now and
+then anyway, more likely the longer it has received none, so it can prove it is healthy again. Parameter
+`lb_probe_tau_ms` (τ, ms, `>= 0`, default `0` = off).
+
+```
+last_sent[s]: u64 monotonic ns = 0       # LastSentTime: set by every pick that returns s (pending_add), shared by workers
+
+function filter_probe(lb, s, now, remaining_ns):      # s was refused by the test; -> boolean
+    if lb.probe_tau_ms == 0 or remaining_ns is none or remaining_ns <= 0: return false
+    dt = now - last_sent[s]                           # monotonic ns, unsigned; never sent: last_sent 0, dt huge
+    p  = 1 - exp(-(float(dt) / 1e6) / lb.probe_tau_ms)    # binary64
+    u  = float(native_random_u64() >> 11) / 2^53      # one draw per refused backend, in L order, before the tie draw
+    return u < p
+```
+
+- **Every decision flips.** A coin is flipped for each refused backend at every decision: a first attempt's
+  admission, each `FILTER_QUEUE_TICK_MS` re-check of a waiting request, an LbRetry pick and its re-checks.
+- **Heads sends the request there.** Probed backends win over the backends that passed the test; among several, the
+  lowest PeakEwmaCost (ties random). The probe is a normal pick: it sets `last_sent`, so `dt` starts again from 0.
+- **No flip** for an already-late request, a request without a RequestDeadline (never filtered), or an avoided
+  backend (it is not in `L`).
+- **Many decisions.** With requests waiting, a refused backend is checked about every 10 ms per waiting request, so it
+  is probed soon after `dt` grows past a few ms, then again after the next quiet stretch; probes come in bursts.
+
+| τ | `dt` | `p = 1 - e^(-dt/τ)` | Check |
+|---|---|---|---|
+| 4 s | 0 | 0 | just sent: never probed |
+| 4 s | 0.4 s | 0.09516258196404048 | 1 − e^(−0.1) |
+| 4 s | 4 s | 0.6321205588285577 | 1 − e^(−1) |
+| 4 s | 8 s | 0.8646647167633873 | 1 − e^(−2) |
+| 0 (off) | any | — | no flip: refused stays refused |
 
 ## PickLog
 

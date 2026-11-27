@@ -58,3 +58,4 @@
 | 0.16.0 | 2026-11-27T00:00:00Z | Child bump: retry_policy 0.8.0 (policies under HedgedForwarding) |
 | 0.16.1 | 2026-11-27T00:00:00Z | forwards.csv columns for a ForwardLog built from an access log. Child bump: load_balancer 0.18.2 |
 | 0.17.0 | 2026-11-27T00:00:00Z | Parameter `lb_filter_margin` and its validation. Child bump: load_balancer 0.19.0 |
+| 0.18.0 | 2026-11-27T00:00:00Z | Parameter `lb_probe_tau_ms` and its validation. Child bump: load_balancer 0.20.0 |

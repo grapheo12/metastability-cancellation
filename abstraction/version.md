@@ -239,3 +239,4 @@
 | 0.61.3 | 2026-11-27T00:00:00Z | Child bump: load_generator 0.9.2 (metrics 0.6.1) |
 | 0.62.0 | 2026-11-27T00:00:00Z | Ingress parameter `lb_filter_margin`; glossary FilterMargin. Child bump: ingress 0.17.0 (load_balancer 0.19.0) |
 | 0.62.1 | 2026-11-27T00:00:00Z | Child bump: benchmark_runner 0.19.0 (config 0.29.0) |
+| 0.63.0 | 2026-11-27T00:00:00Z | Ingress parameter `lb_probe_tau_ms`; glossary FilterProbe. Child bump: ingress 0.18.0 (load_balancer 0.20.0) |

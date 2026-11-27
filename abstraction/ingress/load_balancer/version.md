@@ -24,3 +24,4 @@
 | 0.18.1 | 2026-11-27T00:00:00Z | Wording: AvoidedBackends links the Frontend's HedgedForwarding section |
 | 0.18.2 | 2026-11-27T00:00:00Z | ForwardLog may be built at shutdown from a per-attempt access log (ForwardLogFromAccessLog): latency from the request's arrival, EwmaLatency recomputed, exec columns empty |
 | 0.19.0 | 2026-11-27T00:00:00Z | FilterMargin: `lb_filter_margin = γ >= 1` (default 1); the PeakEwmaDeadline keeps a backend only if `γ × ProvisionalCurrentRtt <= time left`; worked example |
+| 0.20.0 | 2026-11-27T00:00:00Z | FilterProbe: `lb_probe_tau_ms` (τ, default 0 = off); a refused backend gets the request with probability `1 − e^(−Δt/τ)` (Δt since its LastSentTime), at every decision; probes win over kept backends; worked example |
