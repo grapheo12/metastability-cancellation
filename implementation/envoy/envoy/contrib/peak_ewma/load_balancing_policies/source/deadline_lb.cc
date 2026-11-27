@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.20.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.21.0)
 // Source: abstraction/protocol/design.md (protocol v0.8.0)
 #include "contrib/peak_ewma/load_balancing_policies/source/deadline_lb.h"
 
@@ -226,7 +226,7 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
       // The filter: reject the host if its ProvisionalCurrentRTT exceeds the request's time left.
       keep[i] = !(filter_margin_ * provisional[i] * 1e6 > static_cast<double>(*remaining_ns)); // FilterMargin
       // Design: abstraction/ingress/load_balancer/design.md#filterprobe
-      if (!keep[i] && probe_tau_ms_ > 0.0) { // refused: flip a coin with P(heads) = 1 - e^(-dt/tau)
+      if (!keep[i] && probe_tau_ms_ > 0.0 && !has_pending) { // refused, nothing pending: P(heads) = 1 - e^(-dt/tau)
         auto pending = hosts[i]->typedLbPolicyData<PendingRequests>();
         const int64_t last = pending.has_value() ? pending->lastSent() : 0;
         const double dt_ms = static_cast<double>(static_cast<uint64_t>(now_mono - last)) / 1e6;

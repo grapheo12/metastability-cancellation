@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.20.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.21.0)
 // impl/envoy (cancellation testbed): tests of the peak_ewma_deadline load balancer (deadline_lb.h): the deadline
 // filter over every host, the lowest-cost choice, and the per-worker FIFO wait queue.
 
@@ -179,6 +179,8 @@ TEST_F(PeakEwmaDeadlineProbeTest, CoinFollowsTimeSinceLastSend) {
   setHost(0, 300, 0);
   auto warm1 = request(absl::nullopt); // now host 1 is cheaper
   EXPECT_EQ(lb_->chooseHost(&warm1->context).host, hosts_[1]);
+  warm0.reset(); // both answered: nothing pending, so both may be probed
+  warm1.reset();
   ON_CALL(random_, random()).WillByDefault(Return(1ULL << 63)); // u = 0.5
   advance(400);
   setHost(0, 8000, 0);
@@ -191,6 +193,20 @@ TEST_F(PeakEwmaDeadlineProbeTest, CoinFollowsTimeSinceLastSend) {
   setHost(1, 9000, 0);
   auto later = request(4000 * kMs);
   EXPECT_EQ(lb_->chooseHost(&later->context).host, hosts_[0]); // dt 4 s: p = 0.632 > 0.5: heads, cheaper
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#filterprobe
+TEST_F(PeakEwmaDeadlineProbeTest, HostWithSomethingPendingIsNeverProbed) {
+  setHost(0, 100, 0);
+  setHost(1, 200, 0);
+  auto stuck = request(absl::nullopt); // no deadline: sent to host 0, and stays pending there (never answered)
+  EXPECT_EQ(lb_->chooseHost(&stuck->context).host, hosts_[0]);
+  ON_CALL(random_, random()).WillByDefault(Return(0)); // u = 0: heads whenever a coin is flipped
+  advance(8000);
+  setHost(0, 8000, 0);
+  setHost(1, 9000, 0);
+  auto r = request(4000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&r->context).host, hosts_[1]); // host 0 is cheaper but pending: only host 1 probed
 }
 
 // Design: abstraction/ingress/load_balancer/design.md#filterprobe
