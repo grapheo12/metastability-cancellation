@@ -227,3 +227,4 @@
 | 0.54.0 | 2026-11-27T00:00:00Z | Glossary ScenarioAssignment. Child bump: benchmark_runner 0.16.0 (config 0.27.0) |
 | 0.55.0 | 2026-11-27T00:00:00Z | Child bump: benchmark_runner 0.17.0 (experiment_executor 0.14.0) |
 | 0.56.0 | 2026-11-27T00:00:00Z | Glossary RequestDeadlineHeader. Child bump: protocol 0.8.0 (RequestDeadlineHeader) |
+| 0.57.0 | 2026-11-27T00:00:00Z | OptionalValue (a parameter value an implementation may reject as not supported); load generator parameter `arrival_rng`; glossary OptionalValue, ArrivalRng. Child bump: load_generator 0.9.0 (client 0.10.0) |

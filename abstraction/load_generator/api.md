@@ -15,6 +15,7 @@ Same as [../api.md#load-generator-parameters](../api.md#load-generator-parameter
 | `drain_timeout_ms` | integer, ms, `> 0` | `10000` |
 | `duration_s` | float, s, `> 0` | required |
 | `seed` | u64 | `0` |
+| `arrival_rng` | `sampling` \| `native` (OptionalValue) | `sampling` |
 | `n_waiting_requests` | integer, `1 ..= MAX_WAITING_REQUESTS` (1000) | `100` |
 | `retry_timeout_ms` | float, ms, `> 0` | `150` |
 | `max_retries` | integer, `>= 0`, `n_waiting_requests × (1 + max_retries) <= MAX_WAITING_REQUESTS` | `1` |
