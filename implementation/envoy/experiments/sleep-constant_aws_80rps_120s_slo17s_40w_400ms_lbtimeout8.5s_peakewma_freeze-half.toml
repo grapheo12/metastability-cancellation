@@ -1,3 +1,6 @@
+# Since the vendored-code rules (2026-11-27) the Envoy-only behaviour has its own parameter values: lb_policy
+# peak_ewma, lb_filter deadline_provisional_rtt, forward_mode hedge, arrival_rng native. impl/go rejects them,
+# so the Go stack needs its own copy (lb_policy ewma, lb_filter deadline_mean, no forward_mode / arrival_rng).
 # impl/envoy: 2 Go servers, Envoy as the Ingress (lb_policy = ewma), Nighthawk as the load generator, timeout LB
 # retries: one retry (lb_max_retries = 1) once an attempt has had no answer for 8.5 s (half the SLO), as the Go
 # timeout runs. 120 s run; one of the two servers stalls at 60 s (WorkerFreeze, FreezeTarget = instance 0 on
@@ -44,6 +47,7 @@ freeze_after_ms = 60000   # half of load_gen.duration_s
 freeze_instance = 0       # FreezeTarget: only the metafail-exp-2 server stalls
 
 [load_gen]
+arrival_rng = "native"   # Nighthawk's own generator per worker, seeded seed + k
 num_clients = 16
 global_rate = 80   # 40% of 2 x 100 req/s
 request_bytes = 128
@@ -56,14 +60,15 @@ slo_cancel = false        # late requests run to completion; DrainDeadline ends 
 drain_timeout_ms = 30000  # DrainDeadline: 30 s after duration_s
 
 [ingress]
+forward_mode = "hedge"   # HedgedForwarding: the only forwarding Envoy realizes
 machine = "client"   # Ingress next to the load generator on metafail-exp-1
 listen_port = 9090
-lb_policy = "ewma"   # Envoy: contrib Peak EWMA; Go: the Go Ingress EwmaPolicy
+lb_policy = "peak_ewma"   # Envoy's contrib Peak EWMA (PeakEwmaRtt, PeakEwmaCost)
 heartbeat_timeout_ms = 0     # no Heartbeat Monitor
 lb_retry_policy = "timeout"  # LbRetry once the newest attempt has had no answer for lb_retry_timeout_ms
 lb_max_retries = 1
 lb_retry_timeout_ms = 8500   # half the SLO
-lb_filter = ["none", "deadline_mean"]  # Envoy: Peak EWMA / peak_ewma_deadline; Go: EwmaPolicy / + DeadlineFilter deadline_mean
+lb_filter = ["none", "deadline_provisional_rtt"]  # Peak EWMA alone / PeakEwmaDeadline
 
 [run]
 sweep_order = ["ingress.lb_filter"]

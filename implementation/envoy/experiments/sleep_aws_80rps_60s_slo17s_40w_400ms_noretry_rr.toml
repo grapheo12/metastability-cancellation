@@ -1,3 +1,5 @@
+# No longer runnable on impl/envoy: lb_policy round_robin is not supported by this implementation (Envoy's round
+# robin is per worker, not the spec's). Kept as the record of the first Envoy/Go comparison.
 # impl/envoy first experiment: 2 Go servers, Envoy as the Ingress (round robin), Nighthawk as the load generator,
 # no retries, no freeze (heartbeats are not implemented on impl/envoy yet).
 # Servers: 40 workers sleeping an exponential 400 ms mean (response_rate = 2.5 per worker), 100 req/s each.
