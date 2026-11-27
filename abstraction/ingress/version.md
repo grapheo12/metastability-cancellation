@@ -52,3 +52,4 @@
 | 0.13.1 | 2026-11-24T00:00:00Z | `forwards.csv` column `estimate_ns`. Child bump: load_balancer 0.16.0 |
 | 0.13.2 | 2026-11-24T00:00:00Z | `forwards.csv` `estimate_ns` text. Child bump: load_balancer 0.17.0 |
 | 0.13.3 | 2026-11-24T00:00:00Z | Child bump: load_balancer 0.17.1 (wording) |
+| 0.14.0 | 2026-11-27T00:00:00Z | Validation of `peak_ewma` / `deadline_provisional_rtt` (each needs the other or `none`) and of OptionalValues; Ingress workers in the concurrency model; parameter rows. Child bump: load_balancer 0.18.0 |

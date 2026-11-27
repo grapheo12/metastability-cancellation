@@ -6,8 +6,8 @@ From the Ingress parameters ([../api.md#program-parameters](../api.md#program-pa
 
 | Parameter | Type / unit / constraint | Default | Meaning |
 |---|---|---|---|
-| `lb_policy` | `round_robin` \| `least_outstanding` \| `power_of_two` \| `ewma` | `least_outstanding` | The LbPolicy |
-| `lb_filter` | `none` \| `deadline_mean` \| `deadline_mean_per_worker` \| `deadline_mean_queue_plus_share` \| `deadline_mmk` | `none` | The DeadlineFilter's DeadlineStrategy, or off ([design.md#deadlinefilter](design.md#deadlinefilter)) |
+| `lb_policy` | `round_robin` \| `least_outstanding` \| `power_of_two` \| `ewma` \| `peak_ewma` (OptionalValue) | `least_outstanding` | The LbPolicy; `peak_ewma` uses PeakEwmaRtt and PeakEwmaCost ([design.md#peakewmartt](design.md#peakewmartt)) |
+| `lb_filter` | `none` \| `deadline_mean` \| `deadline_mean_per_worker` \| `deadline_mean_queue_plus_share` \| `deadline_mmk` \| `deadline_provisional_rtt` (OptionalValue) | `none` | The DeadlineFilter's DeadlineStrategy, or off ([design.md#deadlinefilter](design.md#deadlinefilter)); `deadline_provisional_rtt` needs `lb_policy = peak_ewma` and is the PeakEwmaDeadline ([design.md#peakewmadeadline](design.md#peakewmadeadline)) |
 | `ewma_beta` | float, `0 <= ewma_beta <= 1` | `0.7` | Weight of the old value in each EwmaLatency update ([design.md#ewmalatency](design.md#ewmalatency)) |
 
 ## Constants
@@ -17,13 +17,18 @@ From the Ingress parameters ([../api.md#program-parameters](../api.md#program-pa
 | `EWMA_INITIAL_LATENCY_NS` | `1_000_000` (1 ms) | Every backend's EwmaLatency before its first sample. Not 0, so that the `ewma` policy still weighs `outstanding` before any response |
 | `DEADLINE_FILTER_CONFIDENCE` | `0.99` | A backend passes the DeadlineFilter if the request finishes there in time with at least this probability ([design.md#deadlinefilter](design.md#deadlinefilter)) |
 | `DEADLINE_FILTER_MISS` | `0.01` | `1 - DEADLINE_FILTER_CONFIDENCE`: the largest allowed late probability |
+| `PEAK_EWMA_DECAY_MS` | `10_000` | `tau` of the PeakEwmaRtt's time-based weight ([design.md#peakewmartt](design.md#peakewmartt)) |
+| `PEAK_EWMA_AGGREGATION_MS` | `100` | New RTT samples are folded at most this often per Ingress worker |
+| `PEAK_EWMA_MAX_SAMPLES` | `1_000` | RTT samples kept per backend between two folds |
+| `PEAK_EWMA_DEFAULT_RTT_MS` | `10.0` | PeakEwmaCost latency of a backend that is unmeasured and idle ([design.md#peakewmacost](design.md#peakewmacost)) |
+| `PEAK_EWMA_PENALTY` | `1_000_000.0` | PeakEwmaCost of a backend in use but never answered, plus its `outstanding` |
 | `EXEC_NO_SAMPLE` | binary64 quiet NaN, bits `0x7FF8000000000000` | Stored in `ewma_exec_ns` and `ewma_anti_exec_ns` until their first sample ([design.md#ewmaexectime](design.md#ewmaexectime), [design.md#ewmaantiservicetime](design.md#ewmaantiservicetime)) |
 
 ## Types
 
 ### `LbPolicy`
 
-`round_robin` \| `least_outstanding` \| `power_of_two` \| `ewma`, from the Ingress parameter `lb_policy`
+`round_robin` \| `least_outstanding` \| `power_of_two` \| `ewma` \| `peak_ewma`, from the Ingress parameter `lb_policy`
 ([../api.md#program-parameters](../api.md#program-parameters)). See [design.md#lbpolicy](design.md#lbpolicy).
 
 ### `ForwardOutcome`
@@ -88,14 +93,15 @@ every `ewma_exec_ns` and `ewma_anti_exec_ns = EXEC_NO_SAMPLE`.
 The random stream is `rng_new(derive_seed(config.seed, STREAM_INGRESS_LB, 0))`.
 See [design.md#loadbalancer](design.md#loadbalancer).
 
-### `pick(lb, remaining_ns: i64 | none, attempt: u32, record: boolean = true, exclude: u32 | none = none) -> ForwardTicket | Dropped`
+### `pick(lb, remaining_ns: i64 | none, attempt: u32, record: boolean = true, exclude: u32 | none = none, avoid: set of u32 = {}) -> ForwardTicket | Dropped`
 Applies the DeadlineFilter when `lb_filter` is not `none` and `remaining_ns` is given, then chooses a backend by the
 policy among the live (all if none is live) and eligible ones. If none is eligible it returns `Dropped` and changes
 nothing; the caller decides what follows (a first attempt waits in the FilterWaitQueue, a refused LbRetry is skipped).
 Otherwise it increments the chosen backend's `outstanding` and `forwarded` and stamps the ticket with the current
 monotonic time; every such `pick` must be followed by exactly one `finish` with the same ticket. `record = false`
 (a FilterWaitQueue re-check) writes no PickRecord. `exclude` (an LbRetry decided `RetryElsewhere`) removes that
-backend from the LiveSet; `Dropped` if none is left ([design.md#lbpolicy](design.md#lbpolicy)). See [design.md#lbpolicy](design.md#lbpolicy),
+backend from the LiveSet; `Dropped` if none is left ([design.md#lbpolicy](design.md#lbpolicy)). `avoid` (HedgedForwarding) leaves its
+backends out unless that leaves none, and never causes `Dropped`. See [design.md#lbpolicy](design.md#lbpolicy),
 [design.md#deadlinefilter](design.md#deadlinefilter) and [design.md#forwardticket](design.md#forwardticket).
 
 ### `admit(lb, deadline: u64 | none) -> Sent(ForwardTicket) | Wait(WaitEntry)`
@@ -115,12 +121,26 @@ EwmaAntiServiceTime ([design.md#ewmaantiservicetime](design.md#ewmaantiserviceti
 [design.md#ewmalatency](design.md#ewmalatency). For `ok` and `rejected`, a given `worker_count` becomes the backend's WorkerCount, used by the
 [DeadlineFilter](design.md#deadlinefilter).
 
+### `peak_ewma_sample(lb, s: u32, first_byte_sent_ns: u64, first_byte_received_ns: u64) -> nothing`
+With `lb_policy = peak_ewma`: records one PeakEwmaRtt sample (whole ms, truncated) for backend `s`; folded into the
+average at a later pick. Called by the Frontend when a forward's response headers arrive, whatever the status. See
+[design.md#peakewmartt](design.md#peakewmartt).
+
+### `pending_add(lb, s: u32, request) -> nothing` and `pending_release(lb, request) -> nothing`
+With `lb_filter = deadline_provisional_rtt`: a pick for `s` records a PendingStart; the end of the client request
+(answered, dropped or reset) releases all of its own. See [design.md#provisionalcurrentrtt](design.md#provisionalcurrentrtt).
+
+### `admit_peak(lb, worker, request, deadline: i64 | none)`, `retry_peak(lb, worker, request, deadline, exclude, avoid)`, `scan_peak(lb, worker)`
+The PeakEwmaDeadline's admission, LbRetry pick and 10 ms scan, with one wait queue and one retry list per Ingress
+worker; used in place of `admit` and `scan` when `lb_filter = deadline_provisional_rtt`. See
+[design.md#peakewmadeadline](design.md#peakewmadeadline).
+
 ### `stats_snapshot(lb) -> list of BackendStats values`
 Reads every counter, `ewma_latency_ns`, `ewma_exec_ns` and `ewma_anti_exec_ns` (acquire), in `server_id` order, for the summary.
 See [design.md#loadbalancer](design.md#loadbalancer).
 
 ### `pick_log(lb) -> list of PickRecord`
-A copy of the PickLog in append order, for the Ingress's `<output_path>.picks.csv`. See
+A copy of the PickLog in append order, for the Ingress's `<output_path>.picks.csv`; optional (may be empty). See
 [design.md#picklog](design.md#picklog).
 
 ### `forward_log(lb) -> list of ForwardRecord`

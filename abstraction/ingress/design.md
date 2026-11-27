@@ -55,8 +55,14 @@ function validate(params):
     1 <= len(backends) <= MAX_BACKENDS                      else error
     every backend parses as host:port                       else error "backend <i> must be host:port"
     1 <= num_clients <= MAX_CLIENTS                         else error
-    lb_policy in {round_robin, least_outstanding, power_of_two, ewma}  else error
-    lb_filter in {none, deadline_mean, deadline_mean_per_worker, deadline_mean_queue_plus_share, deadline_mmk}   else error   # default none
+    lb_policy in {round_robin, least_outstanding, power_of_two, ewma, peak_ewma}  else error
+    lb_filter in {none, deadline_mean, deadline_mean_per_worker, deadline_mean_queue_plus_share, deadline_mmk,
+                  deadline_provisional_rtt}                 else error   # default none
+    if lb_filter == deadline_provisional_rtt: lb_policy == peak_ewma
+                                                            else error "lb_filter deadline_provisional_rtt needs lb_policy peak_ewma"
+    if lb_policy == peak_ewma: lb_filter in {none, deadline_provisional_rtt}
+                                                            else error "lb_policy peak_ewma needs lb_filter none or deadline_provisional_rtt"
+    every OptionalValue given is realized here              else error "<parameter> <value> is not supported by this implementation"
     0 <= ewma_beta <= 1 and finite                          else error "ewma_beta must be a number in [0, 1]"
     cancel_rate >= 0 and finite                             else error
     if cancel_rate > 0: duration_s > 0 and finite           else error "duration_s is required with cancel_rate > 0"
@@ -89,6 +95,10 @@ Duplicate backends are allowed: they are separate `server_id`s that happen to sh
   ([load_balancer/design.md#forwardlog](load_balancer/design.md#forwardlog)).
 - If the implementation uses cooperative coroutines on one thread, nothing in the Ingress may busy-wait: every
   wait is on network I/O, a timer, or a lock held only briefly.
+- **Ingress workers.** An implementation may run the Frontend on several workers (threads), each serving whole client
+  connections. Only the PeakEwmaDeadline depends on them: it keeps one wait queue, retry list and scan timer per worker
+  ([load_balancer/design.md#peakewmadeadline](load_balancer/design.md#peakewmadeadline)); every other structure is
+  shared by all workers.
 
 ## Time base
 

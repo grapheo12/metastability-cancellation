@@ -19,14 +19,17 @@ lb = { policy, filter: lb_filter, beta: ewma_beta, monitor: HeartbeatMonitor or 
        seq: atomic u64 = 0,                                                # TicketSeq source
        rng: rng_new(derive_seed(seed, STREAM_INGRESS_LB, 0)), rng_lock: mutex,
        log: list of ForwardRecord (empty), log_lock: mutex,                     # ForwardLog
-       picks: list of PickRecord (empty) }                                      # PickLog, also under log_lock
+       picks: list of PickRecord (empty),                                       # PickLog, also under log_lock
+       peak: array[B] (PeakEwmaRtt), pending: array[B] (PendingStarts),         # lb_policy = peak_ewma only
+       last_fold_ns: u64 per Ingress worker = 0 }
 
-function pick(lb, remaining_ns, attempt, record = true, exclude = none):   # remaining_ns: i64 or none (the request's time to its deadline);
+function pick(lb, remaining_ns, attempt, record = true, exclude = none, avoid = {}):   # remaining_ns: i64 or none (the request's time to its deadline);
                                                      # attempt: LbRetries before this one (0 for the first);
                                                      # record: false for a FilterWaitQueue re-check
                                                      # exclude: a backend this pick must not choose (RetryElsewhere), or none
+                                                     # avoid: backends to leave out unless that leaves none (HedgedForwarding)
     if record: record_pick(lb)                       # PickLog: what the choice below is about to see
-    s = choose(lb, remaining_ns, exclude)            # LbPolicy over the DeadlineFilter's set
+    s = choose(lb, remaining_ns, exclude, avoid)     # LbPolicy over the DeadlineFilter's set
     if s is Dropped:
         return Dropped                               # no counter changes; no finish follows (callers count)
     n = lb.stats[s].outstanding.fetch_add(1)         # the value before this pick's increment
@@ -232,15 +235,105 @@ function ewma_score(lb, s):                          # binary64
 latency. `o` and `e` are read separately and may change between the two loads; the score is a heuristic and the
 race is accepted, as for the other counters.
 
+## PeakEwmaRtt
+
+The `peak_ewma` LbPolicy (an OptionalValue) does not use EwmaLatency. It averages each backend's **PeakEwmaRtt**: the
+time from sending a forward's first request byte to receiving its first response byte, for every answer whatever its
+status, averaged with a weight that depends on the time between samples, not on their count.
+
+```
+PEAK_EWMA_DECAY_MS       = 10_000      # tau: a sample this old has weight 1 - 1/e
+PEAK_EWMA_AGGREGATION_MS = 100         # new samples are folded in at most this often
+PEAK_EWMA_MAX_SAMPLES    = 1_000       # samples kept per backend between two folds
+
+peak[s] = { rtt_ms: binary64 = 0,      # the average; 0: no sample folded yet
+            last_ns: u64 = 0,          # monotonic time of the last folded sample
+            samples: ring of PEAK_EWMA_MAX_SAMPLES (rtt_ms, t_ns), written = 0, folded = 0 }   # shared by all workers
+
+procedure peak_ewma_sample(lb, s, first_byte_sent_ns, first_byte_received_ns):   # Frontend, at the response headers
+    rtt_ms = floor((first_byte_received_ns - first_byte_sent_ns) / 1_000_000)     # whole ms, truncated
+    k = peak[s].written.fetch_add(1)
+    peak[s].samples[k mod PEAK_EWMA_MAX_SAMPLES] = (float(rtt_ms), monotonic_now_ns())
+
+procedure maybe_fold(lb):              # at each pick of a worker; lb.last_fold_ns is per Ingress worker
+    now = monotonic_now_ns()
+    if now - lb.last_fold_ns < PEAK_EWMA_AGGREGATION_MS * 1_000_000: return
+    lb.last_fold_ns = now
+    for s in 0 ..= B-1: fold(lb, s)
+
+procedure fold(lb, s):
+    w = peak[s].written; f = peak[s].folded
+    if w - f > PEAK_EWMA_MAX_SAMPLES: f = w - PEAK_EWMA_MAX_SAMPLES   # overwritten samples are lost
+    e = peak[s].rtt_ms; t_prev = peak[s].last_ns
+    for k in f ..= w-1, in order:
+        (x, t) = peak[s].samples[k mod PEAK_EWMA_MAX_SAMPLES]
+        if x <= 0 or t == 0: continue                 # an RTT under 1 ms (truncated to 0) is not a sample
+        a = time_alpha(t, t_prev)
+        e = x if e == 0 else a * x + (1 - a) * e      # each product rounded, then the sum (binary64)
+        t_prev = t
+    peak[s].rtt_ms = e; peak[s].last_ns = t_prev; peak[s].folded = w
+
+function time_alpha(t_ns, t_prev_ns):                 # binary64 in [0, 1]
+    dt = signed(t_ns - t_prev_ns)                     # i64
+    if dt <= 0: return 0                              # a concurrent or out-of-order sample has no weight
+    return min(1, max(0, 1 - exp(-(dt / 1e9) / (PEAK_EWMA_DECAY_MS / 1e3))))
+```
+
+- **What is measured.** First byte to first byte, so a backend's queueing and service count, but not the time to send
+  or receive the bodies. Every answer is a sample, `202`, `503`, `400` alike; a forward that ends without an answer is
+  not.
+- **Shared.** The samples and the average belong to the backend and are shared by all Ingress workers; each worker
+  folds on its own picks, at most every `PEAK_EWMA_AGGREGATION_MS`. Two workers may fold at the same moment; the race
+  is accepted (a sample is then folded once more or lost).
+- **First sample.** The first folded sample becomes the average; until then `rtt_ms = 0` means "no sample".
+- **Stale average.** A backend that answers nothing gets no sample, so its average stays where it was, however long it
+  has been silent. [ProvisionalCurrentRtt](#provisionalcurrentrtt) is the testbed's answer to that.
+
+Worked example, `tau = 10 s`:
+
+| Δt since the last sample | `time_alpha` | Average before | Sample | Average after | Check |
+|---|---|---|---|---|---|
+| 100 ms | 0.009950166250831893 | 400 | 420 | 400.19900332501663 | 0.00995… × 420 + 0.99004… × 400 |
+| 10 s | 0.6321205588285577 | — | — | — | 1 − e^(−1) |
+| 60 s | 0.9975212478233336 | — | — | — | 1 − e^(−6) |
+| 0 or negative | 0 | 400 | 9000 | 400 | no weight |
+| — | — | 0 (no sample) | 420 | 420 | the first sample is the average |
+
+## PeakEwmaCost
+
+```
+PEAK_EWMA_DEFAULT_RTT_MS = 10.0
+PEAK_EWMA_PENALTY        = 1_000_000.0
+
+function peak_ewma_cost(lb, s):                       # binary64
+    rtt = peak[s].rtt_ms
+    a = float(lb.stats[s].outstanding.load())         # forwards in progress on s, every attempt of every request
+    if rtt > 0: return rtt * (a + 1)                  # PeakEwmaCost: latency times load
+    if a > 0:   return PEAK_EWMA_PENALTY + a          # in use but never answered: worst
+    return PEAK_EWMA_DEFAULT_RTT_MS * (a + 1)         # unused and unmeasured: assume 10 ms
+```
+
+| `rtt_ms` | `outstanding` | **PeakEwmaCost** | Check |
+|---|---|---|---|
+| 400 | 3 | 1600 | 400 × 4 |
+| 400 | 0 | 400 | 400 × 1 |
+| 0 | 2 | 1000002 | penalty + 2 |
+| 0 | 0 | 10 | 10 × 1 |
+
 ## LbPolicy
 
 ```
-function choose(lb, remaining_ns, exclude = none):
+function choose(lb, remaining_ns, exclude = none, avoid = {}):
     L = [ s for s in 0 ..= B-1 if heartbeat_monitor.is_live(lb.monitor, s) ]     # LiveSet, in id order
     if L is empty: L = [0 ..= B-1]                   # every backend silent: use them all, as without a monitor
     if exclude is not none:
         L = [ s for s in L if s != exclude ]         # ExcludedBackend: after the fallback, so it never comes back
         if L is empty: return Dropped
+    A = [ s for s in L if s not in avoid ]           # AvoidedBackends (HedgedForwarding): left out ...
+    if A is not empty: L = A                         # ... unless that leaves none, then all of L again
+    if lb.policy == peak_ewma: maybe_fold(lb)        # PeakEwmaRtt: fold new RTT samples at most every 100 ms
+    if lb.filter == deadline_provisional_rtt:
+        return peak_ewma_deadline_choose(lb, L, remaining_ns)   # PeakEwmaDeadline: its own filter and choice
     if lb.filter != none and remaining_ns is not none:
         L = deadline_filter(lb, L, remaining_ns)     # DeadlineFilter
         if L is empty: return Dropped
@@ -260,6 +353,14 @@ function choose(lb, remaining_ns, exclude = none):
         ewma:
             (a, b) = random_pair(lb, L)
             return b if ewma_score(lb, b) < ewma_score(lb, a) else a               # EwmaScore; ties go to lower id
+        peak_ewma:                                   # OptionalValue
+            r = native_random_u64()                  # the implementation's own random source, one draw per pick
+            i = r mod n
+            j = (r >> 16) mod n
+            if j == i: j = (j + 1) mod n             # two different positions of L
+            ci = peak_ewma_cost(lb, L[i]); cj = peak_ewma_cost(lb, L[j])     # PeakEwmaCost
+            if ci == cj: return L[i] if (r & 1) == 1 else L[j]               # tie: the draw's low bit decides
+            return L[i] if ci < cj else L[j]
 
 function random_pair(lb, L):                         # two different members of L (n >= 2), a < b
     n = len(L)
@@ -276,6 +377,10 @@ function random_pair(lb, L):                         # two different members of 
   draws, same counter. A dead backend gets no new forwards; forwards already in progress on it are left alone and
   end as they would have. When no backend is live, `L` falls back to all of them, so requests still go somewhere.
   `L` is read once per pick; a backend that changes state during the pick is seen in either state.
+- **AvoidedBackends.** Under HedgedForwarding an LbRetry decided `RetryElsewhere` passes `avoid` = every backend its
+  request has already been sent to (the Frontend's `forward_mode = hedge`, [../frontend/design.md](../frontend/design.md)).
+  They are left out of `L` unless that would leave nothing, in which case `L` is kept whole: unlike `exclude`, `avoid`
+  never makes a pick `Dropped`. With `avoid = {}` nothing changes.
 - **ExcludedBackend.** A pick with `exclude = e` (an LbRetry decided `RetryElsewhere`,
   [../retry_policy/api.md#retrydecision](../retry_policy/api.md#retrydecision)) removes `e` from `L` after the
   all-silent fallback, so the retry never goes back to `e`, even when `e` is the only live backend. If that leaves
@@ -284,7 +389,8 @@ function random_pair(lb, L):                         # two different members of 
 - **Concurrent picks race.** Two picks at the same moment may read the same counters and choose the same backend.
   That is accepted: the policies are heuristics, and the counters correct themselves on the next pick. No lock is
   taken around the read and the increment.
-- **Reproducibility.** `round_robin` and `least_outstanding` use no randomness. `power_of_two` and `ewma` draw two
+- **Reproducibility.** `round_robin` and `least_outstanding` use no randomness. `peak_ewma` draws from the
+  implementation's own random source, not from `seed`, so its pairs differ between runs. `power_of_two` and `ewma` draw two
   numbers per pick (when `B > 1`), in pick order; with concurrent clients the pick order, and so the
   draw-to-request assignment, depends on timing. `ewma` also depends on measured latencies, so its choices are not
   reproducible across runs even with one client.
@@ -305,6 +411,7 @@ it would among `L`. Everything but the per-backend test is shared by the strateg
 | `deadline_mean_per_worker` | `(n + 1) × e / k <= T` | mean wait with `k` workers draining the queue |
 | `deadline_mean_queue_plus_share` | `(n + 1/k) × e <= T` | each request ahead at a full service time, the request's own at `1/k` of one |
 | `deadline_mmk` | `Pr(t > T \| N = n) <= DEADLINE_FILTER_MISS` | M/M/k on-time probability `>= 0.99` (see [Model](#model)) |
+| `deadline_provisional_rtt` (OptionalValue; needs `lb_policy = peak_ewma`) | ProvisionalCurrentRtt `<= T` | the backend's RTT average, as if its oldest pending forward answered now; its own choice and wait queues ([PeakEwmaDeadline](#peakewmadeadline)) |
 
 `n`, `k`, `e` and `T` are as defined in the [Model](#model): `outstanding`, `max(WorkerCount, 1)`, EwmaExecTime and
 `remaining_ns`.
@@ -532,10 +639,132 @@ Worked example, `deadline_mean`, one backend, `e = 200 ms`, `outstanding = 24` t
 | 600 | n = 21; scan: B `4400 <= 4401` yes, sent (n = 22); C `4600 <= 4402` no | [C] | B sent; C still waits |
 | 5002 | C still not sent; remaining 0 | [] | C dropped past its SLO, `503` |
 
+## ProvisionalCurrentRtt
+
+A backend that stops answering keeps its PeakEwmaRtt forever ([PeakEwmaRtt](#peakewmartt)). The
+**ProvisionalCurrentRtt** folds in, provisionally, the forward that has waited longest on the backend, as if it
+answered now. It is not stored: it is computed at each decision and then forgotten.
+
+```
+pending[s] = multiset of u64 (monotonic ns)   # PendingStarts: one per forward picked for s whose client request
+                                              # has not ended yet; shared by all workers, under its own lock
+
+procedure pending_add(lb, s, request):        # at each pick that returns s, under deadline_provisional_rtt
+    t = monotonic_now_ns(); pending[s].insert(t); request.pending.append((s, t))
+
+procedure pending_release(lb, request):       # when the client request ends (answered, dropped or reset)
+    for (s, t) in request.pending: pending[s].remove_one(t)
+
+function provisional_rtt(lb, s, now_ns):      # -> (binary64 ms, has_pending)
+    e = peak[s].rtt_ms
+    if pending[s] is empty: return (e, false)
+    x = float(now_ns - min(pending[s])) / 1e6         # the oldest pending forward's age, ms
+    a = time_alpha(now_ns, peak[s].last_ns)           # the weight it would have as a sample now
+    return (x if e == 0 else a * x + (1 - a) * e, true)
+```
+
+- **Until the request ends.** A forward stays pending until its whole client request ends, not only its own attempt:
+  under HedgedForwarding the losing attempts are released when the winner answers.
+- **Healthy backend.** Its oldest pending forward is about as old as a normal answer, and the time since its last sample
+  is short, so `a` is small and the value stays near the average.
+- **Stalled backend.** Both the age and `a` grow; after a few `tau` the value is about the oldest forward's age.
+
+Worked example, `tau = 10 s`, PeakEwmaRtt 400 ms whose last sample was at 50 s, oldest pending forward started at
+59.9 s (the backend stalled at 60 s):
+
+| now | age (ms) | Δt (s) | `a` | ProvisionalCurrentRtt (ms) | Check |
+|---|---|---|---|---|---|
+| 70 s | 10100 | 20 | 0.8646647167633873 | 8787.247752604857 | 0.86466… × 10100 + 0.13533… × 400 |
+| 80 s | 20100 | 30 | 0.950212931632136 | 19119.194753153082 | 0.95021… × 20100 + 0.04978… × 400 |
+| any, nothing pending | — | — | — | 400 | the average itself |
+
+With 17 s left, the backend is kept at 70 s (8787 <= 17000) and refused at 80 s (19119 > 17000).
+
+## PeakEwmaDeadline
+
+`lb_filter = deadline_provisional_rtt` (with `lb_policy = peak_ewma`) replaces the shared DeadlineFilter and
+FilterWaitQueue with its own **PeakEwmaDeadline**: a filter over every backend, the lowest PeakEwmaCost among the kept
+ones, and one wait queue per Ingress worker. The RequestDeadline comes from the RequestDeadlineHeader
+([../../protocol/design.md#requestdeadlineheader](../../protocol/design.md#requestdeadlineheader)).
+
+```
+function peak_ewma_deadline_choose(lb, L, remaining_ns):   # L after LiveSet, exclude and avoid; -> s | Dropped
+    now = monotonic_now_ns()
+    best = +infinity; keep = {}
+    for s in L:
+        (p, has_pending) = provisional_rtt(lb, s, now)
+        if remaining_ns is none:            ok = true                       # no RequestDeadline: never filtered
+        else if remaining_ns <= 0:          ok = false                      # already late: no backend
+        else if peak[s].rtt_ms <= 0 and not has_pending: ok = true          # unmeasured and idle: eligible
+        else:                               ok = not (p * 1e6 > float(remaining_ns))
+        if ok: keep[s] = peak_ewma_cost(lb, s); best = min(best, keep[s])
+    T = [ s for s in L if s in keep and keep[s] == best ]
+    if T is empty: return Dropped
+    if len(T) == 1: return T[0]
+    return T[native_random_u64() mod len(T)]           # ties: the implementation's random source
+```
+
+Waiting, per Ingress worker `w` (a client connection is served by one worker for its whole life):
+
+```
+FILTER_QUEUE_TICK_MS = 10
+wq[w]      = FIFO of WaitEntry          # first attempts that no backend took
+retries[w] = list of WaitEntry          # LbRetries that no backend took; never dropped
+
+function admit_peak(lb, w, request, deadline):        # attempt 0
+    if deadline is none: s = choose(...); pending_add(lb, s, request); return Sent(s)
+    if wq[w] is not empty: wq[w].push_back(entry); return Wait     # FIFO: never overtakes at admission
+    s = choose(lb, deadline - wall_clock_unix_ns(), ...)
+    if s is Dropped: wq[w].push_back(entry); return Wait
+    pending_add(lb, s, request); return Sent(s)
+
+function retry_peak(lb, w, request, deadline, exclude, avoid):     # an LbRetry
+    s = choose(lb, deadline - wall_clock_unix_ns() if deadline is not none else none, exclude, avoid)
+    if s is Dropped: retries[w].append(entry); return Wait         # re-tried at every scan, never dropped
+    pending_add(lb, s, request); return Sent(s)
+
+procedure scan_peak(lb, w):                            # every FILTER_QUEUE_TICK_MS while wq[w] or retries[w] is not empty
+    for e in wq[w], oldest first:
+        if e is gone: remove e; continue
+        remaining = e.deadline - wall_clock_unix_ns()
+        if remaining <= 0: remove e; answer 503 (dropped, filter_dropped += 1); continue
+        s = choose(lb, remaining, ...)
+        if s is not Dropped: remove e; pending_add(lb, s, e.request); send e to s; continue
+    for e in retries[w], oldest first:
+        if e is gone: remove e; continue
+        s = choose(lb, e.deadline - wall_clock_unix_ns(), e.exclude, e.avoid)   # late: Dropped, so it stays
+        if s is not Dropped: remove e; pending_add(lb, s, e.request); send e to s
+        else: e.refused += 1                           # counted into lb_retry_refused when it leaves
+```
+
+- **Every backend, lowest cost.** Unlike the shared DeadlineFilter, which hands the kept set to the LbPolicy's random
+  pair, every kept backend is compared, so the cheapest one always wins.
+- **Per worker.** Each worker has its own queue, retry list and 10 ms timer; FIFO order holds within a worker only.
+  Backend state (PeakEwmaRtt, `outstanding`, PendingStarts) is shared.
+- **Retries never queue behind first attempts** and are never dropped: a refused LbRetry is re-tried every scan until
+  a backend is kept or its request ends (its earlier attempt keeps running meanwhile), as the `relay` Frontend
+  re-decides a refused retry on every tick.
+- **Dropped answer.** A request dropped past its deadline is answered `503` with a short plain-text body chosen by the
+  implementation, not the `{"id":"<dec>"}` body of the shared FilterWaitQueue; a client classifies it `rejected` all
+  the same.
+- **Counters.** `filter_queued`, `filter_sent_from_queue`, `filter_dropped` and `filter_queue_max` as for the
+  FilterWaitQueue, summed over workers; refused retry re-checks go to `lb_retry_refused`.
+
+Worked example, two backends, 17 s SLO, one decision at each time shown; backend 0 stalls at 60 s (average
+400 ms, last sample at 50 s, oldest pending forward from 59.9 s, as in [ProvisionalCurrentRtt](#provisionalcurrentrtt));
+backend 1 stays at an average of 420 ms with 30 forwards in progress:
+
+| Time | Backend 0: ProvisionalCurrentRtt, `outstanding`, cost | Backend 1: cost | Kept | Choice | Check |
+|---|---|---|---|---|---|
+| 59 s | 400 ms, 30, 400 × 31 = 12400 | 420 × 31 = 13020 | both | 0 | 12400 < 13020 |
+| 70 s | 8787 ms, 300, 400 × 301 = 120400 | 13020 | both (8787 <= 17000) | 1 | 13020 < 120400 |
+| 80 s | 19119 ms, 500, — | 13020 | 1 only (19119 > 17000) | 1 | the filter |
+
 ## PickLog
 
 The **PickLog** records, at every `pick` (forwarded or dropped), what the LoadBalancer sees of every backend, so the
-DeadlineFilter's inputs can be plotted over time.
+DeadlineFilter's inputs can be plotted over time. It is an optional output: an implementation may leave it empty
+(the file then has only its header).
 
 ```
 function record_pick(lb):
