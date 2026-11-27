@@ -13,9 +13,9 @@ From the Ingress parameters ([../api.md#program-parameters](../api.md#program-pa
 | `lb_tb_slo_ms` | float, ms, `> 0`, finite; required with `lb_filter = token_bucket` | `0` (unset) | TokenRate: the SLO an answered attempt's latency is judged against. Validated always (`0` or finite `> 0`), used only by `lb_filter = token_bucket` ([design.md#tokenbucketfilter](design.md#tokenbucketfilter)) |
 | `lb_tb_init_rate` | float, tokens/s, `> 0`, finite | `50` | TokenRate `init_r`: every backend's refill rate at start ([design.md#tokenbucketfilter](design.md#tokenbucketfilter)) |
 | `lb_tb_max_tokens` | float, tokens, `>= 1`, finite | `10` | TokenBucket capacity `max_tokens` ([design.md#tokenbucketfilter](design.md#tokenbucketfilter)) |
-| `lb_tb_mult_dec` | float, `> 1`, finite | `2` | TokenRate `mult_dec_const`: a slow answer sets `r = r / mult_dec`, at most once per `lb_tb_slo_ms` ([design.md#tokenbucketfilter](design.md#tokenbucketfilter)) |
-| `lb_tb_add_inc_limit` | float, `>= 1`, finite | `2` | TokenRate `add_inc_limit`: an answer faster than `lb_tb_slo_ms / add_inc_limit` raises `r` ([design.md#tokenbucketfilter](design.md#tokenbucketfilter)) |
-| `lb_tb_add_inc_frac` | float, `>= 0`, finite | `0.1` | TokenRate `add_inc_const = lb_tb_add_inc_frac × init_r`, added per fast answer ([design.md#tokenbucketfilter](design.md#tokenbucketfilter)) |
+| `lb_tb_mult_dec` | float, `> 1`, finite | `2` | TokenRate `mult_dec_const`: a slow answer, or an attempt still pending after `lb_tb_slo_ms` (StuckAttempt), sets `r = r / mult_dec`, at most once per `lb_tb_slo_ms` ([design.md#tokenbucketfilter](design.md#tokenbucketfilter)) |
+| `lb_tb_add_inc_limit` | float, `>= 1`, finite | `2` | TokenRate `add_inc_limit`: an answer faster than `lb_tb_slo_ms / add_inc_limit` raises `r`, at most once per `lb_tb_slo_ms` ([design.md#tokenbucketfilter](design.md#tokenbucketfilter)) |
+| `lb_tb_add_inc_frac` | float, `>= 0`, finite | `0.1` | TokenRate `add_inc_const = lb_tb_add_inc_frac × init_r`, added per fast answer, at most once per `lb_tb_slo_ms` ([design.md#tokenbucketfilter](design.md#tokenbucketfilter)) |
 | `lb_tb_min_rate_frac` | float, `0 < x <= 1`, finite | `0.1` | TokenRate floor `r_min = lb_tb_min_rate_frac × init_r` ([design.md#tokenbucketfilter](design.md#tokenbucketfilter)) |
 | `ewma_beta` | float, `0 <= ewma_beta <= 1` | `0.7` | Weight of the old value in each EwmaLatency update ([design.md#ewmalatency](design.md#ewmalatency)) |
 

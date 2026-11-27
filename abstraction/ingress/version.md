@@ -62,3 +62,4 @@
 | 0.18.1 | 2026-11-27T00:00:00Z | `lb_probe_tau_ms` row: nothing-pending condition. Child bump: load_balancer 0.21.0 |
 | 0.18.2 | 2026-11-27T00:00:00Z | Child bump: load_balancer 0.22.0 (ProbeSample) |
 | 0.19.0 | 2026-11-27T00:00:00Z | `lb_filter = token_bucket` and the `lb_tb_*` parameters with their validation. Child bump: load_balancer 0.23.0 |
+| 0.19.1 | 2026-11-27T00:00:00Z | `lb_tb_mult_dec` / `lb_tb_add_inc_limit` / `lb_tb_add_inc_frac` rows: StuckAttempt and once-per-SLO increase. Child bump: load_balancer 0.24.0 |

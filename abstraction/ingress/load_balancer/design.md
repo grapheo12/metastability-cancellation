@@ -850,6 +850,7 @@ TokenBucket = { tokens: binary64 = 0,               # starts empty
                 rate: binary64 = init_r,            # TokenRate, tokens/s
                 last_refill_ns: u64 = Ingress start (monotonic ns),
                 last_decrease_ns: u64 or none = none,
+                last_increase_ns: u64 or none = none,
                 lock: mutex }                       # every function below holds bucket[s].lock throughout
 
 procedure refill(b, now_ns):                        # monotonic now_ns >= b.last_refill_ns
@@ -864,18 +865,27 @@ function take_token(lb, s, now_ns):                 # -> boolean
     if lb.bucket[s].tokens < 1: return false
     lb.bucket[s].tokens = lb.bucket[s].tokens - 1; return true
 
+procedure rate_decrease(b, now):                    # a slow signal: at most one halving per SLO window
+    if b.last_decrease_ns is none or now - b.last_decrease_ns >= slo_ns:
+        b.rate = max(r_min, b.rate / lb_tb_mult_dec); b.last_decrease_ns = now
+
 procedure token_rate_sample(lb, s, latency_ns):     # TokenRate: an attempt at s answered (response headers)
     b = lb.bucket[s]; now = monotonic_now_ns()
     refill(b, now)                                  # the old rate holds up to now
     if latency_ns > slo_ns:                                                       # slow
-        if b.last_decrease_ns is none or now - b.last_decrease_ns >= slo_ns:
-            b.rate = max(r_min, b.rate / lb_tb_mult_dec); b.last_decrease_ns = now
+        rate_decrease(b, now)
     else if float(latency_ns) < float(slo_ns) / lb_tb_add_inc_limit:              # fast
-        b.rate = b.rate + add_inc                    # no upper bound: max_tokens bounds a burst
+        if b.last_increase_ns is none or now - b.last_increase_ns >= slo_ns:      # at most once per SLO window
+            b.rate = b.rate + add_inc; b.last_increase_ns = now
     # otherwise (slo / add_inc_limit <= latency <= slo): no change
+
+procedure stuck_attempt(lb, s, now):                # StuckAttempt: at every token_bucket_choose, for each s in L
+    if pending[s] is not empty and now - min(pending[s]) > slo_ns:   # the oldest PendingStart at s is past the SLO
+        refill(lb.bucket[s], now); rate_decrease(lb.bucket[s], now)
 
 function token_bucket_choose(lb, L, remaining_ns):  # L after LiveSet, exclude and avoid; -> s | Dropped
     now = monotonic_now_ns()
+    for s in L: stuck_attempt(lb, s, now)                                        # before any token test
     if remaining_ns is not none and remaining_ns <= 0: return Dropped            # already late: no backend
     if remaining_ns is none: K = L                                               # no RequestDeadline: never filtered
     else: K = [ s for s in L if has_token(lb, s, now) ]
@@ -893,6 +903,12 @@ function token_bucket_choose(lb, L, remaining_ns):  # L after LiveSet, exclude a
   whatever the status. `latency_ns` runs from the attempt's request being sent to its response headers (monotonic
   ns). An attempt that ends without response headers (cancelled because another attempt answered first, reset, a
   connection error) gives no sample.
+- **StuckAttempt.** A backend that stops answering gives no answers and so no slow samples. An attempt still pending
+  at `s` longer than `slo` therefore counts as a slow signal, read from the [PendingStarts](#provisionalcurrentrtt) at
+  each decision. The once-per-window rule applies, so a stalled backend's rate halves every `slo` down to `r_min`.
+- **Increase at most once per SLO.** At about 100 answers/s, adding `add_inc` per fast answer raised the rate by
+  hundreds of tokens/s every second, far past what a backend serves, and a once-per-window halving could not bring it
+  back. Fast answers therefore add at most once per `slo` (their own window, kept apart from the decrease's).
 - **Decrease at most once per SLO.** One stall makes every pending attempt at `s` slow at once. Halving on each of them
   would drive `r` to the floor within milliseconds, so a slow answer halves `r` only if `slo` has passed since the last
   halving. Others in that window change nothing.
@@ -920,6 +936,9 @@ Worked example, refill (`max_tokens = 10`):
 | 0.5 | 50 | 10 ms | 1.0 | 0.5 + 0.5 = 1.0 >= 1: a token |
 | 0 | 50 | 300 ms | 10 | min(10, 15) = 10: the cap |
 
+In the TokenRate example, "Last halving" is the time before the row's update. Increases have their own window (the
+fast rows at 13 s and 17 s).
+
 Worked example, TokenRate (`init_r = 50`, `slo = 4000 ms`, `mult_dec = 2`, `add_inc_limit = 2`, so fast is
 `< 2000 ms`; `add_inc = 0.1 × 50 = 5`, `r_min = 0.1 × 50 = 5`):
 
@@ -930,9 +949,13 @@ Worked example, TokenRate (`init_r = 50`, `slo = 4000 ms`, `mult_dec = 2`, `add_
 | 4 s | 4500 ms | 0 s | 25 → 12.5 | slow, 4 s >= 4 s |
 | 8 s | 4500 ms | 4 s | 12.5 → 6.25 | 12.5 / 2 |
 | 12 s | 4500 ms | 8 s | 6.25 → 5 | max(5, 3.125) = 5: the floor |
-| 13 s | 1500 ms | 12 s | 5 → 10 | fast: 1500 < 2000 |
-| 14 s | 2000 ms | 12 s | 10 → 10 | not < 2000: no change |
-| 15 s | 4000 ms | 12 s | 10 → 10 | not > 4000: no change |
+| 13 s | 1500 ms | 12 s | 5 → 10 | fast: 1500 < 2000, no earlier increase |
+| 14 s | 1500 ms | 12 s | 10 → 10 | fast, 1 s < 4 s since the last increase |
+| 15 s | 2000 ms | 12 s | 10 → 10 | not < 2000: no change |
+| 16 s | 4000 ms | 12 s | 10 → 10 | not > 4000: no change |
+| 17 s | 1500 ms | 12 s | 10 → 15 | fast, 17 − 13 = 4 s >= 4 s |
+| 18 s | StuckAttempt: oldest pending sent at 13.5 s | 12 s | 15 → 7.5 | 18 − 13.5 = 4.5 s > 4 s; 18 − 12 = 6 s >= 4 s |
+| 19 s | StuckAttempt, same attempt | 18 s | 7.5 → 7.5 | 1 s < 4 s since the last halving |
 
 ## PickLog
 
