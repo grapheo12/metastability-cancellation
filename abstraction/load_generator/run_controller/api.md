@@ -17,5 +17,6 @@ See [design.md#configuration-validation](design.md#configuration-validation).
 
 - [../client/api.md](../client/api.md): `run_client`
 - [../metrics/api.md](../metrics/api.md): `aggregate`, `write_requests_csv`, `write_summary_json`
-- [../../sampling/api.md](../../sampling/api.md): `derive_seed`, `rng_new`
+- [../../sampling/api.md](../../sampling/api.md): `derive_seed`, `rng_new` (with `arrival_rng = sampling`; with `native` the
+  implementation's own generator, [../client/design.md#arrivalrng](../client/design.md#arrivalrng))
 - [../../protocol/api.md](../../protocol/api.md): `validate_request_body_size`
