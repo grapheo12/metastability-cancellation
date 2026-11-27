@@ -226,3 +226,4 @@
 | 0.53.0 | 2026-11-27T00:00:00Z | Glossary Heartbeat: paused by a StalledState. Child bump: server 0.18.0 (heartbeat 0.2.0) |
 | 0.54.0 | 2026-11-27T00:00:00Z | Glossary ScenarioAssignment. Child bump: benchmark_runner 0.16.0 (config 0.27.0) |
 | 0.55.0 | 2026-11-27T00:00:00Z | Child bump: benchmark_runner 0.17.0 (experiment_executor 0.14.0) |
+| 0.56.0 | 2026-11-27T00:00:00Z | Glossary RequestDeadlineHeader. Child bump: protocol 0.8.0 (RequestDeadlineHeader) |

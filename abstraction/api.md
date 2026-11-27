@@ -96,6 +96,8 @@ details are in [protocol/api.md](protocol/api.md).
 - **Request:** `POST /ping`, `content-type: application/json`, body is a PingRequestBody of exactly
   `request_bytes` bytes carrying the RequestId and the RequestDeadline
   ([protocol/design.md](protocol/design.md#pingrequestbody)). A body without a valid deadline is still accepted.
+  A load-generator client also sends the deadline as the header `x-request-deadline`
+  ([protocol/design.md](protocol/design.md#requestdeadlineheader)); an Ingress relays it and a server ignores it.
 - **Response:** status `202` (completed) or `503` (cancelled by `/cancel`), `content-type:
   application/json`, body is a PaddedJsonBody of exactly `response_bytes` bytes echoing the same
   RequestId and carrying the server's ExecReport: the ExecutionTime `exec_ns` and the StartSlack `start_slack_ns`

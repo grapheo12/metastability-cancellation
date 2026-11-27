@@ -127,6 +127,36 @@ function parse_worker_count(value):                  # header value or none -> u
 | `4294967296` | none (above 2^32 - 1) |
 | absent, empty, `ten`, `-3` | none |
 
+## RequestDeadlineHeader
+
+Every `/ping` request a load-generator client sends also carries its RequestDeadline as the request header
+`x-request-deadline: <DL>`, the same decimal `deadline_unix_ns` as the body's `"deadline"` ([PingRequestBody](#pingrequestbody)).
+This **RequestDeadlineHeader** lets a component that reads headers but not bodies (an Ingress whose load balancer
+sees only headers) learn the deadline. The body stays the source of truth: a server ignores the header, and an
+Ingress that reads the body does not need it.
+
+- Every RequestCopy of a request carries the same value, as its body does.
+- An Ingress relays it unchanged with the request.
+- A reader parses it leniently; a missing or malformed header means "no RequestDeadline", never an error:
+
+```
+function parse_deadline_header(value):               # header value or none -> i64 | none; never an error
+    if value is none: return none
+    v = value with leading and trailing ASCII whitespace removed
+    if v is not an optional "+" or "-" followed by 1 or more decimal digits: return none
+    n = the signed decimal value of v
+    if n < -2^63 or n > 2^63 - 1: return none
+    return n                                         # Unix ns; 0 or less is a deadline long past
+```
+
+| Header value | `parse_deadline_header` |
+|---|---|
+| `1794533190000000000` | 1794533190000000000 |
+| ` 17 ` | 17 (whitespace trimmed) |
+| `+5` | 5 |
+| `9223372036854775808` | none (above 2^63 - 1) |
+| absent, empty, `soon`, `1.5e18` | none |
+
 ## PingRequestBody
 
 A `/ping` request body carries the request's **RequestDeadline**, `deadline_unix_ns`: Unix wall-clock nanoseconds
