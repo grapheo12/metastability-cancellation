@@ -237,3 +237,4 @@
 | 0.61.1 | 2026-11-27T00:00:00Z | Wording: any parameter value or configuration an implementation does not realize is rejected as not supported (not only OptionalValues); an OptionalValue is one some implementation does not realize |
 | 0.61.2 | 2026-11-27T00:00:00Z | Child bump: ingress 0.16.1 (load_balancer 0.18.2) |
 | 0.61.3 | 2026-11-27T00:00:00Z | Child bump: load_generator 0.9.2 (metrics 0.6.1) |
+| 0.62.0 | 2026-11-27T00:00:00Z | Ingress parameter `lb_filter_margin`; glossary FilterMargin. Child bump: ingress 0.17.0 (load_balancer 0.19.0) |

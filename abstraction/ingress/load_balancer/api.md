@@ -8,6 +8,7 @@ From the Ingress parameters ([../api.md#program-parameters](../api.md#program-pa
 |---|---|---|---|
 | `lb_policy` | `round_robin` \| `least_outstanding` \| `power_of_two` \| `ewma` \| `peak_ewma` (OptionalValue) | `least_outstanding` | The LbPolicy; `peak_ewma` uses PeakEwmaRtt and PeakEwmaCost ([design.md#peakewmartt](design.md#peakewmartt)) |
 | `lb_filter` | `none` \| `deadline_mean` \| `deadline_mean_per_worker` \| `deadline_mean_queue_plus_share` \| `deadline_mmk` \| `deadline_provisional_rtt` (OptionalValue) | `none` | The DeadlineFilter's DeadlineStrategy, or off ([design.md#deadlinefilter](design.md#deadlinefilter)); `deadline_provisional_rtt` needs `lb_policy = peak_ewma` and is the PeakEwmaDeadline ([design.md#peakewmadeadline](design.md#peakewmadeadline)) |
+| `lb_filter_margin` | float, `>= 1`, finite | `1` | FilterMargin `γ` of the PeakEwmaDeadline: a backend is refused when `γ ×` its ProvisionalCurrentRtt exceeds the request's time left; `1` is the plain test. Used only by `lb_filter = deadline_provisional_rtt`, validated always ([design.md#peakewmadeadline](design.md#peakewmadeadline)) |
 | `ewma_beta` | float, `0 <= ewma_beta <= 1` | `0.7` | Weight of the old value in each EwmaLatency update ([design.md#ewmalatency](design.md#ewmalatency)) |
 
 ## Constants

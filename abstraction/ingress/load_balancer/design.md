@@ -9,7 +9,7 @@ are final. `monotonic_now_ns()` is the Ingress's monotonic clock ([../design.md#
 ## LoadBalancer
 
 ```
-lb = { policy, filter: lb_filter, beta: ewma_beta, monitor: HeartbeatMonitor or none,   # BackendLiveness
+lb = { policy, filter: lb_filter, beta: ewma_beta, filter_margin: lb_filter_margin, monitor: HeartbeatMonitor or none,   # BackendLiveness
        filter_dropped: atomic u64 = 0,                                     # DeadlineFilter drops
        stats: array[B] of BackendStats (counters 0, ewma_latency_ns = EWMA_INITIAL_LATENCY_NS,
                                         ewma_exec_ns = bits of EXEC_NO_SAMPLE,
@@ -411,7 +411,7 @@ it would among `L`. Everything but the per-backend test is shared by the strateg
 | `deadline_mean_per_worker` | `(n + 1) × e / k <= T` | mean wait with `k` workers draining the queue |
 | `deadline_mean_queue_plus_share` | `(n + 1/k) × e <= T` | each request ahead at a full service time, the request's own at `1/k` of one |
 | `deadline_mmk` | `Pr(t > T \| N = n) <= DEADLINE_FILTER_MISS` | M/M/k on-time probability `>= 0.99` (see [Model](#model)) |
-| `deadline_provisional_rtt` (OptionalValue; needs `lb_policy = peak_ewma`) | ProvisionalCurrentRtt `<= T` | the backend's RTT average, as if its oldest pending forward answered now; its own choice and wait queues ([PeakEwmaDeadline](#peakewmadeadline)) |
+| `deadline_provisional_rtt` (OptionalValue; needs `lb_policy = peak_ewma`) | `γ ×` ProvisionalCurrentRtt `<= T` (`γ = lb_filter_margin`) | the backend's RTT average, as if its oldest pending forward answered now; its own choice and wait queues ([PeakEwmaDeadline](#peakewmadeadline)) |
 
 `n`, `k`, `e` and `T` are as defined in the [Model](#model): `outstanding`, `max(WorkerCount, 1)`, EwmaExecTime and
 `remaining_ns`.
@@ -678,6 +678,11 @@ Worked example, `tau = 10 s`, PeakEwmaRtt 400 ms whose last sample was at 50 s, 
 | 80 s | 20100 | 30 | 0.950212931632136 | 19119.194753153082 | 0.95021… × 20100 + 0.04978… × 400 |
 | any, nothing pending | — | — | — | 400 | the average itself |
 
+**FilterMargin.** `lb_filter_margin = γ >= 1` makes the test stricter: a backend is kept only if `γ ×` its
+ProvisionalCurrentRtt fits in the time left, leaving `1 − 1/γ` of it as a margin for the queue the RTT average has not
+seen yet. With `γ = 2` the backend above is already refused at 70 s (`2 × 8787 = 17574 > 17000`); with `γ = 1` it is
+kept (`8787 <= 17000`).
+
 With 17 s left, the backend is kept at 70 s (8787 <= 17000) and refused at 80 s (19119 > 17000).
 
 ## PeakEwmaDeadline
@@ -696,7 +701,7 @@ function peak_ewma_deadline_choose(lb, L, remaining_ns):   # L after LiveSet, ex
         if remaining_ns is none:            ok = true                       # no RequestDeadline: never filtered
         else if remaining_ns <= 0:          ok = false                      # already late: no backend
         else if peak[s].rtt_ms <= 0 and not has_pending: ok = true          # unmeasured and idle: eligible
-        else:                               ok = not (p * 1e6 > float(remaining_ns))
+        else:                               ok = not (lb.filter_margin * p * 1e6 > float(remaining_ns))   # FilterMargin γ; products rounded left to right
         if ok: keep[s] = peak_ewma_cost(lb, s); best = min(best, keep[s])
     T = [ s for s in L if s in keep and keep[s] == best ]
     if T is empty: return Dropped

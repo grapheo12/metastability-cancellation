@@ -74,6 +74,7 @@ function validate(params):
     lb_max_retries is an integer in 0 ..= 2^32-1             else error             # default 0
     lb_retry_timeout_ms > 0 and finite                       else error             # default 150; lb_retry_timeout_ns = round(ms * 1e6)
     lb_retry_anxiety_ratio >= 0 and finite                   else error             # default 0.3
+    lb_filter_margin >= 1 and finite                         else error "lb_filter_margin must be a finite number >= 1"   # default 1
     lb_retry_late_factor >= 0 and finite                     else error             # default 10
     return IngressConfig(..., duration_ns = round(duration_s * 1e9) if cancel_rate > 0,
                          initial_stall_ns = initial_stall_ms * 1_000_000)
