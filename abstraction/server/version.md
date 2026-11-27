@@ -39,3 +39,4 @@
 | 0.14.1 | 2026-11-25T00:00:00Z | Child bump: sleeper 0.1.1 (wording) |
 | 0.15.0 | 2026-11-27T00:00:00Z | ServiceScenario: parameters `service_scenario` (JSON, only with `sleep_constant`, replaces `response_rate`) and `scenario_log_path`; validation; the scenario is passed to the WorkQueue and its ScenarioLog writer started; ScenarioLog output; wall-clock arm read. Child: service_scenario 0.1.0 (new) |
 | 0.15.1 | 2026-11-27T00:00:00Z | Child bump: service_scenario 0.1.1 (wording) |
+| 0.16.0 | 2026-11-27T00:00:00Z | Child bump: worker_pool 0.7.0 (ScenarioStall) |
