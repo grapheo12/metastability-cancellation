@@ -8,7 +8,7 @@ procedure serve_heartbeat(task, config, queue):
     send HEADERS(:status 200, content-type text/plain)          # no content-length, no END_STREAM
     seq = 0                                                     # u64
     loop:
-        worker_pool.freeze_wait(queue)                          # WorkerFreeze: blocks for good once frozen
+        worker_pool.freeze_wait(queue)                          # WorkerFreeze: for good; StalledState: until it ends
         if task.cancelled.load() or the server is shutting down: return
         send DATA(protocol.build_heartbeat_line(seq)) and flush # one line, written now
         if that write failed: return                           # stream reset or connection gone
@@ -23,6 +23,10 @@ procedure serve_heartbeat(task, config, queue):
 - **WorkerFreeze.** `freeze_wait` returns at once unless the queue is frozen
   ([../worker_pool/design.md#workerfreeze](../worker_pool/design.md#workerfreeze)). Once it is, the sender blocks
   before its next line and writes no more: the stream stays open but silent, as a wedged server's would.
+- **StalledState.** With a ServiceScenario, `freeze_wait` also blocks while the server is in a StalledState, but only
+  until the state is left ([../worker_pool/design.md#scenariostall](../worker_pool/design.md#scenariostall)). The
+  sender then writes its next line at once, with `seq` continuing from where it stopped: the stream is silent for
+  the stall, as a server that stops and recovers would be, and no line is written for the time missed.
 - **Never queued.** The sender does not push onto the WorkQueue, take a worker, touch the CancelRegistry or count
   anything. A long queue does not delay it.
 - **Shutdown.** `queue_close` releases a frozen sender, and the shutdown check then ends it. A sender waiting
@@ -41,6 +45,18 @@ since the stream opened, writes taking no time:
 | any later | still blocked | none | only `queue_close` releases it |
 | no `freeze_after_ms` | — | a line every 500 ms | `freeze_wait` never blocks |
 
+Worked example, `heartbeat_interval_ms = 500`, a ServiceScenario in a StalledState from 1200 ms to 2700 ms of the
+same time base, writes taking no time:
+
+| Time | Event | Line written | Check |
+|---|---|---|---|
+| 0, 500, 1000 | as above | `hb 0`, `hb 1`, `hb 2` | |
+| 1200 | the stall starts | none | not a line time |
+| 1500 | wait ends; `freeze_wait` blocks until `next_change_at` = 2700 | none | stalled |
+| 2700 | the stall ends; `freeze_wait` returns | `hb 3` | at once, `seq` continues |
+| 3200 | wait ends | `hb 4` | 2700 + 500 |
+| a stall from 1200 to 1400 | the sender is waiting between lines | `hb 3` at 1500 | a stall between two line times is not seen |
+
 ## Failure and edge cases
 
 | Situation | Behavior |
@@ -49,6 +65,8 @@ since the stream opened, writes taking no time:
 | Connection closes | Same as a reset |
 | Server shuts down while frozen | `queue_close` releases `freeze_wait`; the sender sees shutdown and returns without writing |
 | Many readers | One sender per stream; they share nothing but the queue's freeze state |
+| A StalledState that never ends (the last schedule entry) | Same as a WorkerFreeze: silent until `queue_close` |
+| Server shuts down during a StalledState | `queue_close` releases `freeze_wait`; the sender sees shutdown and returns without writing |
 | `GET /heartbeat` with a body | The body is ignored |
 
 ## Design specific to Go
