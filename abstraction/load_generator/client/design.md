@@ -57,8 +57,8 @@ procedure receiver(C, client_id):
 ```
 
 - **Schedule.** Arrivals are at the running sums of Exp(λ) gaps. The `j`-th gap is always the `j`-th sample of
-  this client's `Rng`, so the arrival schedule depends only on `seed`, `client_id` and λ, not on how the server
-  behaves or on `W`.
+  this client's ArrivalRng ([ArrivalRng](#arrivalrng)), so the arrival schedule depends only on `seed`, `client_id`,
+  λ and `arrival_rng`, not on how the server behaves or on `W`.
 - **seq** is the index of the scheduled arrival (starting at 0), and every scheduled arrival uses one. After
   `seq = 2^32 - 1` the client stops scheduling.
 - **No arrival at or after `D`.** An arrival at `t_sched < D` that becomes sendable only at `now() >= D` is
@@ -95,6 +95,21 @@ Worked example, `W = 2`, arrivals at 0, 1, 2 and 3 ms, time at the server 5, 1.5
 
 With `W = 1` the same arrivals give sends at 0, 5, 6.5 and 7.5 ms.
 
+## ArrivalRng
+
+The **ArrivalRng** of a client is the generator its Exp(λ) gaps come from. The load-generator parameter
+`arrival_rng` chooses it; `native` is an OptionalValue ([../../api.md#load-generator-parameters](../../api.md#load-generator-parameters)).
+
+| `arrival_rng` | Generator of client `client_id` | Gap | Reproducible |
+|---|---|---|---|
+| `sampling` (default) | `sampling.rng_new(sampling.derive_seed(seed, STREAM_CLIENT_ARRIVALS, client_id))` | `sampling.exponential_ns(rng, λ)` | across implementations: the same `seed` gives the same schedule everywhere |
+| `native` | the implementation's own 64-bit generator, seeded with `seed + i`, where `i` in `0 ..= N - 1` is a per-client index the implementation assigns (unsigned 64-bit, wrapping) | an Exp(λ) draw in seconds by the implementation's own algorithm, converted to ns and truncated | only within one implementation and build; the gaps are Exp(λ) everywhere |
+
+- Either way one gap is drawn per scheduled arrival, in arrival order, from the client's own generator, so the
+  schedule never depends on the server, on `W` or on the other clients.
+- `native` exists for an implementation that reuses a load generator with its own random generator. Results of two
+  implementations under `native` agree in distribution, not sample by sample.
+
 ## start_request
 
 `start_request` sends copy 0 of a request and returns; the request's first deciding event becomes one `Resolved`
@@ -106,7 +121,7 @@ procedure start_request(C, client_id, seq, t_sched, conn, config, run_start_unix
     t_send = now()                                    # first send: SLO and record clocks start here
     deadline_unix_ns = run_start_unix_ns + t_send + SLO      # RequestDeadline, fixed for the request
     body = protocol.build_request_body(id, deadline_unix_ns, config.request_bytes)   # every copy reuses it
-    req = { id, seq, t_sched, t_send, client_id,
+    req = { id, seq, t_sched, t_send, client_id, deadline_unix_ns,
             in_stall_window: boolean = (t_send < STALL),   # StallWindowRequest: never retries
             lock,                                     # guards current, streams, reset_all
             current: integer = 0,                     # index of the newest RequestCopy
@@ -147,12 +162,17 @@ and one push. Opening and resetting streams happen outside `req.lock`.
 ## RequestDeadline
 
 Every request carries a **RequestDeadline** in its PingRequestBody
-([../../protocol/design.md#pingrequestbody](../../protocol/design.md#pingrequestbody)): the Unix wall-clock time by
-which its SLO ends,
+([../../protocol/design.md#pingrequestbody](../../protocol/design.md#pingrequestbody)), and again in the
+RequestDeadlineHeader of every copy ([../../protocol/design.md#requestdeadlineheader](../../protocol/design.md#requestdeadlineheader)):
+the Unix wall-clock time by which its SLO ends, that is the wall-clock time of the request's first send plus the SLO:
 
 ```
 deadline_unix_ns = run_start_unix_ns + t_send + SLO        # unsigned 64-bit integer ns
 ```
+
+An implementation may instead read the wall clock once at the first send and add the SLO. Both give the same instant;
+they differ only by how far the wall clock is stepped or slewed during the run, and the formula above is immune to
+that.
 
 - `run_start_unix_ns` is the Run Controller's wall-clock reading of `run_start`
   ([../design.md#time-base](../design.md#time-base)); `t_send` is the first copy's send on the monotonic time base.
@@ -180,7 +200,8 @@ streams are left open (no reset) until the server answers them or SLOCancellatio
 ```
 procedure send_copy(C, req, k, conn, config, body):   # req.current == k already; called without req.lock
     t_copy = now()
-    stream = conn.open_stream(headers = protocol request headers, body = body, end_stream = true)
+    headers = protocol request headers + [(REQUEST_DEADLINE_HEADER, decimal(req.deadline_unix_ns))]   # RequestDeadlineHeader
+    stream = conn.open_stream(headers = headers, body = body, end_stream = true)
     if open_stream failed: settle(C, req, ConnectionError); return
     with req.lock:
         req.streams.append(stream)
