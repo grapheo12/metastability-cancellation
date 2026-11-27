@@ -218,3 +218,4 @@
 | 0.48.1 | 2026-11-24T00:00:00Z | Child bump: ingress 0.13.3 (load_balancer 0.17.1) |
 | 0.49.0 | 2026-11-25T00:00:00Z | Workload `sleep_constant`; glossary ConstantServiceTime, ServerWorkload. Child bump: server 0.14.0 (ping_handler 0.13.0) |
 | 0.49.1 | 2026-11-25T00:00:00Z | Child bump: server 0.14.1 (sleeper 0.1.1) |
+| 0.50.0 | 2026-11-27T00:00:00Z | Server parameters `service_scenario` and `scenario_log_path`; glossary ServiceScenario, ScenarioState, ScenarioSchedule, MarkovSchedule, ScenarioClock, StalledState, ScenarioLog. Child bump: server 0.15.0 (service_scenario 0.1.0, new) |
