@@ -37,7 +37,9 @@ TEST_F(RateLimiterTest, LinearRateLimiterTest) {
   EXPECT_FALSE(rate_limiter.tryAcquireOne());
 }
 
+// Source: abstraction/load_generator/client/design.md (client v0.10.0)
 // impl/envoy: Poisson arrivals average the configured rate and are reproducible for a seed.
+// Design: abstraction/load_generator/client/design.md#arrivalrng
 TEST_F(RateLimiterTest, PoissonRateLimiterTest) {
   Envoy::Event::SimulatedTimeSystem time_system;
   PoissonRateLimiter rate_limiter(time_system, 100.0, 7);

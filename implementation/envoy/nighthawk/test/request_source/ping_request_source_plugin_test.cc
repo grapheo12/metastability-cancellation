@@ -1,3 +1,4 @@
+// Source: abstraction/load_generator/client/design.md (client v0.10.0)
 // Source: abstraction/protocol/design.md (protocol v0.8.0)
 // impl/envoy: tests for the ping RequestSource's body format (abstraction/protocol/design.md#pingrequestbody)
 // and the per-request log's field parsing (source/client/request_log.h).
@@ -29,6 +30,7 @@ TEST(PingRequestBody, LongestIdAndDeadlineNeed76Bytes) {
 }
 
 // Design: abstraction/protocol/design.md#requestdeadlineheader
+// Design: abstraction/load_generator/client/design.md#requestdeadline
 TEST(PingRequestSource, DeadlineHeaderMatchesBody) {
   PingRequestSourcePlugin source(3, 128, 17000, "/ping", Envoy::Http::RequestHeaderMapImpl::create());
   const auto generate = source.get();

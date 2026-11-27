@@ -366,3 +366,59 @@ stateDiagram-v2
 
 Events of copies older than the newest one never change the state. A StallWindowRequest never takes the RetryTimer
 transition, and copy `R` has no RetryTimer, so nothing resolves a request as `dropped`.
+
+## Design specific to Envoy
+
+Implementation: `implementation/envoy`: vendored Envoy (`envoy/`) and Nighthawk (`nighthawk/`) with the testbed's
+changes, recorded in [VENDORED.md](../../../implementation/envoy/VENDORED.md) ([AGENTS.md](../../../AGENTS.md#vendored-code)),
+built in Docker with Bazel by `implementation/envoy/build.sh` (C++ tests: `bazel test` on the targets VENDORED.md
+names); Python 3 wrappers `bin/ingress.py`, `bin/loadgen.py` and `wrappers/convert.py` (tests: `cd
+implementation/envoy/wrappers && python3 -B -m unittest test_convert`). Only code written or changed for the testbed
+carries `Design:` tags; unchanged upstream code does not.
+
+### Envoy choices
+
+- SemiOpenLoopClient and ArrivalRng: each Nighthawk worker is one client; our `PoissonRateLimiter`
+  (`rate_limiter_impl.cc`) releases at Exp(λ) gaps, `λ = global_rate / num_clients`, from a `std::mt19937_64` seeded
+  `seed + k` (`k` the worker's creation index) and `std::exponential_distribution` (`arrival_rng = native`; `sampling`
+  is rejected).
+- GatedArrival: Nighthawk's `--max-active-requests` and `--max-pending-requests` are both `n_waiting_requests`: at
+  most `n_waiting_requests` requests are on the wire per client; further arrivals wait, first in the connection
+  pool's pending queue (up to `n_waiting_requests` more), then at the rate limiter, which keeps their releases
+  (`tryAcquireOne` catches up).
+- start_request and RequestDeadline: the `ping` RequestSource builds each request when it starts, with the deadline
+  `wall clock + slo_ms` (the spec's equivalent reading of the wall clock at the first send).
+- StallWindow: Nighthawk sends no copies, so a StallWindowRequest needs no special case; `convert.requests_records`
+  flags `in_stall_window` from the send time.
+- DrainDeadline: `slo_cancel = false` only; Nighthawk's `--timeout` (whole seconds, rounded up from
+  `drain_timeout_ms`) resets what is still outstanding, which the per-request log records as `reset` and
+  `convert.request_outcome` classifies `cancelled`.
+
+### Not traced
+
+| Design subsection | Reason |
+|---|---|
+| [RetryTimer](#retrytimer) | not realized on Envoy: `max_retries <value> is not supported by this implementation` for any value but 0 |
+| [SLOCancellation](#slocancellation) | not realized on Envoy: `slo_cancel true is not supported by this implementation` |
+| [State machine](#state-machine) | unchanged upstream code: Nighthawk's StreamDecoder and BenchmarkClient (`nighthawk/source/client/`) |
+
+### Traceability
+
+Generated from the `Design:` tags in the testbed's code under `implementation/envoy` by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Envoy --impl implementation/envoy --ext .cc --ext .h --comment // --ext .py:# --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [SemiOpenLoopClient](#semiopenloopclient) | [loadgen.py:100](../../../implementation/envoy/bin/loadgen.py#L100), [rate_limiter_impl.cc:125](../../../implementation/envoy/nighthawk/source/common/rate_limiter_impl.cc#L125) |
+| [GatedArrival](#gatedarrival) | [loadgen.py:105](../../../implementation/envoy/bin/loadgen.py#L105), [rate_limiter_impl.cc:138](../../../implementation/envoy/nighthawk/source/common/rate_limiter_impl.cc#L138) |
+| [ArrivalRng](#arrivalrng) | [loadgen.py:116](../../../implementation/envoy/bin/loadgen.py#L116), [factories_impl.cc:111](../../../implementation/envoy/nighthawk/source/client/factories_impl.cc#L111), [rate_limiter_impl.cc:125](../../../implementation/envoy/nighthawk/source/common/rate_limiter_impl.cc#L125), [rate_limiter_impl.h:77](../../../implementation/envoy/nighthawk/source/common/rate_limiter_impl.h#L77), [rate_limiter_test.cc:43](../../../implementation/envoy/nighthawk/test/rate_limiter_test.cc#L43) |
+| [start_request](#start_request) | [ping_request_source_plugin_impl.cc:43](../../../implementation/envoy/nighthawk/source/request_source/ping_request_source_plugin_impl.cc#L43) |
+| [RequestDeadline](#requestdeadline) | [ping_request_source_plugin_impl.cc:52](../../../implementation/envoy/nighthawk/source/request_source/ping_request_source_plugin_impl.cc#L52), [ping_request_source_plugin_test.cc:34](../../../implementation/envoy/nighthawk/test/request_source/ping_request_source_plugin_test.cc#L34) |
+| [RetryTimer](#retrytimer) | not traced |
+| [StallWindow](#stallwindow) | [convert.py:364](../../../implementation/envoy/wrappers/convert.py#L364), [test_convert.py:259](../../../implementation/envoy/wrappers/test_convert.py#L259) |
+| [SLOCancellation](#slocancellation) | not traced |
+| [DrainDeadline](#draindeadline) | [loadgen.py:109](../../../implementation/envoy/bin/loadgen.py#L109), [stream_decoder.cc:99](../../../implementation/envoy/nighthawk/source/client/stream_decoder.cc#L99) |
+| [Outcome classification](#outcome-classification) | [convert.py:340](../../../implementation/envoy/wrappers/convert.py#L340) |
+| [State machine](#state-machine) | not traced |
+<!-- trace:end -->

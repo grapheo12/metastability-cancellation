@@ -1,3 +1,5 @@
+# Source: abstraction/load_generator/client/design.md (client v0.10.0)
+# Source: abstraction/load_generator/metrics/design.md (metrics v0.6.1)
 # Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.18.2)
 # Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
 """Unit tests for the impl/envoy wrappers' conversions (python3 -m unittest discover -s implementation/envoy/wrappers)."""
@@ -223,6 +225,8 @@ class LoadgenConversion(unittest.TestCase):
         ]) + "\n")
         return os.path.join(d, "lg.nh")
 
+    # Design: abstraction/load_generator/metrics/design.md#requestrecord
+    # Design: abstraction/load_generator/metrics/design.md#summary
     def test_records_and_summary(self):
         with tempfile.TemporaryDirectory() as d:
             rows = convert.read_request_logs(self.write_logs(d))
@@ -250,6 +254,8 @@ class LoadgenConversion(unittest.TestCase):
             self.assertEqual(s["e2e_latency_us"]["count"], 2)
             json.dumps(s)
 
+    # Design: abstraction/load_generator/client/design.md#stallwindow
+    # Design: abstraction/load_generator/metrics/design.md#percentiles
     def test_stall_window_and_percentiles(self):
         recs = [{"in_stall_window": 1, "send_ns": 5, "outcome": "ok"}]
         s = convert.loadgen_summary(recs, {"duration_s": 2, "slo_ms": 1, "initial_stall_ms": 1000}, 0, 1.0)

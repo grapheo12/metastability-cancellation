@@ -56,6 +56,9 @@ void StreamDecoder::decodeData(Envoy::Buffer::Instance& data, bool end_stream) {
   // This will show up in the zipkin UI as 'response_size'. In Envoy this tracks bytes send by Envoy
   // to the downstream.
   stream_info_.addBytesSent(data.length());
+  // Design: abstraction/load_generator/metrics/design.md#collection
+  // Source: abstraction/load_generator/metrics/design.md (metrics v0.6.1)
+  // Source: abstraction/load_generator/client/design.md (client v0.10.0)
   if (RequestLog::enabled() && log_response_prefix_.size() < 512) {
     const uint64_t n = std::min<uint64_t>(data.length(), 512 - log_response_prefix_.size());
     log_response_prefix_.append(static_cast<const char*>(data.linearize(n)), n);
@@ -91,6 +94,8 @@ void StreamDecoder::onComplete(bool success) {
   }
   stream_info_.upstreamInfo()->upstreamTiming().onLastUpstreamRxByteReceived(time_source_);
   if (RequestLog::enabled()) {
+    // Design: abstraction/load_generator/metrics/design.md#collection
+    // Design: abstraction/load_generator/client/design.md#draindeadline
     RequestLog::record(request_body_, response_headers_ != nullptr ? "response" : "reset",
                        stream_info_.responseCode().value_or(0), log_scheduled_unix_ns_, log_send_unix_ns_,
                        RequestLog::wallNowNs(), log_response_prefix_);
@@ -121,6 +126,7 @@ void StreamDecoder::onPoolFailure(Envoy::Http::ConnectionPool::PoolFailureReason
                                   Envoy::Upstream::HostDescriptionConstSharedPtr) {
   decoder_completion_callback_.onPoolFailure(reason);
   if (RequestLog::enabled()) {
+    // Design: abstraction/load_generator/metrics/design.md#collection
     RequestLog::record(request_body_, "pool_failure", 0, log_scheduled_unix_ns_, 0, RequestLog::wallNowNs(),
                        "");
   }
@@ -136,6 +142,7 @@ void StreamDecoder::onPoolReady(Envoy::Http::RequestEncoder& encoder,
                                 std::optional<Envoy::Http::Protocol>) {
   encoder.getStream().addCallbacks(*this);
   if (RequestLog::enabled()) {
+    // Design: abstraction/load_generator/metrics/design.md#requestrecord
     log_send_unix_ns_ = RequestLog::wallNowNs();
   }
   stream_info_.upstreamInfo()->upstreamTiming().onFirstUpstreamTxByteSent(

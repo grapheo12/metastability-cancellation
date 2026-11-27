@@ -72,6 +72,8 @@ protected:
  * testbed's load generator (abstraction/load_generator/design.md). Like LinearRateLimiter, releases that fell
  * due while the caller was busy are made acquireable at once (no catch-up is skipped).
  */
+// Design: abstraction/load_generator/client/design.md#arrivalrng
+// Source: abstraction/load_generator/client/design.md (client v0.10.0)
 class PoissonRateLimiter : public RateLimiterBaseImpl,
                            public Envoy::Logger::Loggable<Envoy::Logger::Id::main> {
 public:

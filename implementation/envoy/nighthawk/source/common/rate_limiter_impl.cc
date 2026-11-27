@@ -119,6 +119,9 @@ bool LinearRateLimiter::tryAcquireOne() {
   return acquireable_count_ > 0 ? tryAcquireOne() : false;
 }
 
+// Design: abstraction/load_generator/client/design.md#arrivalrng
+// Design: abstraction/load_generator/client/design.md#semiopenloopclient
+// Source: abstraction/load_generator/client/design.md (client v0.10.0)
 PoissonRateLimiter::PoissonRateLimiter(Envoy::TimeSource& time_source, double rate_per_s, uint64_t seed)
     : RateLimiterBaseImpl(time_source), rng_(seed), gap_s_(rate_per_s) {
   if (!(rate_per_s > 0)) {
@@ -131,6 +134,7 @@ std::chrono::nanoseconds PoissonRateLimiter::nextGap() {
   return std::chrono::nanoseconds(static_cast<int64_t>(gap_s_(rng_) * 1e9));
 }
 
+// Design: abstraction/load_generator/client/design.md#gatedarrival
 bool PoissonRateLimiter::tryAcquireOne() {
   if (acquireable_count_ > 0) {
     acquireable_count_--;

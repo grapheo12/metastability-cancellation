@@ -104,8 +104,10 @@ SequencerPtr SequencerFactoryImpl::create(Envoy::TimeSource& time_source,
     // If no rate limiter plugin is set, use the default linear rate limiter.
   } else {
     Frequency frequency(options_.requestsPerSecond());
+    // Source: abstraction/load_generator/client/design.md (client v0.10.0)
     // impl/envoy: NH_POISSON_RATE (per-worker requests/s, a decimal) selects Poisson arrivals in place of the
     // linear pace; NH_POISSON_SEED (default 0) seeds worker k's stream with seed + k.
+    // Design: abstraction/load_generator/client/design.md#arrivalrng
     const char* poisson_rate = std::getenv("NH_POISSON_RATE");
     if (poisson_rate != nullptr && poisson_rate[0] != '\0') {
       static std::atomic<uint64_t> poisson_worker{0};

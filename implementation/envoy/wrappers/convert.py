@@ -1,3 +1,6 @@
+# Source: abstraction/load_generator/design.md (load_generator v0.9.2)
+# Source: abstraction/load_generator/client/design.md (client v0.10.0)
+# Source: abstraction/load_generator/metrics/design.md (metrics v0.6.1)
 # Source: abstraction/ingress/design.md (ingress v0.16.1)
 # Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.18.2)
 # Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
@@ -333,6 +336,7 @@ REQUESTS_HEADER = ("request_id,client_id,seq,outcome,http_status,scheduled_ns,se
 
 
 # Design: abstraction/protocol/design.md#status-classification-load-generator-client
+# Design: abstraction/load_generator/client/design.md#outcome-classification
 def request_outcome(result, status):
     """The client Outcome (abstraction/protocol/design.md#status-classification-load-generator-client) of one
     Nighthawk per-request log line. A stream reset only happens when Nighthawk stops at the end of the run with the
@@ -344,6 +348,7 @@ def request_outcome(result, status):
     return "error"  # pool_failure: no connection
 
 
+# Design: abstraction/load_generator/metrics/design.md#collection
 def read_request_logs(prefix):
     """All rows of <prefix>.<n>.csv as dicts."""
     rows = []
@@ -353,6 +358,9 @@ def read_request_logs(prefix):
     return rows
 
 
+# Design: abstraction/load_generator/metrics/design.md#requestrecord
+# Design: abstraction/load_generator/client/design.md#stallwindow
+# Design: abstraction/load_generator/design.md#time-base
 def requests_records(rows, initial_stall_ms=0):
     """Rows of the Requests CSV, sorted by (client_id, seq), and run_start_unix_ns (the first scheduled time)."""
     sched = [_int(r["scheduled_unix_ns"]) for r in rows if _int(r["scheduled_unix_ns"])]
@@ -379,6 +387,7 @@ def requests_records(rows, initial_stall_ms=0):
     return out, run_start
 
 
+# Design: abstraction/load_generator/metrics/design.md#requestrecord
 def write_requests(records, path):
     cols = REQUESTS_HEADER.split(",")
     with open(path, "w", newline="") as f:
@@ -387,6 +396,7 @@ def write_requests(records, path):
             f.write(",".join("" if rec[c] is None else str(rec[c]) for c in cols) + "\n")
 
 
+# Design: abstraction/load_generator/metrics/design.md#percentiles
 def latency_stats(values):
     """Nearest rank (abstraction/load_generator/metrics/design.md#percentiles), in µs."""
     n = len(values)
@@ -398,6 +408,7 @@ def latency_stats(values):
             "p999": pct(99900), "max": v[-1] / 1000}
 
 
+# Design: abstraction/load_generator/metrics/design.md#summary
 def loadgen_summary(records, config, run_start_unix_ns, run_end_s):
     """The LoadGen Summary JSON (abstraction/load_generator/metrics/api.md#summary-json)."""
     duration_s = float(config["duration_s"])

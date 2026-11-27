@@ -1,3 +1,4 @@
+// Source: abstraction/load_generator/metrics/design.md (metrics v0.6.1)
 // Source: abstraction/protocol/design.md (protocol v0.8.0)
 #include "source/client/request_log.h"
 
@@ -77,6 +78,7 @@ std::string stringField(absl::string_view json, absl::string_view key) {
 // Design: abstraction/protocol/design.md#parsing
 std::string requestId(absl::string_view request_body) { return stringField(request_body, "id"); }
 
+// Design: abstraction/load_generator/metrics/design.md#collection
 void record(absl::string_view request_body, absl::string_view result, uint64_t http_status,
             int64_t scheduled_unix_ns, int64_t send_unix_ns, int64_t end_unix_ns,
             absl::string_view response_prefix) {

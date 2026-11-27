@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Source: abstraction/load_generator/design.md (load_generator v0.9.2)
+# Source: abstraction/load_generator/client/design.md (client v0.10.0)
+# Source: abstraction/load_generator/run_controller/design.md (run_controller v0.8.0)
 """impl/envoy LoadGenerator: runs the vendored Nighthawk (build/nighthawk_client) with the Go load generator's
 command line (abstraction/load_generator/api.md#program-parameters) and writes its outputs (requests.csv,
 summary.json, abstraction/load_generator/metrics/api.md) from Nighthawk's per-request logs.
@@ -42,6 +45,7 @@ def fail(message):
     sys.exit(2)
 
 
+# Design: abstraction/load_generator/run_controller/design.md#configuration-validation
 def parse(argv):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     a = p.add_argument
@@ -76,6 +80,8 @@ def parse(argv):
     return args
 
 
+# Design: abstraction/load_generator/design.md#structure
+# Design: abstraction/load_generator/run_controller/design.md#startup
 def main():
     args = parse(sys.argv[1:])
     if not os.access(NIGHTHAWK, os.X_OK):
@@ -89,23 +95,31 @@ def main():
     source = {"name": "nighthawk.request_source.ping", "typed_config": {
         "@type": "type.googleapis.com/nighthawk.PingRequestSourcePluginConfig",
         "client_id_base": 0, "request_bytes": args.request_bytes, "slo_ms": int(round(args.slo_ms)), "path": "/ping"}}
+    # Design: abstraction/load_generator/design.md#concurrency
+    # Design: abstraction/load_generator/client/design.md#semiopenloopclient
     cmd = [NIGHTHAWK, f"http://{args.target}/ping", "--protocol", "http2", "--concurrency", str(n), "--connections", "1",
            "--rps", str(max(1, math.ceil(args.global_rate / n))),  # unused with NH_POISSON_RATE; must be valid
+           # Design: abstraction/load_generator/design.md#phases
            "--duration", str(int(args.duration_s)),
+           # Design: abstraction/load_generator/client/design.md#gatedarrival
            "--max-active-requests", str(args.n_waiting_requests),
            "--max-pending-requests", str(args.n_waiting_requests),
+           # Design: abstraction/load_generator/client/design.md#draindeadline
+           # Design: abstraction/load_generator/run_controller/design.md#drainphase
            "--timeout", str(max(1, math.ceil(args.drain_timeout_ms / 1000))),
            "--request-source-plugin-config", json.dumps(source),
            # The Go load generator never stops early: drop Nighthawk's default failure predicates (they end the run
            # at the first 4xx/5xx, e.g. a DeadlineFilter drop's 503, or at the first pool failure or overflow).
            "--no-default-failure-predicates",
            "--output-format", "json", "--verbosity", "warn"]
+    # Design: abstraction/load_generator/client/design.md#arrivalrng
     env = dict(os.environ, NH_REQUEST_LOG_PREFIX=prefix, NH_POISSON_RATE=repr(args.global_rate / n),
                NH_POISSON_SEED=str(args.seed))
     started = time.monotonic()
     with open(out + ".nighthawk.json", "w") as stdout, open(out + ".nighthawk.log", "w") as stderr:
         rc = subprocess.run(cmd, env=env, stdout=stdout, stderr=stderr).returncode
     run_end_s = time.monotonic() - started
+    # Design: abstraction/load_generator/run_controller/design.md#shutdown-ordering
     rows = convert.read_request_logs(prefix)
     records, run_start = convert.requests_records(rows, args.initial_stall_ms)
     convert.write_requests(records, out + ".requests.csv")

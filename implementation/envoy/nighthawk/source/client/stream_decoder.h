@@ -139,7 +139,9 @@ private:
   Envoy::Tracing::TracerSharedPtr& tracer_;
   Envoy::Tracing::SpanPtr active_span_;
   const std::string latency_response_header_name_;
+  // Source: abstraction/load_generator/metrics/design.md (metrics v0.6.1)
   // impl/envoy per-request log (request_log.h): wall-clock times and the response body's first bytes.
+  // Design: abstraction/load_generator/metrics/design.md#requestrecord
   const int64_t log_scheduled_unix_ns_{RequestLog::enabled() ? RequestLog::wallNowNs() : 0};
   int64_t log_send_unix_ns_{0};
   std::string log_response_prefix_;

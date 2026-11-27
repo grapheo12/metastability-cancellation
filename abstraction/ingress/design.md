@@ -189,7 +189,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [Shared state](#shared-state) | not traced |
 | [Configuration validation](#configuration-validation) | [ingress.py:53](../../implementation/envoy/bin/ingress.py#L53) |
 | [Concurrency model](#concurrency-model) | [ingress.py:250](../../implementation/envoy/bin/ingress.py#L250) |
-| [Time base](#time-base) | [convert.py:133](../../implementation/envoy/wrappers/convert.py#L133) |
-| [Shutdown](#shutdown) | [ingress.py:259](../../implementation/envoy/bin/ingress.py#L259), [convert.py:171](../../implementation/envoy/wrappers/convert.py#L171) |
+| [Time base](#time-base) | [convert.py:136](../../implementation/envoy/wrappers/convert.py#L136) |
+| [Shutdown](#shutdown) | [ingress.py:259](../../implementation/envoy/bin/ingress.py#L259), [convert.py:174](../../implementation/envoy/wrappers/convert.py#L174) |
 | [Why one upstream connection per client and backend](#why-one-upstream-connection-per-client-and-backend) | [ingress.py:140](../../implementation/envoy/bin/ingress.py#L140) |
 <!-- trace:end -->

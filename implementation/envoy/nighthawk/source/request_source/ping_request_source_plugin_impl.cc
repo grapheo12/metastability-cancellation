@@ -1,3 +1,4 @@
+// Source: abstraction/load_generator/client/design.md (client v0.10.0)
 // Source: abstraction/protocol/design.md (protocol v0.8.0)
 #include "source/request_source/ping_request_source_plugin_impl.h"
 
@@ -38,6 +39,7 @@ std::string BuildPingRequestBody(uint64_t id, uint64_t deadline_unix_ns, uint32_
   return body;
 }
 
+// Design: abstraction/load_generator/client/design.md#start_request
 Nighthawk::RequestGenerator PingRequestSourcePlugin::get() {
   return [this]() -> std::unique_ptr<Nighthawk::Request> {
     // Design: abstraction/protocol/design.md#requestid
@@ -46,6 +48,7 @@ Nighthawk::RequestGenerator PingRequestSourcePlugin::get() {
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::system_clock::now().time_since_epoch())
             .count());
+    // Design: abstraction/load_generator/client/design.md#requestdeadline
     const uint64_t deadline_ns = now_ns + slo_ns_;
     std::string body = BuildPingRequestBody(id, deadline_ns, request_bytes_);
     Envoy::Http::RequestHeaderMapPtr headers = Envoy::Http::RequestHeaderMapImpl::create();

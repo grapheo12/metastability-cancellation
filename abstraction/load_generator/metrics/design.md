@@ -82,3 +82,36 @@ function latency_stats(values):
 ```
 
 Worked example: `n = 10` gives `p50 = v[4]`, `p90 = v[8]`, `p99 = v[9]`, `p999 = v[9]`.
+
+## Design specific to Envoy
+
+Implementation: `implementation/envoy`: vendored Envoy (`envoy/`) and Nighthawk (`nighthawk/`) with the testbed's
+changes, recorded in [VENDORED.md](../../../implementation/envoy/VENDORED.md) ([AGENTS.md](../../../AGENTS.md#vendored-code)),
+built in Docker with Bazel by `implementation/envoy/build.sh` (C++ tests: `bazel test` on the targets VENDORED.md
+names); Python 3 wrappers `bin/ingress.py`, `bin/loadgen.py` and `wrappers/convert.py` (tests: `cd
+implementation/envoy/wrappers && python3 -B -m unittest test_convert`). Only code written or changed for the testbed
+carries `Design:` tags; unchanged upstream code does not.
+
+### Envoy choices
+
+- Collection: our per-request log (`request_log.cc`, new, enabled by `NH_REQUEST_LOG_PREFIX`) writes one CSV line per
+  request from Nighthawk's StreamDecoder (response, reset or pool failure) with wall-clock times, the id from the
+  request body and the ExecReport from the response's first 512 bytes; `convert.read_request_logs` reads every
+  worker's file.
+- RequestRecord: `scheduled_ns` is when the StreamDecoder was created (the request started), as the spec allows for
+  a load generator that cannot see its schedule; `send_ns` is when the pool gave it a stream.
+- Summary and Percentiles: `convert.loadgen_summary` and `convert.latency_stats`.
+
+### Traceability
+
+Generated from the `Design:` tags in the testbed's code under `implementation/envoy` by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Envoy --impl implementation/envoy --ext .cc --ext .h --comment // --ext .py:# --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [RequestRecord](#requestrecord) | [stream_decoder.cc:146](../../../implementation/envoy/nighthawk/source/client/stream_decoder.cc#L146), [stream_decoder.h:145](../../../implementation/envoy/nighthawk/source/client/stream_decoder.h#L145), [convert.py:364](../../../implementation/envoy/wrappers/convert.py#L364), [convert.py:391](../../../implementation/envoy/wrappers/convert.py#L391), [test_convert.py:230](../../../implementation/envoy/wrappers/test_convert.py#L230) |
+| [Collection](#collection) | [request_log.cc:82](../../../implementation/envoy/nighthawk/source/client/request_log.cc#L82), [stream_decoder.cc:62](../../../implementation/envoy/nighthawk/source/client/stream_decoder.cc#L62), [stream_decoder.cc:99](../../../implementation/envoy/nighthawk/source/client/stream_decoder.cc#L99), [stream_decoder.cc:130](../../../implementation/envoy/nighthawk/source/client/stream_decoder.cc#L130), [convert.py:352](../../../implementation/envoy/wrappers/convert.py#L352) |
+| [Summary](#summary) | [convert.py:412](../../../implementation/envoy/wrappers/convert.py#L412), [test_convert.py:230](../../../implementation/envoy/wrappers/test_convert.py#L230) |
+| [Percentiles](#percentiles) | [convert.py:400](../../../implementation/envoy/wrappers/convert.py#L400), [test_convert.py:259](../../../implementation/envoy/wrappers/test_convert.py#L259) |
+<!-- trace:end -->

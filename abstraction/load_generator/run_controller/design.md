@@ -96,3 +96,34 @@ sent are recorded as `not_sent` by the client.
 1. All clients have returned (no stream is in use any more).
 2. Send `GOAWAY` and close each connection. Errors here are ignored.
 3. Aggregate and write the outputs. A write failure exits non-zero.
+
+## Design specific to Envoy
+
+Implementation: `implementation/envoy`: vendored Envoy (`envoy/`) and Nighthawk (`nighthawk/`) with the testbed's
+changes, recorded in [VENDORED.md](../../../implementation/envoy/VENDORED.md) ([AGENTS.md](../../../AGENTS.md#vendored-code)),
+built in Docker with Bazel by `implementation/envoy/build.sh` (C++ tests: `bazel test` on the targets VENDORED.md
+names); Python 3 wrappers `bin/ingress.py`, `bin/loadgen.py` and `wrappers/convert.py` (tests: `cd
+implementation/envoy/wrappers && python3 -B -m unittest test_convert`). Only code written or changed for the testbed
+carries `Design:` tags; unchanged upstream code does not.
+
+### Envoy choices
+
+- Configuration validation: `bin/loadgen.py` `parse`, then the values Envoy's load generator does not realize are
+  rejected with `<parameter> <value> is not supported by this implementation` (exit 2).
+- Startup, DrainPhase and Shutdown ordering: the wrapper runs Nighthawk to completion (`--duration`, then
+  `--timeout`), then reads the per-request logs and writes the outputs; it exits non-zero if Nighthawk failed or no
+  request was recorded.
+
+### Traceability
+
+Generated from the `Design:` tags in the testbed's code under `implementation/envoy` by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Envoy --impl implementation/envoy --ext .cc --ext .h --comment // --ext .py:# --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [Configuration validation](#configuration-validation) | [loadgen.py:49](../../../implementation/envoy/bin/loadgen.py#L49) |
+| [Startup](#startup) | [loadgen.py:85](../../../implementation/envoy/bin/loadgen.py#L85) |
+| [DrainPhase](#drainphase) | [loadgen.py:109](../../../implementation/envoy/bin/loadgen.py#L109) |
+| [Shutdown ordering](#shutdown-ordering) | [loadgen.py:123](../../../implementation/envoy/bin/loadgen.py#L123) |
+<!-- trace:end -->
