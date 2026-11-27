@@ -152,6 +152,7 @@ private:
 
   const Http::LowerCaseString deadline_header_;
   const std::chrono::milliseconds queue_tick_;
+  const double filter_margin_; // FilterMargin gamma >= 1 (abstraction/ingress/load_balancer/design.md#peakewmadeadline)
   std::list<Entry> queue_;         // first attempts waiting (FilterWaitQueue, FIFO)
   std::list<Entry> retry_waiters_; // refused LB retries, re-checked every scan, never dropped
   Event::TimerPtr timer_; // created on the first enqueue, on this worker's dispatcher

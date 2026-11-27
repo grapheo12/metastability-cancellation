@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Source: abstraction/ingress/design.md (ingress v0.16.1)
-# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.18.2)
+# Source: abstraction/ingress/design.md (ingress v0.17.0)
+# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.19.0)
 # Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
 # Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.8.0)
 # Source: abstraction/ingress/upstream_pool/design.md (upstream_pool v0.1.2)
@@ -63,6 +63,13 @@ def validate(args):
         fail("lb_policy peak_ewma needs lb_filter none or deadline_provisional_rtt")
     if args.lb_policy != "peak_ewma":
         fail(f"lb_policy {args.lb_policy} is not supported by this implementation")
+    try:
+        margin = float(args.lb_filter_margin)
+    except ValueError:
+        margin = float("nan")
+    if not (margin >= 1) or margin == float("inf"):
+        fail("lb_filter_margin must be a finite number >= 1")
+    args.lb_filter_margin = margin
     if args.lb_retry_policy not in RETRY_POLICIES:
         fail("lb_retry_policy must be one of none, timeout, anxious")
     if args.forward_mode not in ("relay", "hedge"):
@@ -96,6 +103,7 @@ def parse(argv):
     a("--lb_retry_anxiety_ratio", default="0.3")
     a("--lb_retry_late_factor", default="10")
     a("--forward_mode", default="relay")
+    a("--lb_filter_margin", default="1")
     args = p.parse_args(argv)
     validate(args)
     return args
@@ -165,7 +173,8 @@ def envoy_config(args, backends, admin_port, access_log, upstream_log=None):
         cluster["load_balancing_policy"] = {"policies": [{"typed_extension_config": {
             "name": "envoy.load_balancing_policies.peak_ewma_deadline",
             "typed_config": {"@type": "type.googleapis.com/envoy.extensions.load_balancing_policies."
-                                      "peak_ewma_deadline.v3alpha.PeakEwmaDeadline"}}}]}
+                                      "peak_ewma_deadline.v3alpha.PeakEwmaDeadline",
+                             "filter_margin": args.lb_filter_margin}}}]}  # FilterMargin gamma
     router = {"name": "envoy.filters.http.router", "typed_config": {
         "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"}}
     if upstream_log is not None:  # one line per upstream attempt (forwards.csv)

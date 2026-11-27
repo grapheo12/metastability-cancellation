@@ -21,8 +21,9 @@ option (xds.annotations.v3.file_status).work_in_progress = true;
 // impl/envoy (cancellation testbed): a deadline filter over EVERY healthy host on Peak EWMA's RTT EWMA, with a
 // FIFO wait queue (the testbed's DeadlineFilter and FilterWaitQueue, abstraction/ingress/load_balancer/design.md).
 //
-// A request carrying the deadline header (decimal Unix ns) is never sent to a host whose current EWMA RTT exceeds
-// its remaining time (`rtt_ewma_ms * 1e6 > deadline - now`); a host without an RTT sample yet always fits.
+// A request carrying the deadline header (decimal Unix ns) is never sent to a host whose ProvisionalCurrentRTT, times
+// filter_margin, exceeds its remaining time (`filter_margin * provisional_ms * 1e6 > deadline - now`); a host without
+// an RTT sample and with nothing pending always fits.
 // Among the hosts that fit it takes the lowest Peak EWMA cost, `RTT_ewma * (active_requests + 1)` (ties at
 // random). When none fits, or requests are already waiting, it waits in this
 // worker's FIFO queue, re-checked every `queue_tick`, oldest first; once its deadline has passed it fails with
@@ -40,4 +41,8 @@ message PeakEwmaDeadline {
 
   // The request header carrying the deadline as decimal Unix ns. Defaults to `x-request-deadline`.
   string deadline_header = 3;
+
+  // FilterMargin gamma (>= 1): a host is refused when gamma x its ProvisionalCurrentRTT exceeds the time left.
+  // 0 (unset) or anything below 1 means 1.
+  double filter_margin = 4;
 }

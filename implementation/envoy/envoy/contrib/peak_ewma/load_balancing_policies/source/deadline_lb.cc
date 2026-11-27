@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.18.2)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.19.0)
 // Source: abstraction/protocol/design.md (protocol v0.8.0)
 #include "contrib/peak_ewma/load_balancing_policies/source/deadline_lb.h"
 
@@ -77,7 +77,8 @@ PeakEwmaDeadlineLoadBalancer::PeakEwmaDeadlineLoadBalancer(
                                                         : config.deadline_header()),
       queue_tick_(std::max<int64_t>(
           1, config.has_queue_tick() ? DurationUtil::durationToMilliseconds(config.queue_tick())
-                                     : kDefaultQueueTickMilliseconds)) {
+                                     : kDefaultQueueTickMilliseconds)),
+      filter_margin_(config.filter_margin() >= 1.0 ? config.filter_margin() : 1.0) {
   for (const auto& host_set : priority_set_.hostSetsPerPriority()) {
     addPendingDataToHosts(host_set->hosts());
   }
@@ -214,7 +215,7 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
       keep[i] = true; // no RTT sample and nothing pending: eligible (as the Go DeadlineFilter with no sample)
     } else {
       // The filter: reject the host if its ProvisionalCurrentRTT exceeds the request's time left.
-      keep[i] = !(provisional[i] * 1e6 > static_cast<double>(*remaining_ns));
+      keep[i] = !(filter_margin_ * provisional[i] * 1e6 > static_cast<double>(*remaining_ns)); // FilterMargin
     }
     if (keep[i] && costs[i] < best) {
       best = costs[i];

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.18.2)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.19.0)
 // impl/envoy (cancellation testbed): tests of the peak_ewma_deadline load balancer (deadline_lb.h): the deadline
 // filter over every host, the lowest-cost choice, and the per-worker FIFO wait queue.
 
@@ -118,6 +118,28 @@ protected:
   DeadlineConfig config_;
   std::unique_ptr<PeakEwmaDeadlineLoadBalancer> lb_;
 };
+
+// FilterMargin gamma = 1.5: the same boundary as RttEqualToTimeLeftPassesOneNanosecondMoreWaits, at gamma x RTT.
+class PeakEwmaDeadlineMarginTest : public PeakEwmaDeadlineTest {
+protected:
+  void SetUp() override {
+    config_.set_filter_margin(1.5);
+    PeakEwmaDeadlineTest::SetUp();
+  }
+};
+
+// Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
+TEST_F(PeakEwmaDeadlineMarginTest, MarginScalesTheProvisionalRtt) {
+  setHost(0, 1000, 0); // RTT 1000 ms: 1.5 x 1000 ms = 1500 ms
+  setHost(1, 8000, 0);
+  auto equal = request(1500 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&equal->context).host, hosts_[0]); // 1.5e9 is not > 1.5e9: kept
+  expectTimer();
+  auto tight = request(1500 * kMs - 1);
+  auto response = lb_->chooseHost(&tight->context);
+  EXPECT_EQ(response.host, nullptr); // 1.5e9 > 1.5e9 - 1: refused everywhere, waits
+  EXPECT_EQ(lb_->queueLength(), 1u);
+}
 
 // Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
 TEST_F(PeakEwmaDeadlineTest, NoDeadlineHeaderTakesLowestCostOverAllHosts) {

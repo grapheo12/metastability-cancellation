@@ -1,5 +1,5 @@
 // Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.8.0)
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.18.2)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.19.0)
 // Source: abstraction/protocol/design.md (protocol v0.8.0)
 // impl/envoy (cancellation testbed): the AnxiousTracker against every worked example of
 // abstraction/ingress/retry_policy/design.md#anxious and load_balancer/design.md#ewmaantiservicetime.
