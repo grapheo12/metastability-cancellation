@@ -244,3 +244,4 @@
 | 0.64.0 | 2026-11-27T00:00:00Z | Glossary FilterProbe and parameter row: nothing-pending condition. Child bump: ingress 0.18.1 (load_balancer 0.21.0) |
 | 0.65.0 | 2026-11-27T00:00:00Z | Glossary FilterProbe: ProbeSample. Child bump: ingress 0.18.2 (load_balancer 0.22.0) |
 | 0.66.0 | 2026-11-27T00:00:00Z | Glossary TokenBucketFilter, TokenBucket, TokenRate; `lb_filter = token_bucket` and `lb_tb_*` parameter rows. Child bump: ingress 0.19.0 (load_balancer 0.23.0) |
+| 0.66.1 | 2026-11-27T00:00:00Z | Child bump: benchmark_runner 0.21.0 (config 0.31.0) |
