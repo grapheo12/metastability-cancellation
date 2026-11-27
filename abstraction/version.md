@@ -230,3 +230,4 @@
 | 0.57.0 | 2026-11-27T00:00:00Z | OptionalValue (a parameter value an implementation may reject as not supported); load generator parameter `arrival_rng`; glossary OptionalValue, ArrivalRng. Child bump: load_generator 0.9.0 (client 0.10.0) |
 | 0.57.1 | 2026-11-27T00:00:00Z | Child bump: load_generator 0.9.1 (run_controller 0.8.0) |
 | 0.58.0 | 2026-11-27T00:00:00Z | Ingress parameter values `peak_ewma`, `deadline_provisional_rtt` (OptionalValues); glossary PeakEwmaRtt, PeakEwmaCost, ProvisionalCurrentRtt, PeakEwmaDeadline. Child bump: ingress 0.14.0 (load_balancer 0.18.0) |
+| 0.59.0 | 2026-11-27T00:00:00Z | Ingress parameter `forward_mode`; glossary HedgedForwarding. Child bump: ingress 0.15.0 (frontend 0.11.0) |

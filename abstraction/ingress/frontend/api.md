@@ -37,6 +37,7 @@ start-once state. The answer is the newest attempt's ([design.md#lbretryloop](de
 | `POST /ping` whose deadline no backend can meet now | it waits in the FilterWaitQueue; the backend's answer once one fits, or `503` + `{"id":"<dec>"}` once its RequestDeadline has passed |
 | client resets the stream while it is being forwarded | nothing written; every running attempt's upstream stream is reset |
 | with LbRetries on, the RetryPolicy starts another attempt | the newest attempt's answer, as in the rows above; older attempts' answers are never written |
+| `forward_mode = hedge` (HedgedForwarding) | the first answer of any attempt, status and body as received; the other attempts are reset upstream. If every attempt fails, `503` with a short plain-text body (`502` after an upstream protocol error) ([design.md#hedgedforwarding](design.md#hedgedforwarding)) |
 
 ## Uses
 
