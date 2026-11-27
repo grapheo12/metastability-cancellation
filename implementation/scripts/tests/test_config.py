@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.29.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.30.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -211,6 +211,8 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual((p.arg("ingress", "forward_mode"), p.arg("loadgen", "arrival_rng")), ("hedge", "native"))
         p = cfg.expand_sweep(self.load(BASE.replace("cancel_rate = 100", "cancel_rate = 100\nlb_filter_margin = [1.1, 2.0]")))
         self.assertEqual(sorted({x.arg("ingress", "lb_filter_margin") for x in p}), [1.1, 2.0])  # sweepable
+        p = cfg.expand_sweep(self.load(BASE.replace("cancel_rate = 100", "cancel_rate = 100\nlb_probe_tau_ms = 4000")))[0]
+        self.assertEqual(p.arg("ingress", "lb_probe_tau_ms"), 4000)
 
     # Design: abstraction/benchmark_runner/config/design.md#benchconfig
     def test_lb_filter_passes_through(self):
