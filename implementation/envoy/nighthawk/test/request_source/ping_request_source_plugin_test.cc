@@ -1,3 +1,4 @@
+// Source: abstraction/protocol/design.md (protocol v0.8.0)
 // impl/envoy: tests for the ping RequestSource's body format (abstraction/protocol/design.md#pingrequestbody)
 // and the per-request log's field parsing (source/client/request_log.h).
 
@@ -12,6 +13,7 @@
 namespace Nighthawk {
 namespace {
 
+// Design: abstraction/protocol/design.md#pingrequestbody
 TEST(PingRequestBody, MatchesGoBuildRequestBody) {
   // Go: protocol.BuildRequestBody(MakeRequestID(1, 1), 5, 76): 36 fixed + 10 id digits + 1 deadline digit
   // + 29 payload bytes.
@@ -20,11 +22,13 @@ TEST(PingRequestBody, MatchesGoBuildRequestBody) {
   EXPECT_EQ(body.size(), 76u);
 }
 
+// Design: abstraction/protocol/design.md#minimum-body-size
 TEST(PingRequestBody, LongestIdAndDeadlineNeed76Bytes) {
   EXPECT_EQ(BuildPingRequestBody(~0ULL, ~0ULL, 76).size(), 76u); // 36 + 20 + 20, empty payload
   EXPECT_EQ(BuildPingRequestBody(~0ULL, ~0ULL, 75), "");
 }
 
+// Design: abstraction/protocol/design.md#requestdeadlineheader
 TEST(PingRequestSource, DeadlineHeaderMatchesBody) {
   PingRequestSourcePlugin source(3, 128, 17000, "/ping", Envoy::Http::RequestHeaderMapImpl::create());
   const auto generate = source.get();
@@ -40,6 +44,8 @@ TEST(PingRequestSource, DeadlineHeaderMatchesBody) {
   }
 }
 
+// Design: abstraction/protocol/design.md#parsing
+// Design: abstraction/protocol/design.md#execreport
 TEST(RequestLog, ParsesIdAndExecReport) {
   EXPECT_EQ(Client::RequestLog::requestId(R"({"id":"42","deadline":"7","payload":"xx"})"), "42");
   const std::string reply = R"({"id":"42","exec_ns":"400000000","start_slack_ns":"-12","payload":"x"})";

@@ -1,3 +1,4 @@
+// Source: abstraction/protocol/design.md (protocol v0.8.0)
 #include "contrib/peak_ewma/load_balancing_policies/source/deadline_lb.h"
 
 #include <algorithm>
@@ -141,6 +142,7 @@ PeakEwmaDeadlineLoadBalancer::deadlineOf(Upstream::LoadBalancerContext* context)
   }
   const auto values = headers->get(deadline_header_);
   int64_t deadline_unix_ns;
+  // Design: abstraction/protocol/design.md#requestdeadlineheader
   if (values.empty() || !absl::SimpleAtoi(values[0]->value().getStringView(), &deadline_unix_ns)) {
     return absl::nullopt;
   }

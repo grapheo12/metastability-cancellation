@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Source: abstraction/protocol/design.md (protocol v0.8.0)
 """impl/envoy Ingress: runs the vendored Envoy (build/envoy-static) as the testbed's Ingress, with the Go Ingress's
 command line (abstraction/ingress/api.md#program-parameters), and writes its outputs (forwards.csv, summary.json)
 from Envoy's access log when interrupted (SIGINT/SIGTERM), as the BenchmarkRunner expects.
@@ -162,6 +163,7 @@ def envoy_config(args, backends, admin_port, access_log, upstream_log=None):
             "path": upstream_log, "log_format": {"text_format_source": {
                 "inline_string": convert.UPSTREAM_LOG_FORMAT}}}}]
     # WorkerCount (x-worker-threads) is read by an Ingress, never relayed to the client.
+    # Design: abstraction/protocol/design.md#workercount
     route = {"cluster": "servers", "timeout": "0s", "response_headers_to_remove": ["x-worker-threads"]}
     if hedging(args):
         # The timeout RetryPolicy as Envoy hedging: after lb_retry_timeout_ms without an answer, one more attempt

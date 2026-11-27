@@ -443,3 +443,62 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [Status classification (load-generator client)](#status-classification-load-generator-client) | not traced |
 | [Status classification (load canceller)](#status-classification-load-canceller) | not traced |
 <!-- trace:end -->
+
+## Design specific to Envoy
+
+Implementation: `implementation/envoy`: vendored Envoy (`envoy/`) and Nighthawk (`nighthawk/`) with the testbed's
+changes, recorded in [VENDORED.md](../../implementation/envoy/VENDORED.md) ([AGENTS.md](../../AGENTS.md#vendored-code)),
+built in Docker with Bazel by `implementation/envoy/build.sh` (C++ tests: `bazel test` on the targets VENDORED.md
+names); Python 3 wrappers `bin/ingress.py`, `bin/loadgen.py` and `wrappers/convert.py` (tests: `cd
+implementation/envoy/wrappers && python3 -B -m unittest test_convert`). Only code written or changed for the testbed
+carries `Design:` tags; unchanged upstream code does not.
+
+### Envoy choices
+
+- PingRequestBody, RequestId and Minimum body size: Nighthawk's `ping` RequestSource (new,
+  `ping_request_source_plugin_impl.cc`). `BuildPingRequestBody` writes the body with `absl::StrCat`; the RequestId is
+  `client_id << 32 | seq`, with `seq` from 0 per Nighthawk worker (one worker per client); the factory refuses a
+  `request_bytes` that cannot hold the longest id and deadline (76 bytes).
+- RequestDeadlineHeader: the RequestSource adds `x-request-deadline` with the same decimal as the body's `deadline`.
+  The `peak_ewma_deadline` balancer reads it with `absl::SimpleAtoi` into an `int64_t`, which trims whitespace and
+  accepts a sign, as `parse_deadline_header` does.
+- ExecReport and Parsing: Nighthawk's per-request log (new, `request_log.cc`) copies `id`, `exec_ns` and
+  `start_slack_ns` out of the request and response bodies by key lookup (`stringField`), a lenient parse that never
+  fails; the `testbed_anxious` filter parses `exec_ns` with `parseExecNs`.
+- WorkerCount: the Envoy route removes `x-worker-threads` from every response (`response_headers_to_remove` in
+  `bin/ingress.py`), so an Ingress never relays it.
+- Status classification (load-generator client): `convert.request_outcome` maps each Nighthawk per-request log line
+  (result and status) to the client Outcome.
+
+### Not traced
+
+| Design subsection | Reason |
+|---|---|
+| [PaddedJsonBody](#paddedjsonbody) | realized by the Go server copy on this branch (Design specific to Go) |
+| [CancelBody](#cancelbody) | not realized on Envoy: the Ingress rejects `cancel_rate > 0` (`cancel_rate <value> is not supported by this implementation`), so no `/cancel` is sent |
+| [CancelReplyBody](#cancelreplybody) | as CancelBody |
+| [HeartbeatLine](#heartbeatline) | realized by the Go server copy; the Envoy Ingress rejects `heartbeat_timeout_ms > 0` |
+| [Status classification (load canceller)](#status-classification-load-canceller) | as CancelBody |
+
+### Traceability
+
+Generated from the `Design:` tags in the testbed's code under `implementation/envoy` by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Envoy --impl implementation/envoy --ext .cc --ext .h --comment // --ext .py:# --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [RequestId](#requestid) | [ping_request_source_plugin_impl.cc:44](../../implementation/envoy/nighthawk/source/request_source/ping_request_source_plugin_impl.cc#L44) |
+| [PaddedJsonBody](#paddedjsonbody) | not traced |
+| [ExecReport](#execreport) | [filter.cc:20](../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/filter.cc#L20), [request_log.cc:89](../../implementation/envoy/nighthawk/source/client/request_log.cc#L89), [ping_request_source_plugin_test.cc:49](../../implementation/envoy/nighthawk/test/request_source/ping_request_source_plugin_test.cc#L49) |
+| [WorkerCount](#workercount) | [ingress.py:167](../../implementation/envoy/bin/ingress.py#L167) |
+| [RequestDeadlineHeader](#requestdeadlineheader) | [deadline_lb.cc:146](../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/source/deadline_lb.cc#L146), [ping_request_source_plugin_impl.cc:59](../../implementation/envoy/nighthawk/source/request_source/ping_request_source_plugin_impl.cc#L59), [ping_request_source_plugin_test.cc:32](../../implementation/envoy/nighthawk/test/request_source/ping_request_source_plugin_test.cc#L32) |
+| [PingRequestBody](#pingrequestbody) | [ping_request_source_plugin_impl.cc:22](../../implementation/envoy/nighthawk/source/request_source/ping_request_source_plugin_impl.cc#L22), [ping_request_source_plugin_impl.cc:26](../../implementation/envoy/nighthawk/source/request_source/ping_request_source_plugin_impl.cc#L26), [ping_request_source_plugin_test.cc:17](../../implementation/envoy/nighthawk/test/request_source/ping_request_source_plugin_test.cc#L17) |
+| [Minimum body size](#minimum-body-size) | [ping_request_source_plugin_impl.cc:72](../../implementation/envoy/nighthawk/source/request_source/ping_request_source_plugin_impl.cc#L72), [ping_request_source_plugin_test.cc:26](../../implementation/envoy/nighthawk/test/request_source/ping_request_source_plugin_test.cc#L26) |
+| [CancelBody](#cancelbody) | not traced |
+| [CancelReplyBody](#cancelreplybody) | not traced |
+| [Parsing](#parsing) | [filter.cc:20](../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/filter.cc#L20), [anxious_tracker_test.cc:163](../../implementation/envoy/envoy/contrib/peak_ewma/anxious/test/anxious_tracker_test.cc#L163), [request_log.cc:63](../../implementation/envoy/nighthawk/source/client/request_log.cc#L63), [request_log.cc:78](../../implementation/envoy/nighthawk/source/client/request_log.cc#L78), [ping_request_source_plugin_test.cc:49](../../implementation/envoy/nighthawk/test/request_source/ping_request_source_plugin_test.cc#L49) |
+| [HeartbeatLine](#heartbeatline) | not traced |
+| [Status classification (load-generator client)](#status-classification-load-generator-client) | [convert.py:321](../../implementation/envoy/wrappers/convert.py#L321) |
+| [Status classification (load canceller)](#status-classification-load-canceller) | not traced |
+<!-- trace:end -->

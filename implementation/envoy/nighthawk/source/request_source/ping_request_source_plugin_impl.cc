@@ -1,3 +1,4 @@
+// Source: abstraction/protocol/design.md (protocol v0.8.0)
 #include "source/request_source/ping_request_source_plugin_impl.h"
 
 #include <chrono>
@@ -17,9 +18,11 @@ namespace Nighthawk {
 
 namespace {
 // {"id":"  ","deadline":"  ","payload":"  "}: 7 + 14 + 13 + 2 (protocol.requestBodyFixedOverhead).
+// Design: abstraction/protocol/design.md#pingrequestbody
 constexpr uint32_t kRequestBodyFixedOverhead = 36;
 } // namespace
 
+// Design: abstraction/protocol/design.md#pingrequestbody
 std::string BuildPingRequestBody(uint64_t id, uint64_t deadline_unix_ns, uint32_t total_bytes) {
   const std::string dec = absl::StrCat(id);
   const std::string dl = absl::StrCat(deadline_unix_ns);
@@ -37,6 +40,7 @@ std::string BuildPingRequestBody(uint64_t id, uint64_t deadline_unix_ns, uint32_
 
 Nighthawk::RequestGenerator PingRequestSourcePlugin::get() {
   return [this]() -> std::unique_ptr<Nighthawk::Request> {
+    // Design: abstraction/protocol/design.md#requestid
     const uint64_t id = (static_cast<uint64_t>(client_id_) << 32) | next_seq_++;
     const uint64_t now_ns = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -51,6 +55,7 @@ Nighthawk::RequestGenerator PingRequestSourcePlugin::get() {
     headers->setContentType("application/json");
     headers->setContentLength(body.size());
     headers->setPath(path_);
+    // Design: abstraction/protocol/design.md#requestdeadlineheader
     headers->addCopy(Envoy::Http::LowerCaseString(std::string(kPingDeadlineHeader)), absl::StrCat(deadline_ns));
     return std::make_unique<Nighthawk::RequestImpl>(std::move(headers), std::move(body));
   };
@@ -63,6 +68,7 @@ PingRequestSourcePluginFactory::createRequestSourcePlugin(const Envoy::Protobuf:
   const auto* any = Envoy::Protobuf::DynamicCastToGenerated<const Envoy::Protobuf::Any>(&message);
   nighthawk::PingRequestSourcePluginConfig config;
   THROW_IF_NOT_OK(Envoy::MessageUtil::unpackTo(*any, config));
+  // Design: abstraction/protocol/design.md#minimum-body-size
   if (BuildPingRequestBody(~0ULL, ~0ULL, config.request_bytes()).empty()) {
     throw Envoy::EnvoyException(absl::StrCat("ping request source: request_bytes ", config.request_bytes(),
                                              " cannot hold the longest id and deadline (min 76)"));

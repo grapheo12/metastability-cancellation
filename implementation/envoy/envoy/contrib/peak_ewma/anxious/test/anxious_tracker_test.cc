@@ -1,3 +1,4 @@
+// Source: abstraction/protocol/design.md (protocol v0.8.0)
 // impl/envoy (cancellation testbed): the AnxiousTracker against every worked example of
 // abstraction/ingress/retry_policy/design.md#anxious and load_balancer/design.md#ewmaantiservicetime.
 
@@ -158,6 +159,7 @@ TEST(AnxiousTracker, EwmaAntiServiceTimeExample) {
   EXPECT_EQ(*tracker.exec(2), 500);
 }
 
+// Design: abstraction/protocol/design.md#parsing
 TEST(ExecReport, ParsesExecNs) {
   EXPECT_EQ(parseExecNs(R"({"id":"42","exec_ns":"400000000","start_slack_ns":"-12","payload":"x"})"),
             absl::optional<uint64_t>(400000000));

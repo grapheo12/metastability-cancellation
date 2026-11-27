@@ -1,3 +1,4 @@
+# Source: abstraction/protocol/design.md (protocol v0.8.0)
 """impl/envoy wrappers: pure conversions from Envoy's access log and Nighthawk's per-request logs to the testbed's
 output files (no I/O beyond reading and writing the given paths, so they are unit-tested without Envoy or Nighthawk).
 
@@ -316,6 +317,7 @@ REQUESTS_HEADER = ("request_id,client_id,seq,outcome,http_status,scheduled_ns,se
                    "service_latency_ns,copies,in_stall_window,exec_ns,start_slack_ns")
 
 
+# Design: abstraction/protocol/design.md#status-classification-load-generator-client
 def request_outcome(result, status):
     """The client Outcome (abstraction/protocol/design.md#status-classification-load-generator-client) of one
     Nighthawk per-request log line. A stream reset only happens when Nighthawk stops at the end of the run with the

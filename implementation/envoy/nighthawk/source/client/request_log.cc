@@ -1,3 +1,4 @@
+// Source: abstraction/protocol/design.md (protocol v0.8.0)
 #include "source/client/request_log.h"
 
 #include <atomic>
@@ -58,6 +59,7 @@ int64_t wallNowNs() {
       .count();
 }
 
+// Design: abstraction/protocol/design.md#parsing
 std::string stringField(absl::string_view json, absl::string_view key) {
   const std::string needle = absl::StrCat("\"", key, "\":\"");
   const size_t at = json.find(needle);
@@ -72,6 +74,7 @@ std::string stringField(absl::string_view json, absl::string_view key) {
   return std::string(json.substr(start, end - start));
 }
 
+// Design: abstraction/protocol/design.md#parsing
 std::string requestId(absl::string_view request_body) { return stringField(request_body, "id"); }
 
 void record(absl::string_view request_body, absl::string_view result, uint64_t http_status,
@@ -82,6 +85,7 @@ void record(absl::string_view request_body, absl::string_view result, uint64_t h
   if (f == nullptr) {
     return;
   }
+  // Design: abstraction/protocol/design.md#execreport
   const std::string line =
       absl::StrCat(requestId(request_body), ",", result, ",", http_status, ",", scheduled_unix_ns, ",",
                    send_unix_ns, ",", end_unix_ns, ",", stringField(response_prefix, "exec_ns"), ",",

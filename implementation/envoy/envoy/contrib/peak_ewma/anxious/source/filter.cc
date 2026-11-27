@@ -1,3 +1,4 @@
+// Source: abstraction/protocol/design.md (protocol v0.8.0)
 #include "contrib/peak_ewma/anxious/source/filter.h"
 
 #include <chrono>
@@ -14,6 +15,8 @@ namespace Extensions {
 namespace HttpFilters {
 namespace TestbedAnxious {
 
+// Design: abstraction/protocol/design.md#execreport
+// Design: abstraction/protocol/design.md#parsing
 absl::optional<uint64_t> parseExecNs(absl::string_view body) {
   constexpr absl::string_view needle = "\"exec_ns\":\"";
   const size_t at = body.find(needle);
