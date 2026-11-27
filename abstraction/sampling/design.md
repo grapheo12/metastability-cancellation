@@ -130,6 +130,7 @@ loader rejects cgo-linked Go 1.21 binaries (missing `LC_UUID`), so cgo is disabl
 - Package `internal/sampling`. `Rng` is a struct holding `[4]uint64`. Go's `uint64` arithmetic wraps modulo 2^64, as the design requires.
 - `rotl` is `math/bits.RotateLeft64`. `ln` is `math.Log`. Rounding is `math.Floor(x + 0.5)`.
 - The `exponential_*` and `uniform_int` functions are methods on `*Rng` (`rng.ExponentialNs(rate)` and so on).
+- The kind tags are the `uint32` constants `Stream*` (`STREAM_SERVER_SCENARIO` is `StreamServerScenario`).
 - Tests: `sampling_test.go` covers the xoshiro256** reference step (state {1,2,3,4} → 11520), determinism, `UniformInt` range and threshold examples, and the exponential mean.
 
 ### Traceability
@@ -140,10 +141,10 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [SplitMix64](#splitmix64) | [sampling.go:23](../../implementation/go/internal/sampling/sampling.go#L23), [sampling.go:28](../../implementation/go/internal/sampling/sampling.go#L28), [sampling.go:35](../../implementation/go/internal/sampling/sampling.go#L35) |
-| [SeedDerivation](#seedderivation) | [sampling.go:43](../../implementation/go/internal/sampling/sampling.go#L43), [sampling_test.go:19](../../implementation/go/internal/sampling/sampling_test.go#L19) |
-| [Generator](#generator) | [sampling.go:51](../../implementation/go/internal/sampling/sampling.go#L51), [sampling.go:58](../../implementation/go/internal/sampling/sampling.go#L58), [sampling.go:70](../../implementation/go/internal/sampling/sampling.go#L70), [sampling_test.go:10](../../implementation/go/internal/sampling/sampling_test.go#L10) |
-| [Uniform](#uniform) | [sampling.go:86](../../implementation/go/internal/sampling/sampling.go#L86) |
-| [ExponentialSampler](#exponentialsampler) | [sampling.go:93](../../implementation/go/internal/sampling/sampling.go#L93), [sampling.go:101](../../implementation/go/internal/sampling/sampling.go#L101), [sampling.go:108](../../implementation/go/internal/sampling/sampling.go#L108), [sampling_test.go:57](../../implementation/go/internal/sampling/sampling_test.go#L57) |
-| [UniformIntSampler](#uniformintsampler) | [sampling.go:116](../../implementation/go/internal/sampling/sampling.go#L116), [sampling_test.go:32](../../implementation/go/internal/sampling/sampling_test.go#L32) |
+| [SplitMix64](#splitmix64) | [sampling.go:24](../../implementation/go/internal/sampling/sampling.go#L24), [sampling.go:29](../../implementation/go/internal/sampling/sampling.go#L29), [sampling.go:36](../../implementation/go/internal/sampling/sampling.go#L36) |
+| [SeedDerivation](#seedderivation) | [sampling.go:44](../../implementation/go/internal/sampling/sampling.go#L44), [sampling_test.go:19](../../implementation/go/internal/sampling/sampling_test.go#L19) |
+| [Generator](#generator) | [sampling.go:52](../../implementation/go/internal/sampling/sampling.go#L52), [sampling.go:59](../../implementation/go/internal/sampling/sampling.go#L59), [sampling.go:71](../../implementation/go/internal/sampling/sampling.go#L71), [sampling_test.go:10](../../implementation/go/internal/sampling/sampling_test.go#L10) |
+| [Uniform](#uniform) | [sampling.go:87](../../implementation/go/internal/sampling/sampling.go#L87) |
+| [ExponentialSampler](#exponentialsampler) | [sampling.go:94](../../implementation/go/internal/sampling/sampling.go#L94), [sampling.go:102](../../implementation/go/internal/sampling/sampling.go#L102), [sampling.go:109](../../implementation/go/internal/sampling/sampling.go#L109), [sampling_test.go:57](../../implementation/go/internal/sampling/sampling_test.go#L57) |
+| [UniformIntSampler](#uniformintsampler) | [sampling.go:117](../../implementation/go/internal/sampling/sampling.go#L117), [sampling_test.go:32](../../implementation/go/internal/sampling/sampling_test.go#L32) |
 <!-- trace:end -->

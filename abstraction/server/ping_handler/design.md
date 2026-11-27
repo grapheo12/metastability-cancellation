@@ -412,6 +412,7 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [Client binding](#client-binding) | [pinghandler.go:26](../../../implementation/go/internal/server/pinghandler.go#L26) |
 | [Sampling order](#sampling-order) | [pinghandler.go:35](../../../implementation/go/internal/server/pinghandler.go#L35), [pinghandler_test.go:165](../../../implementation/go/internal/server/pinghandler_test.go#L165) |
 | [ConstantServiceTime](#constantservicetime) | [pinghandler.go:39](../../../implementation/go/internal/server/pinghandler.go#L39), [pinghandler.go:217](../../../implementation/go/internal/server/pinghandler.go#L217), [pinghandler_test.go:150](../../../implementation/go/internal/server/pinghandler_test.go#L150) |
+| [ScenarioServiceTime](#scenarioservicetime) |  |
 | [CancelCheckPoints](#cancelcheckpoints) | [pinghandler.go:68](../../../implementation/go/internal/server/pinghandler.go#L68), [pinghandler.go:110](../../../implementation/go/internal/server/pinghandler.go#L110), [server_test.go:428](../../../implementation/go/internal/server/server_test.go#L428), [workerpool_test.go:372](../../../implementation/go/internal/server/workerpool_test.go#L372) |
 | [FinishedWatermark](#finishedwatermark) | [pinghandler.go:61](../../../implementation/go/internal/server/pinghandler.go#L61), [server_test.go:159](../../../implementation/go/internal/server/server_test.go#L159) |
 | [Response status](#response-status) | [pinghandler.go:126](../../../implementation/go/internal/server/pinghandler.go#L126) |
