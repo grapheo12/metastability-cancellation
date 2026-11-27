@@ -26,3 +26,4 @@
 | 0.8.2 | 2026-11-20T00:00:00Z | Child bump: metrics 0.6.0 (`ok_late`, goodput within the SLO) |
 | 0.9.0 | 2026-11-27T00:00:00Z | Parameter `arrival_rng` (OptionalValue `native`). Child bump: client 0.10.0 |
 | 0.9.1 | 2026-11-27T00:00:00Z | Child bump: run_controller 0.8.0 (`arrival_rng` validation and ArrivalRng creation) |
+| 0.9.2 | 2026-11-27T00:00:00Z | Child bump: metrics 0.6.1 (wording) |

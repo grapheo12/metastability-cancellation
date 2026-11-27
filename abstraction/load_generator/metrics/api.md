@@ -11,7 +11,7 @@
 | `seq` | u32 | Per-client arrival index |
 | `outcome` | `ok` \| `rejected` \| `cancelled` \| `dropped` \| `error` \| `not_sent` | See [../client/api.md#outcome](../client/api.md#outcome) |
 | `http_status` | integer or empty | Status received. Empty for `cancelled`, `dropped`, `not_sent`, and transport errors |
-| `scheduled_ns` | integer | Scheduled arrival time |
+| `scheduled_ns` | integer | Scheduled arrival time. A load generator that cannot see its arrival schedule (one that is reused rather than written for the testbed) records the time the request was started instead, which equals the scheduled time unless the arrival waited at the `n_waiting_requests` cap (GatedArrival) |
 | `send_ns` | integer or empty | When the request's first RequestCopy was sent. Empty for `not_sent` |
 | `end_ns` | integer or empty | When the request resolved. Empty for `not_sent` |
 | `copies` | u32 | RequestCopies the client started, `1 ..= 1 + max_retries`; `0` for `not_sent` ([../client/design.md#retrytimer](../client/design.md#retrytimer)) |
