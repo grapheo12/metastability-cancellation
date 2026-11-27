@@ -136,6 +136,10 @@ function timeout_policy(config):
   `d + LB_RETRY_TICK_MS` after the newest attempt's `pick`; the client's timer fires at exactly `RETRY`.
 - **Clock origin.** `d` counts from the Load Balancer's `pick` of the attempt, not from the client's send, so it
   excludes the client-to-Ingress hop.
+- **Under HedgedForwarding** (`forward_mode = hedge`) the Frontend does not consult this function: each attempt has
+  its own exact timer of `d`, from when its request has been fully sent upstream, and a timer that fires with budget
+  left starts one more attempt; the first answer of any attempt wins
+  ([../frontend/design.md#hedgedforwarding](../frontend/design.md#hedgedforwarding)).
 
 Worked example, `lb_retry_timeout_ms = 2000`, `lb_max_retries = 1` (times in ms from attempt 0's `pick`):
 
@@ -325,6 +329,17 @@ TicketSeq 11:
 | `AttemptSent(13, 0, q, 1)` | + 13: 1 | 4 (deadline 1 is before 12, though sent later) |
 | `AttemptFinished(9, 0)` | − 9 | 3 |
 | `AttemptFinished(42, 0)` (not tracked) | unchanged | 3 |
+
+### Under HedgedForwarding
+
+With `forward_mode = hedge` the policies above keep their decisions, with three differences that come from the
+Frontend ([../frontend/design.md#hedgedforwarding](../frontend/design.md#hedgedforwarding)):
+
+| Policy | Difference under `hedge` |
+|---|---|
+| `none` | none |
+| `timeout` | an exact per-attempt timer from the request fully sent upstream, instead of a 10 ms Tick from the `pick` |
+| `anxious` | consulted on Ticks only (never on `AttemptEnded`); `RetryElsewhere` avoids every backend already tried (all of them if none is left); `RetryRefused` never arrives, since a retry waits instead of being refused |
 
 ## Adding a RetryPolicy
 
