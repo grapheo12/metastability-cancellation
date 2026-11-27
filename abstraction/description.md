@@ -69,6 +69,7 @@ downloads each point's results and plots all points together.
 | **RequestId** | 64-bit id: high 32 bits are the client id, low 32 bits are the per-client sequence number | [protocol/design.md](protocol/design.md#requestid) |
 | **PaddedJsonBody** | JSON body `{"id":..,"exec_ns":..,"start_slack_ns":..,"payload":..}` padded so its byte length is exact; the `/ping` response body | [protocol/design.md](protocol/design.md#paddedjsonbody) |
 | **WorkerCount** | A server's `n_worker_threads`, sent as the `x-worker-threads` header on every `/ping` `202` and `503` | [protocol/design.md](protocol/design.md#workercount) |
+| **RequestDeadlineHeader** | The `x-request-deadline` request header of every client `/ping`: the RequestDeadline again, for components that read headers but not bodies | [protocol/design.md](protocol/design.md#requestdeadlineheader) |
 | **PastDeadlineRejection** | With `reject_past_deadline = true`, a server answers `503` to a `/ping` popped after its RequestDeadline instead of running it; checked once, at the pop | [server/ping_handler/design.md](server/ping_handler/design.md#pastdeadlinerejection) |
 | **ExecReport** | The server's report in every PaddedJsonBody: ExecutionTime and StartSlack | [protocol/design.md](protocol/design.md#execreport) |
 | **ExecutionTime** | `exec_ns`: a request's time on the server minus its queueing delay (worker pop to response built) | [protocol/design.md](protocol/design.md#execreport) |
