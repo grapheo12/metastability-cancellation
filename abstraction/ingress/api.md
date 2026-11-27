@@ -95,12 +95,12 @@ t_ns,server_id,outcome,latency_ns,ewma_latency_ns,exec_ns,ewma_exec_ns,attempt,e
 | `t_ns` | u64, ns | `end_ns - run_start`: when the forward finished, on the Ingress's time base ([design.md#time-base](design.md#time-base)) |
 | `server_id` | u32 | The backend |
 | `outcome` | `ok` \| `rejected` \| `bad_request` \| `bad_gateway` \| `reset` | How the forward ended |
-| `latency_ns` | u64, ns | From `pick` to `finish` |
+| `latency_ns` | u64, ns | From `pick` to `finish`; for a ForwardLog built from an access log, from the client request's arrival at the Ingress to the end of the attempt's upstream answer ([load_balancer/design.md](load_balancer/design.md#forwardlog)) |
 | `ewma_latency_ns` | float, ns | The backend's EwmaLatency right after this forward |
-| `exec_ns` | u64, ns, or empty | The ExecutionTime the backend reported in the relayed body's ExecReport; empty unless `ok` or `rejected` with a valid one |
-| `ewma_exec_ns` | float, ns, or empty | The backend's EwmaExecTime right after this forward; empty before its first sample |
+| `exec_ns` | u64, ns, or empty | The ExecutionTime the backend reported in the relayed body's ExecReport; empty unless `ok` or `rejected` with a valid one, and empty for a ForwardLog built from an access log |
+| `ewma_exec_ns` | float, ns, or empty | The backend's EwmaExecTime right after this forward; empty before its first sample, and for a ForwardLog built from an access log |
 | `attempt` | u32 | Which attempt of its ForwardTask this forward was: `0` for the first, `k` for the k-th LbRetry |
-| `estimate_ns` | float, ns, or empty | EstimatedFinish `(queue_at_send + 1) × EwmaExecTime / k` (k: the backend's WorkerCount, 1 while unknown) at the forward's pick; empty before the backend's first ExecutionTime sample ([load_balancer/design.md](load_balancer/design.md#estimatedfinish)) |
+| `estimate_ns` | float, ns, or empty | EstimatedFinish `(queue_at_send + 1) × EwmaExecTime / k` (k: the backend's WorkerCount, 1 while unknown) at the forward's pick; empty before the backend's first ExecutionTime sample, and for a ForwardLog built from an access log ([load_balancer/design.md](load_balancer/design.md#estimatedfinish)) |
 
 Rows are sorted by `t_ns`; rows with equal `t_ns` keep their ForwardLog order. Integers are decimal. `ewma_latency_ns`,
 `ewma_exec_ns` and `estimate_ns` are written in decimal without an exponent, as the shortest string that reads back as the same binary64 (for example

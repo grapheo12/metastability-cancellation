@@ -235,3 +235,4 @@
 | 0.60.0 | 2026-11-27T00:00:00Z | Child bump: ingress 0.16.0 (retry_policy 0.8.0) |
 | 0.61.0 | 2026-11-27T00:00:00Z | Child bump: benchmark_runner 0.18.0 (config 0.28.0) |
 | 0.61.1 | 2026-11-27T00:00:00Z | Wording: any parameter value or configuration an implementation does not realize is rejected as not supported (not only OptionalValues); an OptionalValue is one some implementation does not realize |
+| 0.61.2 | 2026-11-27T00:00:00Z | Child bump: ingress 0.16.1 (load_balancer 0.18.2) |
