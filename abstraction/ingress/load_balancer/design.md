@@ -705,7 +705,7 @@ function peak_ewma_deadline_choose(lb, L, remaining_ns):   # L after LiveSet, ex
         else if peak[s].rtt_ms <= 0 and not has_pending: ok = true          # unmeasured and idle: eligible
         else:                               ok = not (lb.filter_margin * p * 1e6 > float(remaining_ns))   # FilterMargin γ; products rounded left to right
         if ok: keep[s] = peak_ewma_cost(lb, s); best = min(best, keep[s])
-        else if filter_probe(lb, s, now, remaining_ns): probe[s] = peak_ewma_cost(lb, s)   # FilterProbe
+        else if filter_probe(lb, s, now, remaining_ns, has_pending): probe[s] = peak_ewma_cost(lb, s)   # FilterProbe
     if probe is not empty:                                # a probe wins over the kept backends
         keep = probe; best = min(probe values)
     T = [ s for s in L if s in keep and keep[s] == best ]
@@ -780,8 +780,9 @@ then anyway, more likely the longer it has received none, so it can prove it is 
 ```
 last_sent[s]: u64 monotonic ns = 0       # LastSentTime: set by every pick that returns s (pending_add), shared by workers
 
-function filter_probe(lb, s, now, remaining_ns):      # s was refused by the test; -> boolean
+function filter_probe(lb, s, now, remaining_ns, has_pending):   # s was refused by the test; -> boolean
     if lb.probe_tau_ms == 0 or remaining_ns is none or remaining_ns <= 0: return false
+    if has_pending: return false                      # only a backend with nothing pending is probed
     dt = now - last_sent[s]                           # monotonic ns, unsigned; never sent: last_sent 0, dt huge
     p  = 1 - exp(-(float(dt) / 1e6) / lb.probe_tau_ms)    # binary64
     u  = float(native_random_u64() >> 11) / 2^53      # one draw per refused backend, in L order, before the tie draw
@@ -792,8 +793,10 @@ function filter_probe(lb, s, now, remaining_ns):      # s was refused by the tes
   admission, each `FILTER_QUEUE_TICK_MS` re-check of a waiting request, an LbRetry pick and its re-checks.
 - **Heads sends the request there.** Probed backends win over the backends that passed the test; among several, the
   lowest PeakEwmaCost (ties random). The probe is a normal pick: it sets `last_sent`, so `dt` starts again from 0.
-- **No flip** for an already-late request, a request without a RequestDeadline (never filtered), or an avoided
-  backend (it is not in `L`).
+- **No flip** for an already-late request, a request without a RequestDeadline (never filtered), an avoided
+  backend (it is not in `L`), or a backend with something pending (PendingStarts non-empty). A stalled backend keeps
+  the forwards it never answers pending, so it is not probed; a healthy one that was refused drains its forwards, has
+  nothing pending, and is probed.
 - **Many decisions.** With requests waiting, a refused backend is checked about every 10 ms per waiting request, so it
   is probed soon after `dt` grows past a few ms, then again after the next quiet stretch; probes come in bursts.
 
@@ -804,6 +807,7 @@ function filter_probe(lb, s, now, remaining_ns):      # s was refused by the tes
 | 4 s | 4 s | 0.6321205588285577 | 1 − e^(−1) |
 | 4 s | 8 s | 0.8646647167633873 | 1 − e^(−2) |
 | 0 (off) | any | — | no flip: refused stays refused |
+| 4 s | 8 s, something pending | — | no flip: only a backend with nothing pending is probed |
 
 ## PickLog
 

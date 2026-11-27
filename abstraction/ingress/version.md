@@ -59,3 +59,4 @@
 | 0.16.1 | 2026-11-27T00:00:00Z | forwards.csv columns for a ForwardLog built from an access log. Child bump: load_balancer 0.18.2 |
 | 0.17.0 | 2026-11-27T00:00:00Z | Parameter `lb_filter_margin` and its validation. Child bump: load_balancer 0.19.0 |
 | 0.18.0 | 2026-11-27T00:00:00Z | Parameter `lb_probe_tau_ms` and its validation. Child bump: load_balancer 0.20.0 |
+| 0.18.1 | 2026-11-27T00:00:00Z | `lb_probe_tau_ms` row: nothing-pending condition. Child bump: load_balancer 0.21.0 |

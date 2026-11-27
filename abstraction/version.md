@@ -241,3 +241,4 @@
 | 0.62.1 | 2026-11-27T00:00:00Z | Child bump: benchmark_runner 0.19.0 (config 0.29.0) |
 | 0.63.0 | 2026-11-27T00:00:00Z | Ingress parameter `lb_probe_tau_ms`; glossary FilterProbe. Child bump: ingress 0.18.0 (load_balancer 0.20.0) |
 | 0.63.1 | 2026-11-27T00:00:00Z | Child bump: benchmark_runner 0.20.0 (config 0.30.0) |
+| 0.64.0 | 2026-11-27T00:00:00Z | Glossary FilterProbe and parameter row: nothing-pending condition. Child bump: ingress 0.18.1 (load_balancer 0.21.0) |
