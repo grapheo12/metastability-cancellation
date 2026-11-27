@@ -11,3 +11,4 @@
 | 0.5.0 | 2026-11-20T00:00:00Z | HeartbeatStream: `GET /heartbeat` answered `200` with HeartbeatLines `hb <seq>\n`; `build_heartbeat_line`, `parse_heartbeat_line`; constants `HEARTBEAT_PATH`, `HEARTBEAT_METHOD`, `CONTENT_TYPE_TEXT`, `STATUS_STREAM_OK`; headers |
 | 0.6.0 | 2026-11-20T00:00:00Z | ExecReport: PaddedJsonBody carries `exec_ns` (ExecutionTime) and `start_slack_ns` (StartSlack); `build_body` takes both; lenient `parse_exec_report`; `MIN_BODY_BYTES` 42 → 115 |
 | 0.7.0 | 2026-11-20T00:00:00Z | WorkerCount: `/ping` `202`/`503` answers from a server carry `x-worker-threads: <n_worker_threads>`; constant `WORKER_THREADS_HEADER`; lenient `parse_worker_count` |
+| 0.8.0 | 2026-11-27T00:00:00Z | RequestDeadlineHeader: every client `/ping` carries `x-request-deadline` (the body's RequestDeadline); relayed by an Ingress, ignored by a server; constant `REQUEST_DEADLINE_HEADER`; lenient `parse_deadline_header` (signed 64-bit) |
