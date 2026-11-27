@@ -138,7 +138,7 @@ A ScenarioState with `stall: true`. While the server is in one, it behaves as du
 | Who | While stalled | When the stall ends |
 |---|---|---|
 | Idle workers (`queue_pop`) | hand out nothing; wait until `next_change_at` (or a push, a close) and check again | pop in the discipline's order |
-| Running requests | held at their next check (`freeze_wait`), as for a WorkerFreeze | carry on with the service time they started with |
+| Running requests | held at their next check (`freeze_wait`), as for a WorkerFreeze | carry on; a QuantumSleep's deadline is fixed when it starts, so a request whose service time ran out during the hold is answered at once |
 | HeartbeatSender | writes nothing (`freeze_wait` before each line) | writes the next line at once, `seq` continuing |
 | Connections, `/cancel`, RST flags, QueueLengthLog | carry on; the WorkQueue keeps growing | — |
 
