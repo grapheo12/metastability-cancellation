@@ -1,4 +1,4 @@
-// Source: abstraction/server/ping_handler/design.md (ping_handler v0.13.0)
+// Source: abstraction/server/ping_handler/design.md (ping_handler v0.14.0)
 package server
 
 import (
@@ -34,10 +34,12 @@ func admitPing(task *StreamTask, cfg Config, rng *sampling.Rng, st *ConnectionCa
 	// Design: abstraction/server/ping_handler/design.md#sampling-order
 	if cfg.Workload == WorkloadCPUBurn || cfg.Workload == WorkloadSleep {
 		serviceUs = rng.ExponentialUs(cfg.ResponseRate)
-	} else if cfg.Workload == WorkloadSleepConstant {
+	} else if cfg.Workload == WorkloadSleepConstant && cfg.Scenario == nil {
 		// Design: abstraction/server/ping_handler/design.md#constantservicetime
 		serviceUs = constantServiceUs(cfg.ResponseRate) // no draw: the rng is not advanced
 	}
+	// Design: abstraction/server/ping_handler/design.md#scenarioservicetime
+	// With a ServiceScenario serviceUs stays 0 here: WorkQueue.Pop sets it from the state at the pop.
 	// RequestDeadline for the edf QueueDiscipline; missing or malformed is NoDeadline, never a 400.
 	deadline, ok := protocol.ParseDeadline(task.Body)
 	if !ok {
@@ -107,8 +109,8 @@ func runPing(job *PingJob, cfg Config, registry *CancelRegistry, counters *Cance
 			return Response{Status: protocol.StatusRejected, Body: body()}
 		}
 		// Design: abstraction/server/ping_handler/design.md#cancelcheckpoints
-		var freezeCheck func() bool // ignore mode: only a WorkerFreeze wait, never cancels
-		if cfg.FreezeAfterMs > 0 {
+		var freezeCheck func() bool // ignore mode: only a WorkerFreeze or StalledState wait, never cancels
+		if cfg.FreezeAfterMs > 0 || cfg.Scenario != nil {
 			freezeCheck = func() bool { q.FreezeWait(); return false }
 		}
 		switch cfg.Workload {

@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.14.1)
+// Source: abstraction/server/design.md (server v0.18.0)
 package server
 
 import (
@@ -29,9 +29,11 @@ type Server struct {
 	counters *CancelCounters
 	queue    *WorkQueue
 	pool     *WorkerPool
-	buf      *MessageBuffer // nil unless workload = message_buffer
-	queueLog *os.File       // nil: no QueueLengthLog
-	sampler  *QueueSampler  // started after "listening on"
+	buf      *MessageBuffer  // nil unless workload = message_buffer
+	queueLog *os.File        // nil: no QueueLengthLog
+	sampler  *QueueSampler   // started after "listening on"
+	scenLog  *os.File        // nil: no ScenarioLog
+	slogger  *ScenarioLogger // started after "listening on"
 	h2s      *http2.Server
 	base     *http.Server // only carries the shutdown hook that sends GOAWAY
 
@@ -55,7 +57,7 @@ func Listen(cfg Config) (*Server, error) {
 		registry: NewCancelRegistry(CancelRegistryCapacity),
 		counters: &CancelCounters{},
 		// Design: abstraction/server/design.md#why-one-shared-workqueue
-		queue:    NewWorkQueue(cfg.InitialStallMs, cfg.QueueDiscipline, cfg.FreezeAfterMs),
+		queue:    NewWorkQueue(cfg.InitialStallMs, cfg.QueueDiscipline, cfg.FreezeAfterMs, cfg.Scenario),
 		h2s:      &http2.Server{MaxConcurrentStreams: maxConcurrentStreams},
 		base:     &http.Server{},
 		handlers: map[*connectionHandler]struct{}{},
@@ -74,11 +76,25 @@ func Listen(cfg Config) (*Server, error) {
 		}
 		s.queueLog = f
 	}
-	ln, err := net.Listen("tcp", cfg.ListenAddr)
-	if err != nil {
+	closeLogs := func() {
 		if s.queueLog != nil {
 			_ = s.queueLog.Close()
 		}
+		if s.scenLog != nil {
+			_ = s.scenLog.Close()
+		}
+	}
+	if cfg.Scenario != nil && cfg.ScenarioLogPath != "" { // ScenarioLog: only with a scenario
+		f, err := os.Create(cfg.ScenarioLogPath)
+		if err != nil {
+			closeLogs()
+			return nil, err
+		}
+		s.scenLog = f
+	}
+	ln, err := net.Listen("tcp", cfg.ListenAddr)
+	if err != nil {
+		closeLogs()
 		return nil, err
 	}
 	s.ln = ln
@@ -88,6 +104,10 @@ func Listen(cfg Config) (*Server, error) {
 	if s.queueLog != nil {
 		// Design: abstraction/server/design.md#listener
 		s.sampler = StartQueueSampler(s.queue, s.queueLog, cfg.QueueSampleIntervalMs)
+	}
+	if s.scenLog != nil {
+		// Design: abstraction/server/design.md#listener
+		s.slogger = StartScenarioLogger(cfg.Scenario, s.scenLog)
 	}
 	return s, nil
 }
@@ -158,6 +178,9 @@ func (s *Server) Shutdown() {
 	_ = s.ln.Close()
 	if s.sampler != nil {
 		s.sampler.Stop() // no extra row; the file is closed
+	}
+	if s.slogger != nil {
+		s.slogger.Stop() // complete before the CancelCounters line; the file is closed
 	}
 	s.queue.Close()
 

@@ -1,6 +1,6 @@
 // Command server runs the HTTP/2 /ping + /cancel server.
 //
-// Source: abstraction/server/api.md (server v0.14.1)
+// Source: abstraction/server/api.md (server v0.18.0)
 package main
 
 import (
@@ -33,6 +33,8 @@ func main() {
 	fs.StringVar(&p.RejectPastDeadline, "reject_past_deadline", p.RejectPastDeadline, "true: answer 503 to a /ping popped after its RequestDeadline instead of running it (checked once, at the pop)")
 	fs.StringVar(&p.QueueDiscipline, "queue_discipline", p.QueueDiscipline, "WorkQueue order: fifo or edf (earliest RequestDeadline first)")
 	fs.StringVar(&p.QueueLogPath, "queue_log_path", p.QueueLogPath, "QueueLengthLog CSV path (empty: no log)")
+	fs.StringVar(&p.ServiceScenario, "service_scenario", p.ServiceScenario, "ServiceScenario JSON (only with workload sleep_constant; empty: none)")
+	fs.StringVar(&p.ScenarioLogPath, "scenario_log_path", p.ScenarioLogPath, "ScenarioLog CSV path (empty: no log)")
 	fs.StringVar(&p.WindowSize, "window_size", p.WindowSize, "MessageBuffer slots (message_buffer)")
 	fs.StringVar(&p.NGCBinaryTreeSize, "n_gc_binary_tree_size", p.NGCBinaryTreeSize, "nodes per MessageTree, 1..=65536 (message_buffer)")
 	fs.StringVar(&p.NMessagesPerRequest, "n_messages_per_request", p.NMessagesPerRequest, "messages per /ping (message_buffer)")

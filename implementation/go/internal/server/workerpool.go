@@ -1,4 +1,4 @@
-// Source: abstraction/server/worker_pool/design.md (worker_pool v0.6.0)
+// Source: abstraction/server/worker_pool/design.md (worker_pool v0.7.0)
 package server
 
 import (
@@ -85,7 +85,9 @@ func (j *PingJob) Reply() Response { return <-j.reply }
 // variable, and a slice used as a FIFO (fifo) or a container/heap min-heap
 // (edf); Go channels are bounded. armed/openAt
 // are the StallGate and freeze/freezeAt the WorkerFreeze, guarded by mu like
-// everything else (freeze itself never changes after NewWorkQueue).
+// everything else (freeze and scenario never change after NewWorkQueue).
+// scenario is the ServiceScenario (nil: none); its own lock is always taken
+// after mu, never before.
 //
 // Design: abstraction/server/worker_pool/design.md#workqueue
 type WorkQueue struct {
@@ -101,16 +103,18 @@ type WorkQueue struct {
 	openAt   time.Time     // monotonic reading; valid once armed
 	freeze   time.Duration // WorkerFreeze; 0: never
 	freezeAt time.Time     // valid once armed, when freeze > 0
+	scenario *Scenario     // ScenarioStall; nil: no ServiceScenario
 }
 
 // NewWorkQueue returns an empty, open queue with the given QueueDiscipline
-// whose StallGate opens initialStallMs after the first push, and whose
-// WorkerFreeze starts freezeAfterMs after it (0: never).
+// whose StallGate opens initialStallMs after the first push, whose
+// WorkerFreeze starts freezeAfterMs after it (0: never), and which follows
+// scenario (nil: none) from the first push.
 //
 // Design: abstraction/server/worker_pool/design.md#workqueue
-func NewWorkQueue(initialStallMs uint64, disc QueueDiscipline, freezeAfterMs uint64) *WorkQueue {
+func NewWorkQueue(initialStallMs uint64, disc QueueDiscipline, freezeAfterMs uint64, scenario *Scenario) *WorkQueue {
 	q := &WorkQueue{stall: time.Duration(initialStallMs) * time.Millisecond, disc: disc,
-		freeze: time.Duration(freezeAfterMs) * time.Millisecond}
+		freeze: time.Duration(freezeAfterMs) * time.Millisecond, scenario: scenario}
 	q.notEmpty = sync.NewCond(&q.mu)
 	return q
 }
@@ -125,7 +129,7 @@ func (q *WorkQueue) Push(job *PingJob) error {
 	if q.closed {
 		return ErrQueueClosed
 	}
-	if !q.armed { // StallGate and WorkerFreeze: the first push arms both
+	if !q.armed { // StallGate, WorkerFreeze, ScenarioClock: the first push arms all
 		q.arm()
 	}
 	q.addItem(job)
@@ -175,6 +179,11 @@ func (q *WorkQueue) arm() {
 	if q.freeze > 0 {
 		q.freezeAt = armedAt.Add(q.freeze) // WorkerFreeze
 	}
+	if q.scenario != nil {
+		// Design: abstraction/server/worker_pool/design.md#scenariostall
+		q.scenario.Arm(armedAt) // the ScenarioClock starts with the StallGate
+		q.notEmpty.Broadcast()  // waiters of a first-state stall now get a deadline
+	}
 	if q.stall > 0 {
 		time.AfterFunc(q.stall, func() {
 			q.mu.Lock()
@@ -184,8 +193,9 @@ func (q *WorkQueue) arm() {
 	}
 }
 
-// Pop removes and returns the next job in the discipline's order, waiting while the queue is empty or
-// the StallGate is closed, and the queue is open. It returns nil once the
+// Pop removes and returns the next job in the discipline's order, waiting while the queue is empty, the
+// StallGate is closed, the WorkerFreeze has started or the ServiceScenario is in a StalledState, and the queue
+// is open. With a ServiceScenario it sets the job's ServiceUs from the state at the pop. It returns nil once the
 // queue is closed (closed wins over items).
 //
 // Design: abstraction/server/worker_pool/design.md#workqueue
@@ -193,13 +203,61 @@ func (q *WorkQueue) arm() {
 func (q *WorkQueue) Pop() *PingJob {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	for !q.closed && (q.lenLocked() == 0 || time.Now().Before(q.openAt) || q.frozenLocked()) {
-		q.notEmpty.Wait() // woken by a push, the gate's timer, or Close
+	for {
+		if q.closed {
+			return nil
+		}
+		now := time.Now()
+		if q.lenLocked() > 0 && !now.Before(q.openAt) && !q.frozenLocked() {
+			if q.scenario == nil {
+				return q.takeItem()
+			}
+			// Design: abstraction/server/worker_pool/design.md#scenariostall
+			if s := q.scenario.StateAt(now); !s.Stall { // nothing is popped in a StalledState
+				job := q.takeItem()
+				job.ServiceUs = s.ServiceUs // the ConstantServiceTime of the state at the pop
+				return job
+			}
+		}
+		q.waitForChangeLocked(now) // woken by a push, the gate's timer, Close, or a stall's end
 	}
-	if q.closed {
-		return nil
+}
+
+// stallEndsAtLocked is stall_ends_at: when a StalledState (not a WorkerFreeze)
+// can end, or false when the queue is not stalled or the stall cannot end.
+// Called with mu held.
+//
+// Design: abstraction/server/worker_pool/design.md#scenariostall
+func (q *WorkQueue) stallEndsAtLocked(now time.Time) (time.Time, bool) {
+	if q.scenario == nil || q.frozenLocked() || !q.scenario.StateAt(now).Stall {
+		return time.Time{}, false
 	}
-	return q.takeItem()
+	return q.scenario.NextChangeAt(now)
+}
+
+// waitForChangeLocked is wait_for_change: an untimed wait on notEmpty, or, in
+// a StalledState that can end, a wait until then. sync.Cond has no timed
+// wait, so a time.AfterFunc broadcasts at the deadline; an earlier wake-up
+// only re-checks. Called with mu held.
+//
+// Design: abstraction/server/worker_pool/design.md#scenariostall
+func (q *WorkQueue) waitForChangeLocked(now time.Time) {
+	n, ok := q.stallEndsAtLocked(now)
+	if !ok {
+		q.notEmpty.Wait()
+		return
+	}
+	d := n.Sub(time.Now())
+	if d <= 0 {
+		return // the state can change already: re-check at once
+	}
+	timer := time.AfterFunc(d, func() {
+		q.mu.Lock()
+		q.notEmpty.Broadcast()
+		q.mu.Unlock()
+	})
+	q.notEmpty.Wait()
+	timer.Stop()
 }
 
 // Closed reports whether Close has run (the HeartbeatSender's shutdown check).
@@ -218,19 +276,34 @@ func (q *WorkQueue) frozenLocked() bool {
 	return q.freeze > 0 && q.armed && !time.Now().Before(q.freezeAt)
 }
 
-// FreezeWait returns at once unless the WorkerFreeze has started; then it
-// blocks until Close. No timer: every wake-up re-checks, and the freeze is
-// permanent, so a push's Signal landing here only waits again.
+// FreezeWait returns at once unless the WorkerFreeze has started or the
+// ServiceScenario is in a StalledState. Once frozen it blocks until Close (no
+// timer: the freeze is permanent, so a push's Signal landing here only waits
+// again); in a StalledState it waits until the state can change, re-checks,
+// and returns once the stall is over (or at Close).
 //
 // Design: abstraction/server/worker_pool/design.md#workerfreeze
+// Design: abstraction/server/worker_pool/design.md#scenariostall
 func (q *WorkQueue) FreezeWait() {
-	if q.freeze == 0 {
-		return // no WorkerFreeze: no lock taken
+	if q.freeze == 0 && q.scenario == nil {
+		return // neither: no lock taken
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	for !q.closed && q.frozenLocked() {
-		q.notEmpty.Wait() // only Close ends the wait
+	for {
+		if q.closed {
+			return
+		}
+		if q.frozenLocked() {
+			q.notEmpty.Wait() // only Close ends a WorkerFreeze
+			continue
+		}
+		now := time.Now()
+		if q.scenario != nil && q.scenario.StateAt(now).Stall {
+			q.waitForChangeLocked(now) // until the stall can end
+			continue
+		}
+		return
 	}
 }
 

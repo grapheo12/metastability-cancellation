@@ -80,6 +80,7 @@ Build and test with `CGO_ENABLED=0 go build ./...` / `CGO_ENABLED=0 go test ./..
 - The `200` is `w.WriteHeader(protocol.StatusStreamOK)` with `content-type: text/plain` and no `content-length`, so x/net/http2 sends the body as DATA frames without END_STREAM. Each line is one `w.Write` followed by `http.Flusher.Flush`.
 - The wait is a fresh `time.Timer` per line in a `select` with `done`. "Server is shutting down" is `q.Closed()`, checked right after `q.FreezeWait()`.
 - Tests: `heartbeat_test.go` `TestHeartbeatStreamAndFreeze` runs a server with `HeartbeatIntervalMs: 100` and `FreezeAfterMs: 400`: 3 to 6 lines in 350 ms before any `/ping` (the queue is not armed), no line more than 550 ms after the arming `/ping`, `Shutdown` returning promptly while the sender is frozen, and `405` for `POST /heartbeat`. `TestValidateHeartbeatInterval` covers validation.
+- StalledState: no code of its own; `FreezeWait` returns when the stall ends ([../worker_pool/design.md#scenariostall](../worker_pool/design.md#scenariostall)), and the loop's `seq` simply continues. `TestHeartbeatPausedByStall` checks no line during a 200–600 ms stall, lines again after it, and `seq` without a gap.
 
 ### Traceability
 
@@ -89,6 +90,6 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [HeartbeatSender](#heartbeatsender) | [heartbeat.go:17](../../../implementation/go/internal/server/heartbeat.go#L17), [heartbeat_test.go:33](../../../implementation/go/internal/server/heartbeat_test.go#L33), [workerpool.go:208](../../../implementation/go/internal/server/workerpool.go#L208) |
-| [Failure and edge cases](#failure-and-edge-cases) | [heartbeat.go:28](../../../implementation/go/internal/server/heartbeat.go#L28) |
+| [HeartbeatSender](#heartbeatsender) | [heartbeat.go:18](../../../implementation/go/internal/server/heartbeat.go#L18), [heartbeat_test.go:33](../../../implementation/go/internal/server/heartbeat_test.go#L33), [heartbeat_test.go:122](../../../implementation/go/internal/server/heartbeat_test.go#L122), [workerpool.go:266](../../../implementation/go/internal/server/workerpool.go#L266) |
+| [Failure and edge cases](#failure-and-edge-cases) | [heartbeat.go:29](../../../implementation/go/internal/server/heartbeat.go#L29) |
 <!-- trace:end -->

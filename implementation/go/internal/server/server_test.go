@@ -1,4 +1,4 @@
-// Source: abstraction/server/design.md (server v0.14.1)
+// Source: abstraction/server/design.md (server v0.18.0)
 package server
 
 import (
@@ -666,4 +666,84 @@ func TestWorkerCountHeader(t *testing.T) {
 		t.Fatalf("405: %d %q", st, h)
 	}
 	s.Shutdown()
+}
+
+// service_scenario: only with sleep_constant, where it replaces response_rate
+// (still validated when given); its own errors are returned as they are;
+// scenario_log_path is any string.
+//
+// Design: abstraction/server/design.md#configuration-validation
+func TestValidateServiceScenario(t *testing.T) {
+	p := DefaultParams()
+	p.ResponseBytes, p.Workload = "128", "sleep_constant"
+	p.ServiceScenario = `{"states": {"a": {"service_us": 5000}}, "schedule": [[0, "a"]]}`
+	p.ScenarioLogPath = "s.csv"
+	c, err := Validate(p)
+	if err != nil || c.Scenario == nil || c.ScenarioLogPath != "s.csv" {
+		t.Fatalf("scenario without response_rate: %+v %v", c, err)
+	}
+	p.ResponseRate = "0"
+	if _, err := Validate(p); err == nil {
+		t.Fatal("a given response_rate is still validated")
+	}
+	p.ResponseRate, p.Workload = "5", "sleep"
+	if _, err := Validate(p); err == nil || err.Error() != "service_scenario needs workload sleep_constant" {
+		t.Fatalf("sleep with a scenario: %v", err)
+	}
+	p.Workload, p.ServiceScenario = "sleep_constant", `{"states": {}}`
+	if _, err := Validate(p); err == nil || err.Error() != "service_scenario: states must be a non-empty object" {
+		t.Fatalf("bad scenario: %v", err)
+	}
+	p.ServiceScenario = ""
+	if c, err := Validate(p); err != nil || c.Scenario != nil {
+		t.Fatalf("no scenario: %+v %v", c, err)
+	}
+}
+
+// End to end: the ScenarioLog is created at Listen only with a scenario, gets
+// its first row at the first admitted /ping, and is complete (closed) after
+// Shutdown; an unwritable path fails Listen.
+//
+// Design: abstraction/server/design.md#listener
+func TestScenarioLogEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "server_0.scenario.csv")
+	sc, err := NewScenario(`{"states": {"fast": {"service_us": 1000}, "slow": {"service_us": 2000}},
+		"schedule": [[0, "fast"], [50, "slow"]]}`, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{ListenAddr: "127.0.0.1:0", ResponseBytes: 128, CancelMode: CancelCooperative,
+		CancelCheckIntervalUs: 50, NWorkerThreads: 1, Workload: WorkloadSleepConstant, Scenario: sc,
+		ScenarioLogPath: path}
+	s, err := Listen(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go s.Serve()
+	c := dialTest(t, s.Addr().String())
+	if st, _ := c.do(t, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(0, 1), 0, nil, 128)); st != 202 {
+		t.Fatalf("ping: %d", st)
+	}
+	time.Sleep(100 * time.Millisecond)
+	s.Shutdown()
+	b, _ := os.ReadFile(path)
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) != 3 || lines[0] != "t_ns,unix_ns,state" || !strings.HasPrefix(lines[1], "0,") ||
+		!strings.HasSuffix(lines[1], ",fast") || !strings.HasPrefix(lines[2], "50000000,") || !strings.HasSuffix(lines[2], ",slow") {
+		t.Fatalf("ScenarioLog:\n%s", b)
+	}
+	cfg.ScenarioLogPath = filepath.Join(dir, "missing", "s.csv")
+	if _, err := Listen(cfg); err == nil {
+		t.Fatal("unwritable scenario_log_path must fail Listen")
+	}
+	cfg.Scenario, cfg.ScenarioLogPath, cfg.ResponseRate = nil, filepath.Join(dir, "none.csv"), 100
+	s2, err := Listen(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s2.Shutdown()
+	if _, err := os.Stat(cfg.ScenarioLogPath); !os.IsNotExist(err) {
+		t.Fatal("scenario_log_path without a scenario must not create the file")
+	}
 }
