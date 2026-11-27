@@ -55,6 +55,8 @@ function handle_ping(stream, ctx):
                                           ticket = entry.state.ticket           # sent from the queue
     else: ticket = admission.ticket
     start_attempt(ctx, task, 0, ticket)                           # attempt 0, already picked
+    if config.forward_mode == hedge:
+        return hedged_loop(ctx, task, stream)                     # HedgedForwarding: the first answer wins
     return lb_retry_loop(ctx, task, stream)                       # LbRetryLoop: relays the newest attempt's answer
 
 function remaining_ns(task):                                      # the request's time left, for the DeadlineFilter
@@ -240,6 +242,78 @@ Same policy, attempt 0 to a dead backend:
 
 With `lb_max_retries = 0` the first row would relay the `502`.
 
+## HedgedForwarding
+
+`forward_mode` chooses how a ForwardTask's attempts end. `relay` (the default) is everything above: the newest
+attempt's answer counts and older attempts run on. `hedge` (an OptionalValue) is **HedgedForwarding**: the attempts
+race, the first answer wins, and the losers are reset.
+
+```
+function hedged_loop(ctx, task, stream):             # forward_mode = hedge; attempt 0 is running
+    loop:
+        running = [ a for a in task.attempts if a.running ]
+        budget  = len(task.attempts) - 1 < config.lb_max_retries
+        wait for the first of:
+            stream.reset (client reset):
+                for a in running: a.cancel.set()
+                return Aborted
+            response headers of attempt a:           # the first answer, whatever its status
+                for b in running except a: b.cancel.set()       # the losers end reset, each finishes itself
+                return a's response, relayed as received        # status and body unchanged
+            (a, outcome) failed from task.results:   # dial failure, upstream reset: this attempt ends, no retry
+                a.running = false
+                if no attempt is running and no LbRetry is waiting:
+                    return Response(502 if the failure was an upstream protocol error else 503, short plain text)
+            per-attempt timer of attempt a fires, only if budget and lb_retry_policy == timeout:
+                hedge(ctx, task, Retry)              # TimeoutHedge
+            LB_RETRY_TICK_MS on the newest running attempt, only if budget and lb_retry_policy == anxious:
+                d = decide(policy, retry_state(...), Tick)
+                if d != Wait: hedge(ctx, task, d)
+
+procedure hedge(ctx, task, d):                        # d: Retry | RetryElsewhere
+    avoid = { a.server_id for a in task.attempts } if d == RetryElsewhere else {}   # AvoidedBackends
+    start an attempt with pick(..., avoid = avoid), or, under the PeakEwmaDeadline, retry_peak(...):
+    a retry that no backend takes waits in its worker's retry list and starts once one does (never Dropped)
+```
+
+- **First answer wins.** The first response headers from any attempt decide the request; that attempt's status and
+  body are relayed as received (a backend status other than `202`, `503` or `400` is relayed too, not turned into
+  `502`). Every other running attempt is reset upstream with `CANCEL` and finishes as `reset`.
+- **Failures do not retry.** An attempt that fails (dial failure, upstream reset) just ends; the request waits for its
+  other attempts. Only when none is left running or waiting does the Frontend answer: `503` with a short plain-text
+  body, or `502` after an upstream protocol error. The RetryPolicy is never consulted on `AttemptEnded`.
+- **TimeoutHedge.** With `lb_retry_policy = timeout`, each attempt has its own timer of `lb_retry_timeout_ms`, started
+  when its request has been fully sent upstream and firing exactly (not on a 10 ms tick). When it fires and budget
+  remains, one more attempt starts, through `pick` with no exclusion; it may go to the same backend.
+- **Anxious ticks.** With `lb_retry_policy = anxious`, every attempt has a 10 ms tick from its start; a tick consults
+  the policy for the newest attempt that is still running. `RetryElsewhere` avoids every backend the request has already
+  been sent to, unless that is all of them ([../load_balancer/design.md#lbpolicy](../load_balancer/design.md#lbpolicy));
+  `RetryRefused` never happens, because a retry is never `Dropped`.
+- **RequestDeadline.** The Frontend takes it from the RequestDeadlineHeader
+  ([../../protocol/design.md#requestdeadlineheader](../../protocol/design.md#requestdeadlineheader)) rather than the
+  body; for a load-generator client they are equal.
+- **Unchanged.** Budget (`lb_max_retries`), RetryObservations (sent, finished, EWMAs), the PendingStarts release when
+  the request ends, and every `pick` matched by one `finish`.
+
+| Situation | `relay` | `hedge` |
+|---|---|---|
+| Attempt 1 starts while attempt 0 runs | attempt 0's answer is ignored | whichever answers first is relayed; the other is reset |
+| Newest attempt fails, budget left | RetryPolicy decides on `AttemptEnded` | no retry; wait for the others, then `503` text |
+| Backend answers `500` | `502`, empty | `500`, relayed |
+| `timeout` delay counted from | the `pick`, checked every 10 ms | the request fully sent upstream, exact timer |
+| `RetryElsewhere` | excludes the newest attempt's backend; `Dropped` if none left | avoids every tried backend; all of them if none left |
+| Retry pick finds no backend | refused (`lb_retry_refused`), re-decided on later ticks | waits in the retry list (PeakEwmaDeadline) |
+
+Worked example, `lb_retry_policy = timeout`, `lb_retry_timeout_ms = 8500`, `lb_max_retries = 1`, backend 0 stalls
+(times in s from attempt 0's send):
+
+| Time | Event | Result |
+|---|---|---|
+| 0 | attempt 0 to backend 0 | — |
+| 8.5 | attempt 0's timer fires, budget 1 | attempt 1 (`pick`, may be any backend), budget used up |
+| 8.9 | attempt 1 answers `202` | relayed; attempt 0 reset upstream, finished `reset` |
+| 20 | (backend 0 would have answered) | nothing: attempt 0 is gone |
+
 ## StartOnce
 
 ```
@@ -271,6 +345,7 @@ stateDiagram-v2
   Waiting --> Done502: upstream other status or failure
   Waiting --> Aborted: client reset (every running attempt reset upstream)
   Waiting --> Waiting: LbRetry (RetryPolicy says Retry on a Tick or on the newest attempt's 502; a newer attempt starts)
+  Waiting --> Relayed: forward_mode = hedge, the first answer of any attempt (the others reset)
   Relayed --> [*]: clear, finish, write
   Done502 --> [*]: clear, finish, write 502
   Aborted --> [*]: clear, finish(reset), no write

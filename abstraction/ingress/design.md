@@ -70,6 +70,7 @@ function validate(params):
     initial_stall_ms is an integer >= 0                     else error
     heartbeat_timeout_ms is an integer >= 0                 else error "heartbeat_timeout_ms must be an integer >= 0"
     lb_retry_policy names a RetryPolicy (retry_policy_new)  else error             # default none
+    forward_mode in {relay, hedge}                           else error             # default relay; hedge is an OptionalValue
     lb_max_retries is an integer in 0 ..= 2^32-1             else error             # default 0
     lb_retry_timeout_ms > 0 and finite                       else error             # default 150; lb_retry_timeout_ns = round(ms * 1e6)
     lb_retry_anxiety_ratio >= 0 and finite                   else error             # default 0.3
