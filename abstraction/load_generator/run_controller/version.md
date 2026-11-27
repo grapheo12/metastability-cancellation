@@ -10,3 +10,4 @@
 | 0.5.0 | 2026-11-12T00:00:00Z | Validation of `initial_stall_ms` (integer >= 0, `< duration_s × 1000`); derived `initial_stall_ns` |
 | 0.6.0 | 2026-11-13T00:00:00Z | Passes `run_start_unix_ns` to `run_client` (origin of every RequestDeadline); validates `request_bytes` with `validate_request_body_size` (>= 76) |
 | 0.7.0 | 2026-11-20T00:00:00Z | Validation of `slo_cancel` (`true`/`false`, default `true`) and `drain_timeout_ms` (integer `> 0`, default 10000), derived `drain_timeout_ns`; DrainPhase bounded by the SLO (`slo_cancel = true`) or the DrainDeadline (`false`) |
+| 0.8.0 | 2026-11-27T00:00:00Z | Validation of `arrival_rng` (`sampling` \| `native`, default `sampling`; an implementation that does not realize a value rejects it as not supported); each client's ArrivalRng created by the chosen variant |

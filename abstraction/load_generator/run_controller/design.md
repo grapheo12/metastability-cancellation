@@ -12,6 +12,8 @@ function validate(params):
     drain_timeout_ms is an integer > 0       else error             # default 10000; checked even when unused
     duration_s > 0                           else error
     seed parses as u64                       else error
+    arrival_rng in {sampling, native}        else error             # default sampling
+    arrival_rng is realized here             else error "arrival_rng <value> is not supported by this implementation"   # OptionalValue
     target parses as host:port               else error
     1 <= n_waiting_requests <= MAX_WAITING_REQUESTS   else error     # MAX_WAITING_REQUESTS = 1000
     retry_timeout_ms > 0                     else error             # default 150
@@ -52,7 +54,9 @@ function main(params):
                                               # never used for timing
     tasks = []
     for i in 0 .. N-1:
-        rng_i = sampling.rng_new(sampling.derive_seed(config.seed, STREAM_CLIENT_ARRIVALS, i))
+        rng_i = sampling.rng_new(sampling.derive_seed(config.seed, STREAM_CLIENT_ARRIVALS, i))   # arrival_rng = sampling
+                if config.arrival_rng == sampling
+                else native_rng(config.seed + i)        # arrival_rng = native: the implementation's generator, i = client index
         tasks.append(spawn run_client(i, conns[i], config, rng_i, run_start, run_start_unix_ns))
     all_records = []
     for i in 0 .. N-1:
