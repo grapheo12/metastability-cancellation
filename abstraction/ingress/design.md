@@ -147,3 +147,49 @@ The server binds each connection to the client id of its first `/ping`
 keeps that rule true behind the Ingress without changing the server. A shared connection would mix client ids and
 get `400`s. It also keeps each client's ServiceTime draws on that client's own connection stream, as if the client
 had connected directly.
+
+## Design specific to Envoy
+
+Implementation: `implementation/envoy`: vendored Envoy (`envoy/`) and Nighthawk (`nighthawk/`) with the testbed's
+changes, recorded in [VENDORED.md](../../implementation/envoy/VENDORED.md) ([AGENTS.md](../../AGENTS.md#vendored-code)),
+built in Docker with Bazel by `implementation/envoy/build.sh` (C++ tests: `bazel test` on the targets VENDORED.md
+names); Python 3 wrappers `bin/ingress.py`, `bin/loadgen.py` and `wrappers/convert.py` (tests: `cd
+implementation/envoy/wrappers && python3 -B -m unittest test_convert`). Only code written or changed for the testbed
+carries `Design:` tags; unchanged upstream code does not.
+
+### Envoy choices
+
+- Structure: one Envoy process (`envoy-static`, with the testbed's contrib extensions) configured by `bin/ingress.py`
+  (`envoy_config`): one h2c listener on `listen_addr`, an HTTP connection manager with the Peak EWMA RTT filter and
+  the router, one static cluster of `backends` with the `peak_ewma` or `peak_ewma_deadline` load-balancing policy.
+- Configuration validation: `bin/ingress.py` `validate` follows the spec's order, then rejects what Envoy does not
+  realize with `<parameter> <value> is not supported by this implementation` (exit 2).
+- Concurrency model: Envoy's worker threads (`--concurrency`, from the ProcessPlacement's `GOMAXPROCS`); each client
+  connection is served by one worker. These are the Ingress workers of the PeakEwmaDeadline.
+- Time base and Shutdown: the wrapper stops Envoy on SIGINT/SIGTERM, then builds `forwards.csv` and `summary.json`
+  from Envoy's access logs (`convert.write_forwards`, `convert.ingress_summary`), with times relative to the first
+  request (ForwardLogFromAccessLog).
+- One upstream connection per client and backend: `connection_pool_per_downstream_connection` on the cluster.
+
+### Not traced
+
+| Design subsection | Reason |
+|---|---|
+| [Shared state](#shared-state) | unchanged upstream code: Envoy's cluster host set and per-host stats, shared by its workers (`envoy/source/common/upstream/`) |
+
+### Traceability
+
+Generated from the `Design:` tags in the testbed's code under `implementation/envoy` by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Envoy --impl implementation/envoy --ext .cc --ext .h --comment // --ext .py:# --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [Structure](#structure) | [ingress.py:129](../../implementation/envoy/bin/ingress.py#L129) |
+| [Shared state](#shared-state) | not traced |
+| [Configuration validation](#configuration-validation) | [ingress.py:53](../../implementation/envoy/bin/ingress.py#L53) |
+| [Concurrency model](#concurrency-model) | [ingress.py:250](../../implementation/envoy/bin/ingress.py#L250) |
+| [Time base](#time-base) | [convert.py:133](../../implementation/envoy/wrappers/convert.py#L133) |
+| [Shutdown](#shutdown) | [ingress.py:259](../../implementation/envoy/bin/ingress.py#L259), [convert.py:171](../../implementation/envoy/wrappers/convert.py#L171) |
+| [Why one upstream connection per client and backend](#why-one-upstream-connection-per-client-and-backend) | [ingress.py:140](../../implementation/envoy/bin/ingress.py#L140) |
+<!-- trace:end -->

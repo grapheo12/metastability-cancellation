@@ -1,3 +1,4 @@
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.18.2)
 // Source: abstraction/protocol/design.md (protocol v0.8.0)
 #include "contrib/peak_ewma/load_balancing_policies/source/deadline_lb.h"
 
@@ -19,6 +20,7 @@ namespace Extensions {
 namespace LoadBalancingPolicies {
 namespace PeakEwma {
 
+// Design: abstraction/ingress/load_balancer/design.md#provisionalcurrentrtt
 void PendingRequests::add(int64_t start_ns) {
   absl::MutexLock lock(&mu_);
   starts_.insert(start_ns);
@@ -40,6 +42,7 @@ absl::optional<int64_t> PendingRequests::oldest() const {
   return *starts_.begin();
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#provisionalcurrentrtt
 PendingRegistration::~PendingRegistration() {
   for (const auto& [host, start_ns] : entries_) {
     auto pending = host->typedLbPolicyData<PendingRequests>();
@@ -91,6 +94,7 @@ int64_t PeakEwmaDeadlineLoadBalancer::monoNowNs() const {
       .count();
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#provisionalcurrentrtt
 void PeakEwmaDeadlineLoadBalancer::registerPending(Upstream::LoadBalancerContext* context,
                                                    const Upstream::HostConstSharedPtr& host) {
   StreamInfo::StreamInfo* info = context != nullptr ? context->requestStreamInfo() : nullptr;
@@ -114,6 +118,7 @@ void PeakEwmaDeadlineLoadBalancer::registerPending(Upstream::LoadBalancerContext
   registration->add(host, now);
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#provisionalcurrentrtt
 double PeakEwmaDeadlineLoadBalancer::provisionalRtt(const Upstream::HostConstSharedPtr& host,
                                                     int64_t now_mono_ns, bool& has_pending) {
   auto* data = getPeakEwmaData(host);
@@ -163,6 +168,8 @@ int64_t PeakEwmaDeadlineLoadBalancer::nowUnixNs() const {
 // The DeadlineFilter over EVERY healthy host (not two random ones): reject a host whose ProvisionalCurrentRTT >
 // time left; then the lowest Peak EWMA cost among the kept hosts.
 Upstream::HostConstSharedPtr
+// Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
+// Design: abstraction/ingress/load_balancer/design.md#deadlinefilter
 PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const char* kind,
                                      Upstream::LoadBalancerContext* context) {
   const auto& host_sets = priority_set_.hostSetsPerPriority();
@@ -181,6 +188,7 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
   size_t n_excluded = 0;
   if (context != nullptr) {
     for (size_t i = 0; i < hosts.size(); ++i) {
+      // Design: abstraction/ingress/load_balancer/design.md#lbpolicy
       excluded[i] = context->shouldSelectAnotherHost(*hosts[i]);
       n_excluded += excluded[i] ? 1 : 0;
     }
@@ -241,6 +249,8 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
 }
 
 Upstream::HostSelectionResponse
+// Design: abstraction/ingress/load_balancer/design.md#loadbalancer
+// Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
 PeakEwmaDeadlineLoadBalancer::chooseHost(Upstream::LoadBalancerContext* context) {
   maybeAggregate();
   const absl::optional<int64_t> deadline = deadlineOf(context);
@@ -285,6 +295,7 @@ bool PeakEwmaDeadlineLoadBalancer::ensureTimer(Upstream::LoadBalancerContext* co
 }
 
 Upstream::HostSelectionResponse
+// Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
 PeakEwmaDeadlineLoadBalancer::enqueue(Upstream::LoadBalancerContext* context, int64_t deadline_unix_ns) {
   if (!ensureTimer(context)) {
     return {nullptr, std::string(kDroppedDetails)}; // no worker dispatcher to wait on: fail now
@@ -297,6 +308,7 @@ PeakEwmaDeadlineLoadBalancer::enqueue(Upstream::LoadBalancerContext* context, in
 }
 
 Upstream::HostSelectionResponse
+// Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
 PeakEwmaDeadlineLoadBalancer::waitAsRetry(Upstream::LoadBalancerContext* context, int64_t deadline_unix_ns) {
   if (!ensureTimer(context)) {
     // No dispatcher to re-check on. A nullptr host would fail the whole request, so the retry waits on a handle
@@ -313,6 +325,7 @@ PeakEwmaDeadlineLoadBalancer::waitAsRetry(Upstream::LoadBalancerContext* context
 // FilterWaitQueue scan: oldest first; drop past the deadline, send what now fits, keep the rest in place.
 // Each entry leaves the queue before its router is called back, so a callback that ends other streams
 // (cancel: only a flag) or adds requests (push_back) cannot invalidate this iteration.
+// Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
 void PeakEwmaDeadlineLoadBalancer::scan() {
   maybeAggregate();
   for (auto it = queue_.begin(); it != queue_.end();) {

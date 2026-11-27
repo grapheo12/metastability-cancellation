@@ -1,4 +1,6 @@
 #include "source/common/router/router.h"
+// Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
+// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.8.0)
 #include "source/common/router/testbed_retry_hook.h"
 
 #include <algorithm>
@@ -1537,6 +1539,8 @@ void Filter::onSoftPerTryTimeout(UpstreamRequest& upstream_request) {
 // on the hook's yes a retry starts as for a hedged per-try timeout (onSoftPerTryTimeout, without its outlier
 // detection update): the attempt keeps running and the retry's host comes from the load balancer (with the route's
 // retry host predicates). Returns whether the attempt should keep ticking.
+// Design: abstraction/ingress/frontend/design.md#hedgedforwarding
+// Design: abstraction/ingress/retry_policy/design.md#retryevent
 bool Filter::onRetryHookTick(UpstreamRequest& upstream_request) {
   TestbedRetryHook* hook = TestbedRetryHook::get();
   if (hook == nullptr || downstream_response_started_ || retry_state_ == nullptr ||

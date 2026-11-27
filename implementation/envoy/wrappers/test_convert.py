@@ -1,3 +1,5 @@
+# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.18.2)
+# Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
 """Unit tests for the impl/envoy wrappers' conversions (python3 -m unittest discover -s implementation/envoy/wrappers)."""
 import csv
 import json
@@ -9,6 +11,7 @@ import convert
 
 
 class IngressConversion(unittest.TestCase):
+    # Design: abstraction/ingress/load_balancer/design.md#forwardlog
     def test_outcomes(self):
         self.assertEqual(convert.forward_outcome(202, "-"), "ok")
         self.assertEqual(convert.forward_outcome(503, "-"), "rejected")
@@ -17,6 +20,7 @@ class IngressConversion(unittest.TestCase):
         self.assertEqual(convert.forward_outcome(0, "DC"), "reset")          # client went away
         self.assertEqual(convert.forward_outcome(502, "-"), "bad_gateway")
 
+    # Design: abstraction/ingress/load_balancer/design.md#forwardlog
     def test_access_log_to_forwards_and_summary(self):
         lines = [
             "1700000000.100000000,400000000,399000000,10.0.0.1:8080,202,-,1",
@@ -51,6 +55,7 @@ class IngressConversion(unittest.TestCase):
 
 
 class UpstreamAttempts(unittest.TestCase):
+    # Design: abstraction/ingress/frontend/design.md#forwardattempt
     def test_attempt_outcomes(self):
         self.assertEqual(convert.attempt_outcome(202, "-"), "ok")
         self.assertEqual(convert.attempt_outcome(202, "UT"), "ok")       # answered after its per-try timeout fired
@@ -61,6 +66,7 @@ class UpstreamAttempts(unittest.TestCase):
         self.assertEqual(convert.attempt_outcome(0, "UF"), "bad_gateway")  # connection failure
         self.assertEqual(convert.attempt_outcome(0, "UF,UT"), "bad_gateway")
 
+    # Design: abstraction/ingress/frontend/design.md#forwardattempt
     def test_upstream_log_to_forwards_with_attempts(self):
         backends = ["10.0.0.1:8080", "10.0.0.2:8080"]
         lines = [
@@ -88,6 +94,7 @@ class UpstreamAttempts(unittest.TestCase):
                               ("8900000000", "1", "ok", "1")])
             self.assertEqual(convert.lb_retries(rows), 1)  # r1 had two attempts, r2 one
 
+    # Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
     def test_retry_counts(self):
         # merged queue rows: t_ns,worker,event,wait_ns,remaining_ns,server_id,refused
         rows = [["1", "0", "retry_waiting", "0", "5000", "", ""],

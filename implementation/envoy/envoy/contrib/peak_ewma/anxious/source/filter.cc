@@ -1,3 +1,6 @@
+// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.8.0)
+// Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.18.2)
 // Source: abstraction/protocol/design.md (protocol v0.8.0)
 #include "contrib/peak_ewma/anxious/source/filter.h"
 
@@ -71,6 +74,7 @@ int64_t AnxiousState::monoNowNs() const {
       .count();
 }
 
+// Design: abstraction/ingress/frontend/design.md#hedgedforwarding
 absl::optional<uint64_t> AnxiousState::deadlineOf(const Http::RequestHeaderMap& headers) const {
   const auto values = headers.get(deadline_header_);
   uint64_t deadline;
@@ -94,6 +98,7 @@ std::FILE* AnxiousState::traceFile(std::FILE*& f, const char* kind, const char* 
   return f;
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#ewmaantiservicetime
 void AnxiousState::onExecSample(size_t backend, uint64_t exec_ns) {
   tracker_.execSample(backend, exec_ns);
   absl::MutexLock lock(&trace_mu_);
@@ -112,6 +117,8 @@ void AnxiousState::onExecSample(size_t backend, uint64_t exec_ns) {
   }
 }
 
+// Design: abstraction/ingress/retry_policy/design.md#retryevent
+// Design: abstraction/ingress/frontend/design.md#hedgedforwarding
 bool AnxiousState::shouldRetryNow(const StreamInfo::StreamInfo& request_info,
                                   const Http::RequestHeaderMap& request) {
   // The newest attempt's record (the router only asks about the newest attempt; its number is attemptCount()).
@@ -151,6 +158,9 @@ bool AnxiousState::shouldRetryNow(const StreamInfo::StreamInfo& request_info,
   return retry;
 }
 
+// Design: abstraction/ingress/frontend/design.md#forwardattempt
+// Design: abstraction/ingress/retry_policy/design.md#retryobservation
+// Design: abstraction/ingress/load_balancer/design.md#forwardticket
 Http::FilterHeadersStatus AnxiousUpstreamFilter::decodeHeaders(Http::RequestHeaderMap& headers, bool) {
   StreamInfo::StreamInfo& info = decoder_callbacks_->streamInfo();
   const auto upstream = info.upstreamInfo();
@@ -189,6 +199,7 @@ Http::FilterDataStatus AnxiousUpstreamFilter::encodeData(Buffer::Instance& data,
   return Http::FilterDataStatus::Continue;
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#ewmaexectime
 void AnxiousUpstreamFilter::maybeParseExec(bool end) {
   if (parsed_ || !backend_.has_value() || (status_ != 202 && status_ != 503)) {
     return; // only ok and rejected answers carry a sample
@@ -202,6 +213,7 @@ void AnxiousUpstreamFilter::maybeParseExec(bool end) {
   }
 }
 
+// Design: abstraction/ingress/retry_policy/design.md#retryobservation
 void AnxiousUpstreamFilter::onDestroy() {
   if (sent_) { // AttemptFinished
     state_->tracker().attemptFinished(seq_, *backend_);

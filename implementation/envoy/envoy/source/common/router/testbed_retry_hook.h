@@ -1,3 +1,5 @@
+// Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
+// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.8.0)
 #pragma once
 
 // impl/envoy (cancellation testbed): a process-wide hook that lets a retry policy start an LB retry (a hedge) of an
@@ -18,6 +20,8 @@ namespace Router {
 
 constexpr std::chrono::milliseconds kTestbedRetryHookTick{10}; // LB_RETRY_TICK_MS
 
+// Design: abstraction/ingress/retry_policy/design.md#retrypolicy
+// Design: abstraction/ingress/frontend/design.md#hedgedforwarding
 class TestbedRetryHook {
 public:
   virtual ~TestbedRetryHook() = default;

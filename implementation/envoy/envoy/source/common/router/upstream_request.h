@@ -85,6 +85,8 @@ public:
 
   virtual void resetStream();
   void setupPerTryTimeout();
+  // Design: abstraction/ingress/frontend/design.md#hedgedforwarding
+  // Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
   // impl/envoy (cancellation testbed): the TestbedRetryHook tick (testbed_retry_hook.h).
   void onRetryHookTimer();
   void maybeEndDecode(bool end_stream);

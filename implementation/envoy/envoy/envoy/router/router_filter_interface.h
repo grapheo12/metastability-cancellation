@@ -98,6 +98,8 @@ public:
    */
   virtual void onPerTryIdleTimeout(UpstreamRequest& upstream_request) PURE;
 
+  // Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
+  // Design: abstraction/ingress/frontend/design.md#hedgedforwarding
   /*
    * impl/envoy (cancellation testbed): called every kTestbedRetryHookTick on an upstream attempt whose request was
    * sent, while a TestbedRetryHook is registered (source/common/router/testbed_retry_hook.h).

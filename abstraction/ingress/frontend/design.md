@@ -363,3 +363,50 @@ stateDiagram-v2
 | body unparseable | never published | (no pick) | `400` |
 | DeadlineFilter leaves no backend, one fits later | published once sent from the queue | as for a direct send | the answer, later |
 | DeadlineFilter leaves no backend until the deadline passes | never published | (no `finish`; `filter_dropped += 1`) | `503` + `{"id":"<dec>"}` |
+
+## Design specific to Envoy
+
+Implementation: `implementation/envoy`: vendored Envoy (`envoy/`) and Nighthawk (`nighthawk/`) with the testbed's
+changes, recorded in [VENDORED.md](../../../implementation/envoy/VENDORED.md) ([AGENTS.md](../../../AGENTS.md#vendored-code)),
+built in Docker with Bazel by `implementation/envoy/build.sh` (C++ tests: `bazel test` on the targets VENDORED.md
+names); Python 3 wrappers `bin/ingress.py`, `bin/loadgen.py` and `wrappers/convert.py` (tests: `cd
+implementation/envoy/wrappers && python3 -B -m unittest test_convert`). Only code written or changed for the testbed
+carries `Design:` tags; unchanged upstream code does not.
+
+### Envoy choices
+
+- Client connections and ForwardTask: Envoy's HTTP connection manager and router, configured by `bin/ingress.py`
+  (h2c, `max_concurrent_streams` 100000, no timeouts, the route to the cluster; the route strips
+  `x-worker-threads`).
+- ForwardAttempt: each upstream attempt is a router `UpstreamRequest`; `testbed_anxious` observes it (AttemptSent,
+  AttemptFinished) and `convert.attempt_outcome` classifies it from the upstream log.
+- HedgedForwarding: Envoy's router hedging. TimeoutHedge is the route `retry_policy` with `per_try_timeout =
+  lb_retry_timeout_ms` and `hedge_on_per_try_timeout` (no retry on any status or reset). Anxious ticks are our router
+  change: a `TestbedRetryHook` (`testbed_retry_hook.h`, new) asked every 10 ms per attempt (`onRetryHookTick`) for
+  the newest unanswered attempt; RetryElsewhere is the `previous_hosts` retry host predicate. The deadline comes from
+  the RequestDeadlineHeader (`AnxiousState::deadlineOf`).
+
+### Not traced
+
+| Design subsection | Reason |
+|---|---|
+| [LbRetryLoop](#lbretryloop) | not realized on Envoy: `forward_mode relay is not supported by this implementation` |
+| [StartOnce](#startonce) | not realized on Envoy: it starts the LoadCanceller, and `cancel_rate > 0` is rejected |
+| [State machine (per ForwardTask)](#state-machine-per-forwardtask) | unchanged upstream code: Envoy's router (`envoy/source/common/router/router.cc`), configured for HedgedForwarding |
+
+### Traceability
+
+Generated from the `Design:` tags in the testbed's code under `implementation/envoy` by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Envoy --impl implementation/envoy --ext .cc --ext .h --comment // --ext .py:# --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [Client connections](#client-connections) | [ingress.py:221](../../../implementation/envoy/bin/ingress.py#L221) |
+| [ForwardTask](#forwardtask) | [ingress.py:181](../../../implementation/envoy/bin/ingress.py#L181) |
+| [ForwardAttempt](#forwardattempt) | [ingress.py:174](../../../implementation/envoy/bin/ingress.py#L174), [filter.cc:164](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/filter.cc#L164), [convert.py:92](../../../implementation/envoy/wrappers/convert.py#L92), [test_convert.py:59](../../../implementation/envoy/wrappers/test_convert.py#L59), [test_convert.py:70](../../../implementation/envoy/wrappers/test_convert.py#L70) |
+| [LbRetryLoop](#lbretryloop) | not traced |
+| [HedgedForwarding](#hedgedforwarding) | [ingress.py:184](../../../implementation/envoy/bin/ingress.py#L184), [ingress.py:196](../../../implementation/envoy/bin/ingress.py#L196), [filter.cc:78](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/filter.cc#L78), [filter.cc:122](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/filter.cc#L122), [router_filter_interface.h:103](../../../implementation/envoy/envoy/envoy/router/router_filter_interface.h#L103), [router.cc:1544](../../../implementation/envoy/envoy/source/common/router/router.cc#L1544), [router.h:543](../../../implementation/envoy/envoy/source/common/router/router.h#L543), [testbed_retry_hook.h:25](../../../implementation/envoy/envoy/source/common/router/testbed_retry_hook.h#L25), [upstream_request.cc:593](../../../implementation/envoy/envoy/source/common/router/upstream_request.cc#L593), [upstream_request.h:91](../../../implementation/envoy/envoy/source/common/router/upstream_request.h#L91), [convert.py:78](../../../implementation/envoy/wrappers/convert.py#L78) |
+| [StartOnce](#startonce) | not traced |
+| [State machine (per ForwardTask)](#state-machine-per-forwardtask) | not traced |
+<!-- trace:end -->

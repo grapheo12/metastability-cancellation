@@ -1,3 +1,5 @@
+// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.8.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.18.2)
 // Source: abstraction/protocol/design.md (protocol v0.8.0)
 // impl/envoy (cancellation testbed): the AnxiousTracker against every worked example of
 // abstraction/ingress/retry_policy/design.md#anxious and load_balancer/design.md#ewmaantiservicetime.
@@ -45,6 +47,7 @@ struct Row {
   double current; // when anxious
 };
 
+// Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 TEST(AnxiousSet, WorkedExamples) {
   const absl::optional<double> none;
   const std::vector<Row> rows = {
@@ -74,6 +77,7 @@ TEST(AnxiousSet, WorkedExamples) {
   }
 }
 
+// Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 TEST(AnxiousDecide, ExpectedLateTable) {
   EXPECT_TRUE(AnxiousTracker::expectedLate(400, 30, 10));    // 400 > 300
   EXPECT_FALSE(AnxiousTracker::expectedLate(400, 40, 10));   // tie: strict >
@@ -86,6 +90,7 @@ TEST(AnxiousDecide, ExpectedLateTable) {
   EXPECT_FALSE(tracker.decide(1, 10)); // not in the published map
 }
 
+// Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 TEST(AnxiousTracker, EndToEndEdfRow) {
   AnxiousTracker tracker({"a", "b"}, 0.3, 10, 0.7);
   tracker.execSample(0, 80); // exec[a] = 80, anti[b] = 80
@@ -109,6 +114,7 @@ TEST(AnxiousTracker, EndToEndEdfRow) {
   EXPECT_EQ(tracker.inFlight(), 9u);
 }
 
+// Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 TEST(AnxiousTracker, EvaluatesOnlyAfterAChangeAtMostEveryTick) {
   AnxiousTracker tracker({"a", "b"}, 0.3, 10, 0.7);
   constexpr int64_t ms = 1'000'000;
@@ -124,6 +130,7 @@ TEST(AnxiousTracker, EvaluatesOnlyAfterAChangeAtMostEveryTick) {
   EXPECT_TRUE(tracker.maybeEvaluate(30 * ms));
 }
 
+// Design: abstraction/ingress/retry_policy/design.md#retrystate
 TEST(AnxiousTracker, EdfAheadBookkeeping) {
   AnxiousTracker tracker({"a", "b"}, 0.3, 10, 0.7);
   tracker.attemptSent(9, 0, 5);
@@ -140,6 +147,7 @@ TEST(AnxiousTracker, EdfAheadBookkeeping) {
   EXPECT_EQ(tracker.edfAhead(0, 12), 3u);
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#ewmaantiservicetime
 TEST(AnxiousTracker, EwmaAntiServiceTimeExample) {
   AnxiousTracker tracker({"a", "b", "c"}, 0.3, 10, 0.5);
   tracker.execSample(0, 100);

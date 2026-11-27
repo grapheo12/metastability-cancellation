@@ -46,6 +46,7 @@ void GlobalHostStats::setActiveRequestsStat(double active_requests) {
   active_requests_stat_.set(static_cast<uint64_t>(active_requests));
 }
 
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.18.2)
 // impl/envoy: PeakEwmaTrace (see peak_ewma_lb.h).
 
 namespace {
@@ -300,6 +301,7 @@ PeakEwmaLoadBalancer::chooseHost(Upstream::LoadBalancerContext* context) {
     return {nullptr, ""};
   }
 
+  // Design: abstraction/ingress/load_balancer/design.md#lbpolicy
   // impl/envoy (cancellation testbed): honor the retry host predicates (e.g. previous_hosts for the testbed's
   // RetryElsewhere): hosts the context asks to avoid are left out, unless that would leave none.
   Upstream::HostVector allowed;
@@ -377,6 +379,7 @@ void PeakEwmaLoadBalancer::aggregateWorkerData() {
 double PeakEwmaLoadBalancer::calculateTimeBasedAlpha(uint64_t later_time_ns,
                                                      uint64_t earlier_time_ns) {
   int64_t time_delta_ns = static_cast<int64_t>(later_time_ns - earlier_time_ns);
+  // Design: abstraction/ingress/load_balancer/design.md#peakewmartt
   // impl/envoy: alpha = 1 - e^(-max(dt, 0)/tau). A concurrent or out-of-order sample (dt <= 0, e.g. samples from
   // two workers reaching the shared ring buffer a few ns out of order) gets no weight; upstream gave it full weight
   // (alpha = 1), which replaced the whole EWMA by that one sample.

@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# Source: abstraction/ingress/design.md (ingress v0.16.1)
+# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.18.2)
+# Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
+# Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.8.0)
+# Source: abstraction/ingress/upstream_pool/design.md (upstream_pool v0.1.2)
 # Source: abstraction/protocol/design.md (protocol v0.8.0)
 """impl/envoy Ingress: runs the vendored Envoy (build/envoy-static) as the testbed's Ingress, with the Go Ingress's
 command line (abstraction/ingress/api.md#program-parameters), and writes its outputs (forwards.csv, summary.json)
@@ -44,6 +49,7 @@ def fail(message):
     sys.exit(2)
 
 
+# Design: abstraction/ingress/design.md#configuration-validation
 def validate(args):
     """The Ingress's configuration validation, in the spec's order, then what this implementation does not realize
     rejected as not supported."""
@@ -105,6 +111,7 @@ def anxious(args):
     return args.lb_retry_policy == "anxious" and args.lb_max_retries > 0
 
 
+# Design: abstraction/ingress/load_balancer/design.md#lbpolicy
 def cluster_policy(args):
     """The Envoy load-balancing policy for the validated flags (lb_policy is peak_ewma)."""
     if args.lb_filter == "deadline_provisional_rtt":
@@ -118,6 +125,7 @@ def free_port():
         return s.getsockname()[1]
 
 
+# Design: abstraction/ingress/design.md#structure
 def envoy_config(args, backends, admin_port, access_log, upstream_log=None):
     host, port = args.listen_addr.rsplit(":", 1)
     policy = cluster_policy(args)
@@ -126,6 +134,9 @@ def envoy_config(args, backends, admin_port, access_log, upstream_log=None):
         "connect_timeout": "5s",
         # One upstream connection per client connection and backend, so a server sees one client per connection
         # (its client binding, abstraction/server/ping_handler/design.md#client-binding).
+        # Design: abstraction/ingress/design.md#why-one-upstream-connection-per-client-and-backend
+        # Design: abstraction/ingress/upstream_pool/design.md#upstreampool
+        # Design: abstraction/ingress/upstream_pool/design.md#get
         "connection_pool_per_downstream_connection": True,
         "typed_extension_protocol_options": {"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": {
             "@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
@@ -158,13 +169,18 @@ def envoy_config(args, backends, admin_port, access_log, upstream_log=None):
     router = {"name": "envoy.filters.http.router", "typed_config": {
         "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"}}
     if upstream_log is not None:  # one line per upstream attempt (forwards.csv)
+        # Design: abstraction/ingress/load_balancer/design.md#forwardlog
+        # Design: abstraction/ingress/frontend/design.md#forwardattempt
         router["typed_config"]["upstream_log"] = [{"name": "envoy.access_loggers.file", "typed_config": {
             "@type": "type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog",
             "path": upstream_log, "log_format": {"text_format_source": {
                 "inline_string": convert.UPSTREAM_LOG_FORMAT}}}}]
     # WorkerCount (x-worker-threads) is read by an Ingress, never relayed to the client.
     # Design: abstraction/protocol/design.md#workercount
+    # Design: abstraction/ingress/frontend/design.md#forwardtask
     route = {"cluster": "servers", "timeout": "0s", "response_headers_to_remove": ["x-worker-threads"]}
+    # Design: abstraction/ingress/frontend/design.md#hedgedforwarding
+    # Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
     if hedging(args):
         # The timeout RetryPolicy as Envoy hedging: after lb_retry_timeout_ms without an answer, one more attempt
         # through the load balancer, the slow one kept; never on errors (retriable-status-codes with no codes
@@ -175,6 +191,8 @@ def envoy_config(args, backends, admin_port, access_log, upstream_log=None):
             "per_try_timeout": f"{float(args.lb_retry_timeout_ms) / 1000:.6f}s",
             "retry_back_off": {"base_interval": "0.001s", "max_interval": "0.001s"}}
         route["hedge_policy"] = {"hedge_on_per_try_timeout": True}
+    # Design: abstraction/ingress/frontend/design.md#hedgedforwarding
+    # Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
     if anxious(args):
         # AnxiousRetry: the router asks the testbed_anxious hook every 10 ms (no per-try timer); a retry is a hedge
         # that avoids the backends this request already tried (RetryElsewhere); never on errors, as Go.
@@ -187,6 +205,7 @@ def envoy_config(args, backends, admin_port, access_log, upstream_log=None):
             "host_selection_retry_max_attempts": 5}
         route["hedge_policy"] = {"hedge_on_per_try_timeout": True}
     # Peak EWMA learns RTTs only through its HTTP filter, which must run before the router.
+    # Design: abstraction/ingress/load_balancer/design.md#peakewmartt
     http_filters = ([{"name": "envoy.filters.http.peak_ewma", "typed_config": {
         "@type": "type.googleapis.com/envoy.extensions.filters.http.peak_ewma.v3alpha.PeakEwmaConfig"}}]
                     if policy in ("PEAK_EWMA", "PEAK_EWMA_DEADLINE") else []) + [router]
@@ -198,6 +217,7 @@ def envoy_config(args, backends, admin_port, access_log, upstream_log=None):
         "http2_protocol_options": {"max_concurrent_streams": 100000},
         "route_config": {"name": "ping", "virtual_hosts": [{"name": "all", "domains": ["*"], "routes": [
             {"match": {"prefix": "/"}, "route": route}]}]},
+        # Design: abstraction/ingress/frontend/design.md#client-connections
         "http_filters": http_filters,
         "access_log": [{"name": "envoy.access_loggers.file", "typed_config": {
             "@type": "type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog",
@@ -226,6 +246,7 @@ def main():
     admin_port = free_port()
     cfg_path = out + ".envoy.json"
     convert.write_json(envoy_config(args, backends, admin_port, access_log, upstream_log), cfg_path)
+    # Design: abstraction/ingress/design.md#concurrency-model
     concurrency = os.environ.get("GOMAXPROCS") or str(os.cpu_count() or 1)
     env = dict(os.environ)
     trace_prefix = out + ".peak_ewma"
@@ -234,6 +255,7 @@ def main():
     envoy = subprocess.Popen([ENVOY, "--config-path", cfg_path, "--concurrency", concurrency,
                               "--use-dynamic-base-id", "-l", "warning", "--log-path", out + ".envoy.log"], env=env)
     stop = {"now": False}
+    # Design: abstraction/ingress/design.md#shutdown
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.update(now=True))
     deadline = time.monotonic() + 60

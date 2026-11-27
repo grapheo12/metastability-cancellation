@@ -1,3 +1,5 @@
+// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.8.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.18.2)
 #include "contrib/peak_ewma/anxious/source/anxious_tracker.h"
 
 #include <algorithm>
@@ -12,6 +14,7 @@ namespace {
 
 // One EWMA step, as ewma_exec_update / ewma_anti_update: the first sample is the average, then
 // old * beta + x * (1 - beta), each product and the sum rounded on its own (separate statements: no contraction).
+// Design: abstraction/ingress/load_balancer/design.md#ewmaexectime
 double ewmaStep(const absl::optional<double>& old, double x, double beta) {
   if (!old.has_value()) {
     return x;
@@ -37,18 +40,22 @@ absl::optional<size_t> AnxiousTracker::backendIndex(absl::string_view address) c
   return absl::nullopt;
 }
 
+// Design: abstraction/ingress/retry_policy/design.md#retryobservation
 void AnxiousTracker::attemptSent(uint64_t seq, size_t b, uint64_t deadline) {
   absl::MutexLock lock(&mu_);
   entries_[b][seq] = deadline;
   dirty_ = true;
 }
 
+// Design: abstraction/ingress/retry_policy/design.md#retryobservation
 void AnxiousTracker::attemptFinished(uint64_t seq, size_t b) {
   absl::MutexLock lock(&mu_);
   entries_[b].erase(seq);
   dirty_ = true;
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#ewmaexectime
+// Design: abstraction/ingress/load_balancer/design.md#ewmaantiservicetime
 void AnxiousTracker::execSample(size_t b, uint64_t exec_ns) {
   const double x = static_cast<double>(exec_ns); // binary64, round to nearest
   absl::MutexLock lock(&mu_);
@@ -61,6 +68,7 @@ void AnxiousTracker::execSample(size_t b, uint64_t exec_ns) {
   dirty_ = true; // EwmaChanged
 }
 
+// Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 bool AnxiousTracker::maybeEvaluate(int64_t now_mono_ns) {
   absl::MutexLock lock(&mu_);
   if (!dirty_ || (last_eval_ns_.has_value() && now_mono_ns - *last_eval_ns_ < kAnxiousTickNs)) {
@@ -72,6 +80,7 @@ bool AnxiousTracker::maybeEvaluate(int64_t now_mono_ns) {
   return true;
 }
 
+// Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 bool AnxiousTracker::expectedLate(double current, absl::optional<int64_t> remaining_ns, double beta) {
   if (!remaining_ns.has_value()) {
     return false; // no RequestDeadline: never late, never retried
@@ -80,6 +89,8 @@ bool AnxiousTracker::expectedLate(double current, absl::optional<int64_t> remain
   return current > limit;                                          // ExpectedLate: strict >
 }
 
+// Design: abstraction/ingress/retry_policy/design.md#retrypolicy
+// Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 bool AnxiousTracker::decide(uint64_t seq, absl::optional<int64_t> remaining_ns) const {
   const absl::optional<double> c = currentExpFinish(seq);
   return c.has_value() && expectedLate(*c, remaining_ns, beta_);
@@ -118,6 +129,7 @@ absl::optional<double> AnxiousTracker::anti(size_t b) const {
   return anti_[b];
 }
 
+// Design: abstraction/ingress/retry_policy/design.md#retrystate
 uint64_t AnxiousTracker::edfAhead(size_t b, uint64_t deadline) const {
   absl::MutexLock lock(&mu_);
   uint64_t n = 0;
@@ -127,6 +139,7 @@ uint64_t AnxiousTracker::edfAhead(size_t b, uint64_t deadline) const {
   return n;
 }
 
+// Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
 std::map<uint64_t, double> AnxiousTracker::anxiousSet(const Entries& entries,
                                                       const std::vector<absl::optional<double>>& exec,
                                                       const std::vector<absl::optional<double>>& anti,

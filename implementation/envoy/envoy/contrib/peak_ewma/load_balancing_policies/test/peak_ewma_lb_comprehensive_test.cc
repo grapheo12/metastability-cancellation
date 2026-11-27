@@ -114,7 +114,9 @@ TEST_F(PeakEwmaLoadBalancerComprehensiveTest, BasicHostSelection) {
 // Note: More detailed tests for RTT recording and EWMA calculation
 // are covered in host_data_test.cc and other unit tests
 
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.18.2)
 // impl/envoy (cancellation testbed): hosts the context asks to avoid (retry host predicates) are not chosen.
+// Design: abstraction/ingress/load_balancer/design.md#lbpolicy
 TEST_F(PeakEwmaLoadBalancerComprehensiveTest, HonorsRetryHostPredicates) {
   createLoadBalancer();
   NiceMock<Upstream::MockLoadBalancerContext> context;

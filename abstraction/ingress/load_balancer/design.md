@@ -901,3 +901,67 @@ LiveSet, `B = 3`, backend 1 not live, so `L = [0, 2]` and `n = 2`:
 | `ewma` | any | (1, 0) | — | pair `(L[0], L[1]) = (0, 2)`; the scores of 0 and 2 decide |
 | any | only backend 2 live | none | 2 | `n = 1`: no draw |
 | any | no backend live | as for `B = 3` | as without a monitor | `L = [0, 1, 2]` |
+
+## Design specific to Envoy
+
+Implementation: `implementation/envoy`: vendored Envoy (`envoy/`) and Nighthawk (`nighthawk/`) with the testbed's
+changes, recorded in [VENDORED.md](../../../implementation/envoy/VENDORED.md) ([AGENTS.md](../../../AGENTS.md#vendored-code)),
+built in Docker with Bazel by `implementation/envoy/build.sh` (C++ tests: `bazel test` on the targets VENDORED.md
+names); Python 3 wrappers `bin/ingress.py`, `bin/loadgen.py` and `wrappers/convert.py` (tests: `cd
+implementation/envoy/wrappers && python3 -B -m unittest test_convert`). Only code written or changed for the testbed
+carries `Design:` tags; unchanged upstream code does not.
+
+### Envoy choices
+
+- LoadBalancer and LbPolicy: `lb_policy = peak_ewma` is Envoy's contrib `peak_ewma` policy (upstream
+  `peak_ewma_lb.cc`); with `deadline_provisional_rtt` it is the testbed's `peak_ewma_deadline` policy
+  (`deadline_lb.cc`, new), which reuses it. Our change to `peak_ewma_lb.cc` honors the retry host predicates
+  (AvoidedBackends, with the fall-back to all hosts); the native random source is Envoy's `RandomGenerator`.
+- PeakEwmaRtt: upstream records first-byte RTTs in its HTTP filter and folds them every 100 ms from a 1000-sample
+  ring; our change gives a sample with Δt <= 0 the weight 0 (`calculateTimeBasedAlpha`; upstream gave it 1).
+- ProvisionalCurrentRtt and PeakEwmaDeadline: `PendingRequests` host data (shared by the workers) and a
+  `PendingRegistration` in the request's filter state, released when the downstream stream ends; `decide` filters
+  every healthy host and takes the lowest cost; per-worker `queue_` and `retry_waiters_` with a 10 ms dispatcher
+  timer; a request dropped past its deadline gets Envoy's local reply `503 no healthy upstream`.
+- EwmaExecTime and EwmaAntiServiceTime: kept by the `testbed_anxious` upstream filter from each answer's ExecReport
+  (only when `lb_retry_policy = anxious`), and recomputed for the summary by `convert.exec_ewmas`.
+- ForwardLog and EwmaLatency: ForwardLogFromAccessLog, built by `convert.write_forwards` from the router's
+  per-attempt upstream log; EwmaLatency is recomputed there with `ewma_beta`. FilterWaitQueue counters come from the
+  balancer's queue trace (`convert.filter_counts`).
+- ForwardTicket: the TicketSeq of an attempt is assigned by `testbed_anxious` when the attempt's headers go upstream.
+
+### Not traced
+
+| Design subsection | Reason |
+|---|---|
+| [EstimatedFinish](#estimatedfinish) | not realized on Envoy: `estimate_ns` is empty in a ForwardLog built from an access log ([ForwardLog](#forwardlog)) |
+| [EwmaScore](#ewmascore) | not realized on Envoy: `lb_policy ewma is not supported by this implementation` |
+| [PeakEwmaCost](#peakewmacost) | unchanged upstream code: `envoy/contrib/peak_ewma/load_balancing_policies/source/cost.cc` |
+| [PickLog](#picklog) | optional output: Envoy writes `picks.csv` with its header only |
+
+### Traceability
+
+Generated from the `Design:` tags in the testbed's code under `implementation/envoy` by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Envoy --impl implementation/envoy --ext .cc --ext .h --comment // --ext .py:# --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [LoadBalancer](#loadbalancer) | [deadline_lb.cc:254](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/source/deadline_lb.cc#L254) |
+| [ForwardTicket](#forwardticket) | [filter.cc:164](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/filter.cc#L164) |
+| [EstimatedFinish](#estimatedfinish) | not traced |
+| [EwmaLatency](#ewmalatency) | [convert.py:133](../../../implementation/envoy/wrappers/convert.py#L133) |
+| [EwmaExecTime](#ewmaexectime) | [anxious_tracker.cc:18](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/anxious_tracker.cc#L18), [anxious_tracker.cc:59](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/anxious_tracker.cc#L59), [filter.cc:203](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/filter.cc#L203), [convert.py:285](../../../implementation/envoy/wrappers/convert.py#L285) |
+| [EwmaAntiServiceTime](#ewmaantiservicetime) | [anxious_tracker.cc:59](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/anxious_tracker.cc#L59), [filter.cc:102](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/filter.cc#L102), [anxious_tracker_test.cc:151](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/test/anxious_tracker_test.cc#L151), [convert.py:285](../../../implementation/envoy/wrappers/convert.py#L285) |
+| [EwmaScore](#ewmascore) | not traced |
+| [PeakEwmaRtt](#peakewmartt) | [ingress.py:209](../../../implementation/envoy/bin/ingress.py#L209), [peak_ewma_lb.cc:386](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/source/peak_ewma_lb.cc#L386), [peak_ewma_lb_host_lifecycle_test.cc:367](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/peak_ewma_lb_host_lifecycle_test.cc#L367) |
+| [PeakEwmaCost](#peakewmacost) | not traced |
+| [LbPolicy](#lbpolicy) | [ingress.py:115](../../../implementation/envoy/bin/ingress.py#L115), [deadline_lb.cc:192](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/source/deadline_lb.cc#L192), [peak_ewma_lb.cc:307](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/source/peak_ewma_lb.cc#L307), [deadline_lb_test.cc:365](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/deadline_lb_test.cc#L365), [deadline_lb_test.cc:375](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/deadline_lb_test.cc#L375), [peak_ewma_lb_comprehensive_test.cc:120](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/peak_ewma_lb_comprehensive_test.cc#L120) |
+| [DeadlineFilter](#deadlinefilter) | [deadline_lb.cc:173](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/source/deadline_lb.cc#L173) |
+| [FilterWaitQueue](#filterwaitqueue) | [convert.py:308](../../../implementation/envoy/wrappers/convert.py#L308) |
+| [ProvisionalCurrentRtt](#provisionalcurrentrtt) | [deadline_lb.cc:24](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/source/deadline_lb.cc#L24), [deadline_lb.cc:46](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/source/deadline_lb.cc#L46), [deadline_lb.cc:98](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/source/deadline_lb.cc#L98), [deadline_lb.cc:122](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/source/deadline_lb.cc#L122), [deadline_lb_test.cc:322](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/deadline_lb_test.cc#L322), [deadline_lb_test.cc:337](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/deadline_lb_test.cc#L337), [deadline_lb_test.cc:350](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/deadline_lb_test.cc#L350) |
+| [PeakEwmaDeadline](#peakewmadeadline) | [deadline_lb.cc:173](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/source/deadline_lb.cc#L173), [deadline_lb.cc:254](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/source/deadline_lb.cc#L254), [deadline_lb.cc:299](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/source/deadline_lb.cc#L299), [deadline_lb.cc:312](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/source/deadline_lb.cc#L312), [deadline_lb.cc:329](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/source/deadline_lb.cc#L329), [deadline_lb_test.cc:123](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/deadline_lb_test.cc#L123), [deadline_lb_test.cc:134](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/deadline_lb_test.cc#L134), [deadline_lb_test.cc:150](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/deadline_lb_test.cc#L150), [deadline_lb_test.cc:158](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/deadline_lb_test.cc#L158), [deadline_lb_test.cc:166](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/deadline_lb_test.cc#L166), [deadline_lb_test.cc:176](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/deadline_lb_test.cc#L176), [deadline_lb_test.cc:219](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/deadline_lb_test.cc#L219), [deadline_lb_test.cc:232](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/deadline_lb_test.cc#L232), [deadline_lb_test.cc:248](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/deadline_lb_test.cc#L248), [deadline_lb_test.cc:263](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/deadline_lb_test.cc#L263), [deadline_lb_test.cc:288](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/deadline_lb_test.cc#L288), [deadline_lb_test.cc:303](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/deadline_lb_test.cc#L303), [convert.py:297](../../../implementation/envoy/wrappers/convert.py#L297), [convert.py:308](../../../implementation/envoy/wrappers/convert.py#L308), [test_convert.py:98](../../../implementation/envoy/wrappers/test_convert.py#L98) |
+| [PickLog](#picklog) | not traced |
+| [ForwardLog](#forwardlog) | [ingress.py:174](../../../implementation/envoy/bin/ingress.py#L174), [convert.py:47](../../../implementation/envoy/wrappers/convert.py#L47), [convert.py:133](../../../implementation/envoy/wrappers/convert.py#L133), [test_convert.py:15](../../../implementation/envoy/wrappers/test_convert.py#L15), [test_convert.py:24](../../../implementation/envoy/wrappers/test_convert.py#L24) |
+| [Worked examples](#worked-examples) | [deadline_lb_test.cc:322](../../../implementation/envoy/envoy/contrib/peak_ewma/load_balancing_policies/test/deadline_lb_test.cc#L322) |
+<!-- trace:end -->

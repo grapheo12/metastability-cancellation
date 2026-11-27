@@ -366,3 +366,43 @@ function hedge_after_policy(config):
         else Retry if event is AttemptEnded
         else Wait, params = d)
 ```
+
+## Design specific to Envoy
+
+Implementation: `implementation/envoy`: vendored Envoy (`envoy/`) and Nighthawk (`nighthawk/`) with the testbed's
+changes, recorded in [VENDORED.md](../../../implementation/envoy/VENDORED.md) ([AGENTS.md](../../../AGENTS.md#vendored-code)),
+built in Docker with Bazel by `implementation/envoy/build.sh` (C++ tests: `bazel test` on the targets VENDORED.md
+names); Python 3 wrappers `bin/ingress.py`, `bin/loadgen.py` and `wrappers/convert.py` (tests: `cd
+implementation/envoy/wrappers && python3 -B -m unittest test_convert`). Only code written or changed for the testbed
+carries `Design:` tags; unchanged upstream code does not.
+
+### Envoy choices
+
+- RetryPolicy, RetryEvent and RetryPolicyRegistry: `none` and `timeout` are route configuration (`bin/ingress.py`);
+  `anxious` is the `testbed_anxious` upstream filter (new: `anxious_tracker.cc`, `filter.cc`), registered as the
+  router's `TestbedRetryHook` and asked on every 10 ms Tick.
+- RetryObservation and RetryState: AttemptSent and AttemptFinished come from the filter's `decodeHeaders` and
+  `onDestroy`, keyed by attempt number; the AnxiousTracker keeps the attempts in flight per backend and evaluates at
+  most every 10 ms after a change. RetryRefused never happens under HedgedForwarding.
+
+### Not traced
+
+| Design subsection | Reason |
+|---|---|
+| [Adding a RetryPolicy](#adding-a-retrypolicy) | a guide for spec authors; nothing to realize |
+
+### Traceability
+
+Generated from the `Design:` tags in the testbed's code under `implementation/envoy` by `implementation/spec_tools/tracegen.py` (see `AGENTS.md`). Each link points at the first code line after the tag.
+Regenerate from the repository root with `python3 implementation/spec_tools/tracegen.py --lang Envoy --impl implementation/envoy --ext .cc --ext .h --comment // --ext .py:# --write`.
+
+<!-- trace:begin -->
+| Design subsection | Implementation (file:line) |
+|---|---|
+| [RetryPolicy](#retrypolicy) | [anxious_tracker.cc:94](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/anxious_tracker.cc#L94), [testbed_retry_hook.h:25](../../../implementation/envoy/envoy/source/common/router/testbed_retry_hook.h#L25) |
+| [RetryEvent](#retryevent) | [filter.cc:122](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/filter.cc#L122), [router.cc:1544](../../../implementation/envoy/envoy/source/common/router/router.cc#L1544), [upstream_request.cc:583](../../../implementation/envoy/envoy/source/common/router/upstream_request.cc#L583) |
+| [RetryObservation](#retryobservation) | [anxious_tracker.cc:44](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/anxious_tracker.cc#L44), [anxious_tracker.cc:51](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/anxious_tracker.cc#L51), [filter.cc:164](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/filter.cc#L164), [filter.cc:217](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/filter.cc#L217) |
+| [RetryState](#retrystate) | [anxious_tracker.cc:133](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/anxious_tracker.cc#L133), [anxious_tracker_test.cc:134](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/test/anxious_tracker_test.cc#L134) |
+| [RetryPolicyRegistry](#retrypolicyregistry) | [ingress.py:184](../../../implementation/envoy/bin/ingress.py#L184), [ingress.py:196](../../../implementation/envoy/bin/ingress.py#L196), [anxious_tracker.cc:72](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/anxious_tracker.cc#L72), [anxious_tracker.cc:84](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/anxious_tracker.cc#L84), [anxious_tracker.cc:94](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/anxious_tracker.cc#L94), [anxious_tracker.cc:143](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/anxious_tracker.cc#L143), [anxious_tracker_test.cc:51](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/test/anxious_tracker_test.cc#L51), [anxious_tracker_test.cc:81](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/test/anxious_tracker_test.cc#L81), [anxious_tracker_test.cc:94](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/test/anxious_tracker_test.cc#L94), [anxious_tracker_test.cc:118](../../../implementation/envoy/envoy/contrib/peak_ewma/anxious/test/anxious_tracker_test.cc#L118) |
+| [Adding a RetryPolicy](#adding-a-retrypolicy) | not traced |
+<!-- trace:end -->

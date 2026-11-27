@@ -1,4 +1,6 @@
 #include "source/common/router/upstream_request.h"
+// Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
+// Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.8.0)
 #include "source/common/router/testbed_retry_hook.h"
 
 #include <chrono>
@@ -577,6 +579,7 @@ void UpstreamRequest::resetUpstreamLogFlushTimer() {
   }
 }
 
+// Design: abstraction/ingress/retry_policy/design.md#retryevent
 void UpstreamRequest::onRetryHookTimer() {
   if (parent_.onRetryHookTick(*this) && retry_hook_timer_ != nullptr) {
     retry_hook_timer_->enableTimer(kTestbedRetryHookTick);
@@ -585,6 +588,7 @@ void UpstreamRequest::onRetryHookTimer() {
 
 void UpstreamRequest::setupPerTryTimeout() {
   ASSERT(!per_try_timeout_);
+  // Design: abstraction/ingress/frontend/design.md#hedgedforwarding
   // impl/envoy (cancellation testbed): with a TestbedRetryHook registered, tick this attempt from now on.
   if (TestbedRetryHook::get() != nullptr && retry_hook_timer_ == nullptr) {
     retry_hook_timer_ =

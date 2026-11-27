@@ -1,3 +1,4 @@
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.18.2)
 // impl/envoy (cancellation testbed): tests of the peak_ewma_deadline load balancer (deadline_lb.h): the deadline
 // filter over every host, the lowest-cost choice, and the per-worker FIFO wait queue.
 
@@ -118,6 +119,7 @@ protected:
   std::unique_ptr<PeakEwmaDeadlineLoadBalancer> lb_;
 };
 
+// Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
 TEST_F(PeakEwmaDeadlineTest, NoDeadlineHeaderTakesLowestCostOverAllHosts) {
   setHost(0, 100, 5); // cost 600
   setHost(1, 100, 1); // cost 200
@@ -128,6 +130,7 @@ TEST_F(PeakEwmaDeadlineTest, NoDeadlineHeaderTakesLowestCostOverAllHosts) {
   EXPECT_EQ(lb_->queueLength(), 0u);
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
 TEST_F(PeakEwmaDeadlineTest, RttEqualToTimeLeftPassesOneNanosecondMoreWaits) {
   setHost(0, 4000, 9); // RTT 4000 ms (cost 40 s: the test does not use the active requests)
   setHost(1, 8000, 0); // RTT 8000 ms
@@ -143,6 +146,7 @@ TEST_F(PeakEwmaDeadlineTest, RttEqualToTimeLeftPassesOneNanosecondMoreWaits) {
   EXPECT_EQ(lb_->queueLength(), 1u);
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
 TEST_F(PeakEwmaDeadlineTest, ChoiceAmongKeptIsLowestCost) {
   setHost(0, 100, 50); // RTT 100 ms, cost 5100
   setHost(1, 400, 1);  // RTT 400 ms, cost 800: both kept with 1 s left, host 1 is cheaper
@@ -150,6 +154,7 @@ TEST_F(PeakEwmaDeadlineTest, ChoiceAmongKeptIsLowestCost) {
   EXPECT_EQ(lb_->chooseHost(&r->context).host, hosts_[1]);
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
 TEST_F(PeakEwmaDeadlineTest, HostWithoutSampleIsEligible) {
   setHost(0, 0, 3);   // no RTT sample: eligible whatever the deadline
   setHost(1, 400, 0); // RTT 400 ms > 100 ms left
@@ -157,6 +162,7 @@ TEST_F(PeakEwmaDeadlineTest, HostWithoutSampleIsEligible) {
   EXPECT_EQ(lb_->chooseHost(&r->context).host, hosts_[0]);
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
 TEST_F(PeakEwmaDeadlineTest, TiesBrokenAtRandom) {
   setHost(0, 100, 1);
   setHost(1, 100, 1);
@@ -166,6 +172,7 @@ TEST_F(PeakEwmaDeadlineTest, TiesBrokenAtRandom) {
   EXPECT_EQ(lb_->chooseHost(&r->context).host, hosts_[0]);
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
 TEST_F(PeakEwmaDeadlineTest, FifoAdmissionScanSendsOldestFirstAndDropsPastDeadline) {
   setHost(0, 10000, 9); // RTT 10 s
   setHost(1, 10000, 9); // RTT 10 s
@@ -208,6 +215,7 @@ TEST_F(PeakEwmaDeadlineTest, FifoAdmissionScanSendsOldestFirstAndDropsPastDeadli
   EXPECT_FALSE(timer->enabled_);
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
 TEST_F(PeakEwmaDeadlineTest, AlreadyLateWaitsThenIsDropped) {
   setHost(0, 100, 0);
   setHost(1, 100, 0);
@@ -220,6 +228,7 @@ TEST_F(PeakEwmaDeadlineTest, AlreadyLateWaitsThenIsDropped) {
   EXPECT_EQ(lb_->queueLength(), 0u);
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
 TEST_F(PeakEwmaDeadlineTest, CancelledRequestIsRemovedWithoutCallback) {
   setHost(0, 10000, 9);
   setHost(1, 10000, 9);
@@ -235,6 +244,7 @@ TEST_F(PeakEwmaDeadlineTest, CancelledRequestIsRemovedWithoutCallback) {
   EXPECT_EQ(lb_->queueLength(), 0u);
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
 TEST_F(PeakEwmaDeadlineTest, RetryIsPickedAtOnceEvenWhileFirstAttemptsWait) {
   setHost(0, 10000, 9); // RTT 10 s
   setHost(1, 10000, 9); // RTT 10 s
@@ -249,6 +259,7 @@ TEST_F(PeakEwmaDeadlineTest, RetryIsPickedAtOnceEvenWhileFirstAttemptsWait) {
   EXPECT_EQ(lb_->retryWaiters(), 0u);
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
 TEST_F(PeakEwmaDeadlineTest, RefusedRetryIsRecheckedAndSentLater) {
   setHost(0, 10000, 9);
   setHost(1, 10000, 9);
@@ -273,6 +284,7 @@ TEST_F(PeakEwmaDeadlineTest, RefusedRetryIsRecheckedAndSentLater) {
   EXPECT_EQ(lb_->retryWaiters(), 0u);
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
 TEST_F(PeakEwmaDeadlineTest, RefusedRetryIsNeverDroppedPastItsDeadline) {
   setHost(0, 10000, 9);
   setHost(1, 10000, 9);
@@ -287,6 +299,7 @@ TEST_F(PeakEwmaDeadlineTest, RefusedRetryIsNeverDroppedPastItsDeadline) {
   EXPECT_TRUE(timer->enabled_);
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
 TEST_F(PeakEwmaDeadlineTest, CancelledRetryIsRemovedWithoutCallback) {
   setHost(0, 10000, 9);
   setHost(1, 10000, 9);
@@ -304,6 +317,8 @@ TEST_F(PeakEwmaDeadlineTest, CancelledRetryIsRemovedWithoutCallback) {
 }
 
 // ProvisionalCurrentRTT: a host's oldest pending request counts as answered now (deadline_lb.h).
+// Design: abstraction/ingress/load_balancer/design.md#provisionalcurrentrtt
+// Design: abstraction/ingress/load_balancer/design.md#worked-examples
 TEST_F(PeakEwmaDeadlineTest, StalledHostIsRejectedByProvisionalRtt) {
   setHost(0, 400, 0);
   setHost(1, 400, 0);
@@ -318,6 +333,7 @@ TEST_F(PeakEwmaDeadlineTest, StalledHostIsRejectedByProvisionalRtt) {
   EXPECT_EQ(lb_->chooseHost(&c->context).host, hosts_[0]); // 6468 ms <= 7 s: kept (tie, random 0: host 0)
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#provisionalcurrentrtt
 TEST_F(PeakEwmaDeadlineTest, FinishedRequestIsNoLongerPending) {
   setHost(0, 400, 0);
   setHost(1, 400, 0);
@@ -330,6 +346,7 @@ TEST_F(PeakEwmaDeadlineTest, FinishedRequestIsNoLongerPending) {
   EXPECT_EQ(lb_->chooseHost(&b->context).host, hosts_[0]); // nothing pending: provisional = 400 ms, kept
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#provisionalcurrentrtt
 TEST_F(PeakEwmaDeadlineTest, HostWithoutSampleButPendingUsesThePendingLatency) {
   setHost(0, 0, 0);   // no RTT sample yet: cost 10 (default RTT), the cheaper host
   setHost(1, 400, 0); // cost 400
@@ -344,6 +361,7 @@ TEST_F(PeakEwmaDeadlineTest, HostWithoutSampleButPendingUsesThePendingLatency) {
 }
 
 // RetryElsewhere: a retry never goes back to a backend the router's previous_hosts predicate excludes.
+// Design: abstraction/ingress/load_balancer/design.md#lbpolicy
 TEST_F(PeakEwmaDeadlineTest, RetryAvoidsExcludedBackend) {
   setHost(0, 400, 0);
   setHost(1, 400, 0); // tie: random 0 would pick host 0
@@ -353,6 +371,7 @@ TEST_F(PeakEwmaDeadlineTest, RetryAvoidsExcludedBackend) {
   EXPECT_EQ(lb_->chooseHost(&retry->context).host, hosts_[1]);
 }
 
+// Design: abstraction/ingress/load_balancer/design.md#lbpolicy
 TEST_F(PeakEwmaDeadlineTest, AllBackendsExcludedFallsBackToAll) {
   setHost(0, 400, 0);
   setHost(1, 400, 0);

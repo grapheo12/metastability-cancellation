@@ -438,6 +438,7 @@ public:
   bool shouldSelectAnotherHost(const Upstream::Host& host) override {
     // We only care about host selection when performing a retry, at which point we consult the
     // RetryState to see if we're configured to avoid certain hosts during retries.
+    // Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
     // impl/envoy (cancellation testbed): a load balancer may still be choosing a host for a retry (asynchronous
     // host selection) after the response became final and retry_state_ was reset; nothing to avoid then.
     if (!is_retry_ || retry_state_ == nullptr) {
@@ -538,6 +539,7 @@ public:
                               bool pool_success) override;
   void onPerTryTimeout(UpstreamRequest& upstream_request) override;
   void onPerTryIdleTimeout(UpstreamRequest& upstream_request) override;
+  // Design: abstraction/ingress/frontend/design.md#hedgedforwarding
   bool onRetryHookTick(UpstreamRequest& upstream_request) override; // impl/envoy: testbed_retry_hook.h
   void onStreamMaxDurationReached(UpstreamRequest& upstream_request) override;
   void setupRouteTimeoutForWebsocketUpgrade() override;

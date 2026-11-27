@@ -1,3 +1,6 @@
+# Source: abstraction/ingress/design.md (ingress v0.16.1)
+# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.18.2)
+# Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
 # Source: abstraction/protocol/design.md (protocol v0.8.0)
 """impl/envoy wrappers: pure conversions from Envoy's access log and Nighthawk's per-request logs to the testbed's
 output files (no I/O beyond reading and writing the given paths, so they are unit-tested without Envoy or Nighthawk).
@@ -40,6 +43,7 @@ def _int(s):
         return None
 
 
+# Design: abstraction/ingress/load_balancer/design.md#forwardlog
 def forward_outcome(code, flags):
     """The ForwardOutcome of one access-log line (abstraction/ingress/load_balancer/api.md#forwardoutcome)."""
     flag_set = set(flags.split(",")) if flags and flags != "-" else set()
@@ -70,6 +74,7 @@ def parse_access_log(path):
     return rows
 
 
+# Design: abstraction/ingress/frontend/design.md#hedgedforwarding
 def lb_retries(attempt_rows):
     """LbRetries started, as Go counts them (a refused retry is not one): upstream attempts beyond the first of
     each request, from parse_upstream_log rows (the last field is the request id). Envoy's own attempt count
@@ -83,6 +88,7 @@ def lb_retries(attempt_rows):
 _ATTEMPT_RESET_FLAGS = {"UR", "DC", "DR"}
 
 
+# Design: abstraction/ingress/frontend/design.md#forwardattempt
 def attempt_outcome(code, flags):
     """The ForwardOutcome of one upstream-log line. UT (its per-try timeout fired) is not a failure under hedging:
     the attempt went on, and either answered (202 UT: ok) or was reset once another attempt answered (0 UT: reset).
@@ -121,6 +127,9 @@ def parse_upstream_log(path):
 EWMA_INITIAL_LATENCY_NS = 1_000_000  # abstraction/ingress/load_balancer/api.md#constants
 
 
+# Design: abstraction/ingress/load_balancer/design.md#forwardlog
+# Design: abstraction/ingress/load_balancer/design.md#ewmalatency
+# Design: abstraction/ingress/design.md#time-base
 def write_forwards(rows, backends, path, ewma_beta=0.7, run_start=None):
     """forwards.csv (Go column order); returns run_start_unix_ns (given, else the first row's start, 0 if none).
     rows are access-log rows (one per request, attempt 0) or upstream-log rows (one per attempt, with a request id:
@@ -158,6 +167,7 @@ def write_forwards(rows, backends, path, ewma_beta=0.7, run_start=None):
     return run_start
 
 
+# Design: abstraction/ingress/design.md#shutdown
 def ingress_summary(rows, backends, config, run_start_unix_ns, run_end_s, filter_counters=None):
     """The Ingress Summary JSON (abstraction/ingress/api.md), with the LoadCanceller and LB-internal fields
     zero/null (not implemented on impl/envoy), except the counters given in filter_counters (FilterWaitQueue
@@ -270,6 +280,8 @@ def merge_peak_ewma(prefix, backends, run_start_unix_ns, out_prefix, remove=True
     return merged_by_kind
 
 
+# Design: abstraction/ingress/load_balancer/design.md#ewmaexectime
+# Design: abstraction/ingress/load_balancer/design.md#ewmaantiservicetime
 def exec_ewmas(exec_rows, n_backends):
     """[(ewma_exec_ns, ewma_anti_exec_ns)] per backend (floats or None): the last values in the merged exec trace
     (t_ns,server_id,exec_ns,backend,ewma_exec_ns,ewma_anti_ns); all None without one."""
@@ -281,6 +293,7 @@ def exec_ewmas(exec_rows, n_backends):
     return out
 
 
+# Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
 def retry_counts(queue_rows):
     """lb_retry_refused: refused picks of peak_ewma_deadline LB retries, one per refused pick as in Go (a refused
     LbRetry is re-picked at every tick), from the refused counts of the retry_sent / retry_gone queue events
@@ -290,6 +303,8 @@ def retry_counts(queue_rows):
                                     if row[2] in ("retry_sent", "retry_gone") and row[6] != "")}
 
 
+# Design: abstraction/ingress/load_balancer/design.md#filterwaitqueue
+# Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
 def filter_counts(queue_rows):
     """The Ingress summary's FilterWaitQueue counters from merged queue rows (t_ns,worker,event,...): requests
     queued, sent from the queue, dropped past their deadline, and the longest total queue over all workers (events
