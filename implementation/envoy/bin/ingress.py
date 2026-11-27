@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Source: abstraction/ingress/design.md (ingress v0.17.0)
-# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.19.0)
+# Source: abstraction/ingress/design.md (ingress v0.18.0)
+# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.20.0)
 # Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
 # Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.8.0)
 # Source: abstraction/ingress/upstream_pool/design.md (upstream_pool v0.1.2)
@@ -70,6 +70,13 @@ def validate(args):
     if not (margin >= 1) or margin == float("inf"):
         fail("lb_filter_margin must be a finite number >= 1")
     args.lb_filter_margin = margin
+    try:
+        tau = float(args.lb_probe_tau_ms)
+    except ValueError:
+        tau = float("nan")
+    if not (tau >= 0) or tau == float("inf"):
+        fail("lb_probe_tau_ms must be a finite number >= 0")
+    args.lb_probe_tau_ms = tau
     if args.lb_retry_policy not in RETRY_POLICIES:
         fail("lb_retry_policy must be one of none, timeout, anxious")
     if args.forward_mode not in ("relay", "hedge"):
@@ -104,6 +111,7 @@ def parse(argv):
     a("--lb_retry_late_factor", default="10")
     a("--forward_mode", default="relay")
     a("--lb_filter_margin", default="1")
+    a("--lb_probe_tau_ms", default="0")
     args = p.parse_args(argv)
     validate(args)
     return args
@@ -174,7 +182,9 @@ def envoy_config(args, backends, admin_port, access_log, upstream_log=None):
             "name": "envoy.load_balancing_policies.peak_ewma_deadline",
             "typed_config": {"@type": "type.googleapis.com/envoy.extensions.load_balancing_policies."
                                       "peak_ewma_deadline.v3alpha.PeakEwmaDeadline",
-                             "filter_margin": args.lb_filter_margin}}}]}  # FilterMargin gamma
+                             "filter_margin": args.lb_filter_margin,  # FilterMargin gamma
+                             # Design: abstraction/ingress/load_balancer/design.md#filterprobe
+                             **({"probe_tau": f"{args.lb_probe_tau_ms / 1000:.6f}s"} if args.lb_probe_tau_ms > 0 else {})}}}]}
     router = {"name": "envoy.filters.http.router", "typed_config": {
         "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"}}
     if upstream_log is not None:  # one line per upstream attempt (forwards.csv)

@@ -1,8 +1,9 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.19.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.20.0)
 // Source: abstraction/protocol/design.md (protocol v0.8.0)
 #include "contrib/peak_ewma/load_balancing_policies/source/deadline_lb.h"
 
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <limits>
 #include <vector>
@@ -78,7 +79,10 @@ PeakEwmaDeadlineLoadBalancer::PeakEwmaDeadlineLoadBalancer(
       queue_tick_(std::max<int64_t>(
           1, config.has_queue_tick() ? DurationUtil::durationToMilliseconds(config.queue_tick())
                                      : kDefaultQueueTickMilliseconds)),
-      filter_margin_(config.filter_margin() >= 1.0 ? config.filter_margin() : 1.0) {
+      filter_margin_(config.filter_margin() >= 1.0 ? config.filter_margin() : 1.0),
+      probe_tau_ms_(config.has_probe_tau()
+                        ? static_cast<double>(DurationUtil::durationToMilliseconds(config.probe_tau()))
+                        : 0.0) {
   for (const auto& host_set : priority_set_.hostSetsPerPriority()) {
     addPendingDataToHosts(host_set->hosts());
   }
@@ -102,6 +106,10 @@ void PeakEwmaDeadlineLoadBalancer::registerPending(Upstream::LoadBalancerContext
   OptRef<PendingRequests> pending;
   if (host != nullptr) {
     pending = host->typedLbPolicyData<PendingRequests>();
+  }
+  // Design: abstraction/ingress/load_balancer/design.md#filterprobe
+  if (pending.has_value()) {
+    pending->markSent(monoNowNs()); // LastSentTime: every request handed to the host, probes included
   }
   if (info == nullptr || !pending.has_value()) {
     return; // not tracked
@@ -184,6 +192,7 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
   std::vector<double> costs(hosts.size());
   std::vector<double> provisional(hosts.size());
   std::vector<bool> keep(hosts.size());
+  std::vector<bool> probe(hosts.size(), false); // FilterProbe: refused hosts whose coin landed heads
   // RetryElsewhere: hosts the context asks to avoid (retry host predicates) are not kept, unless that is all.
   std::vector<bool> excluded(hosts.size(), false);
   size_t n_excluded = 0;
@@ -216,9 +225,29 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
     } else {
       // The filter: reject the host if its ProvisionalCurrentRTT exceeds the request's time left.
       keep[i] = !(filter_margin_ * provisional[i] * 1e6 > static_cast<double>(*remaining_ns)); // FilterMargin
+      // Design: abstraction/ingress/load_balancer/design.md#filterprobe
+      if (!keep[i] && probe_tau_ms_ > 0.0) { // refused: flip a coin with P(heads) = 1 - e^(-dt/tau)
+        auto pending = hosts[i]->typedLbPolicyData<PendingRequests>();
+        const int64_t last = pending.has_value() ? pending->lastSent() : 0;
+        const double dt_ms = static_cast<double>(static_cast<uint64_t>(now_mono - last)) / 1e6;
+        const double p = 1.0 - std::exp(-dt_ms / probe_tau_ms_);
+        const double u = static_cast<double>(random_.random() >> 11) * (1.0 / 9007199254740992.0); // [0, 1)
+        probe[i] = u < p;
+      }
     }
     if (keep[i] && costs[i] < best) {
       best = costs[i];
+    }
+  }
+  // FilterProbe: a probed host wins over the kept ones; the lowest cost among the probed.
+  const bool probing = std::find(probe.begin(), probe.end(), true) != probe.end();
+  if (probing) {
+    keep = probe;
+    best = std::numeric_limits<double>::infinity();
+    for (size_t i = 0; i < hosts.size(); ++i) {
+      if (keep[i] && costs[i] < best) {
+        best = costs[i];
+      }
     }
   }
   std::vector<size_t> ties;
@@ -240,7 +269,7 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
   if (trace_.enabled() && traced) {
     for (size_t i = 0; i < hosts.size(); ++i) {
       auto* data = getPeakEwmaData(hosts[i]);
-      trace_.eval(decision, kind, hosts[i]->address()->asString(),
+      trace_.eval(decision, probing ? "probe" : kind, hosts[i]->address()->asString(),
                   static_cast<double>(hosts[i]->stats().rq_active_.value()),
                   data != nullptr ? data->getEwmaRtt() : 0.0, costs[i], remaining_ns.has_value(),
                   remaining_ns.value_or(0), keep[i], i == chosen, provisional[i]);

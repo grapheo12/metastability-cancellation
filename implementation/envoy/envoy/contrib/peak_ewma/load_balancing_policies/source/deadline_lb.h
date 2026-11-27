@@ -37,6 +37,7 @@
 // while the request's earlier attempt keeps running. A refused retry is never dropped (that would fail the whole
 // request); it ends when it is sent or when the request ends (the router cancels its handle).
 
+#include <atomic>
 #include <cstdint>
 #include <list>
 #include <memory>
@@ -76,10 +77,14 @@ struct PendingRequests : public Upstream::HostLbPolicyData {
   void add(int64_t start_ns);
   void remove(int64_t start_ns);
   absl::optional<int64_t> oldest() const;
+  // FilterProbe's LastSentTime: monotonic ns of the last request handed to this host (0: never).
+  void markSent(int64_t now_ns) { last_sent_ns_.store(now_ns, std::memory_order_relaxed); }
+  int64_t lastSent() const { return last_sent_ns_.load(std::memory_order_relaxed); }
 
 private:
   mutable absl::Mutex mu_;
   std::multiset<int64_t> starts_ ABSL_GUARDED_BY(mu_);
+  std::atomic<int64_t> last_sent_ns_{0};
 };
 
 // A request's pending entries (one per host handed to it, retries included); removed from the hosts'
@@ -153,6 +158,7 @@ private:
   const Http::LowerCaseString deadline_header_;
   const std::chrono::milliseconds queue_tick_;
   const double filter_margin_; // FilterMargin gamma >= 1 (abstraction/ingress/load_balancer/design.md#peakewmadeadline)
+  const double probe_tau_ms_;  // FilterProbe tau in ms; 0: off (abstraction/ingress/load_balancer/design.md#filterprobe)
   std::list<Entry> queue_;         // first attempts waiting (FilterWaitQueue, FIFO)
   std::list<Entry> retry_waiters_; // refused LB retries, re-checked every scan, never dropped
   Event::TimerPtr timer_; // created on the first enqueue, on this worker's dispatcher

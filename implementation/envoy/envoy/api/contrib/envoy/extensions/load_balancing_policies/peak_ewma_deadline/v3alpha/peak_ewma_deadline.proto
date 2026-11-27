@@ -45,4 +45,8 @@ message PeakEwmaDeadline {
   // FilterMargin gamma (>= 1): a host is refused when gamma x its ProvisionalCurrentRTT exceeds the time left.
   // 0 (unset) or anything below 1 means 1.
   double filter_margin = 4;
+
+  // FilterProbe tau: a host the filter refuses still gets the request with probability 1 - e^(-dt/tau), dt the time
+  // since it was last handed a request. Unset or 0: off.
+  google.protobuf.Duration probe_tau = 5;
 }

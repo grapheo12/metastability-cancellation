@@ -46,7 +46,7 @@ void GlobalHostStats::setActiveRequestsStat(double active_requests) {
   active_requests_stat_.set(static_cast<uint64_t>(active_requests));
 }
 
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.19.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.20.0)
 // impl/envoy: PeakEwmaTrace (see peak_ewma_lb.h).
 
 namespace {

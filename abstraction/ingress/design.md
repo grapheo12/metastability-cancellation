@@ -187,11 +187,11 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [Structure](#structure) | [ingress.py:137](../../implementation/envoy/bin/ingress.py#L137) |
+| [Structure](#structure) | [ingress.py:145](../../implementation/envoy/bin/ingress.py#L145) |
 | [Shared state](#shared-state) | not traced |
 | [Configuration validation](#configuration-validation) | [ingress.py:53](../../implementation/envoy/bin/ingress.py#L53) |
-| [Concurrency model](#concurrency-model) | [ingress.py:260](../../implementation/envoy/bin/ingress.py#L260) |
+| [Concurrency model](#concurrency-model) | [ingress.py:270](../../implementation/envoy/bin/ingress.py#L270) |
 | [Time base](#time-base) | [convert.py:136](../../implementation/envoy/wrappers/convert.py#L136) |
-| [Shutdown](#shutdown) | [ingress.py:269](../../implementation/envoy/bin/ingress.py#L269), [convert.py:174](../../implementation/envoy/wrappers/convert.py#L174) |
-| [Why one upstream connection per client and backend](#why-one-upstream-connection-per-client-and-backend) | [ingress.py:148](../../implementation/envoy/bin/ingress.py#L148) |
+| [Shutdown](#shutdown) | [ingress.py:279](../../implementation/envoy/bin/ingress.py#L279), [convert.py:174](../../implementation/envoy/wrappers/convert.py#L174) |
+| [Why one upstream connection per client and backend](#why-one-upstream-connection-per-client-and-backend) | [ingress.py:156](../../implementation/envoy/bin/ingress.py#L156) |
 <!-- trace:end -->

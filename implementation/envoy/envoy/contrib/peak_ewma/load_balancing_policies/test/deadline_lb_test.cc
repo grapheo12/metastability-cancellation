@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.19.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.20.0)
 // impl/envoy (cancellation testbed): tests of the peak_ewma_deadline load balancer (deadline_lb.h): the deadline
 // filter over every host, the lowest-cost choice, and the per-worker FIFO wait queue.
 
@@ -139,6 +139,68 @@ TEST_F(PeakEwmaDeadlineMarginTest, MarginScalesTheProvisionalRtt) {
   auto response = lb_->chooseHost(&tight->context);
   EXPECT_EQ(response.host, nullptr); // 1.5e9 > 1.5e9 - 1: refused everywhere, waits
   EXPECT_EQ(lb_->queueLength(), 1u);
+}
+
+// FilterProbe with tau = 4 s.
+class PeakEwmaDeadlineProbeTest : public PeakEwmaDeadlineTest {
+protected:
+  void SetUp() override {
+    config_.mutable_probe_tau()->set_seconds(4);
+    PeakEwmaDeadlineTest::SetUp();
+  }
+};
+
+// Design: abstraction/ingress/load_balancer/design.md#filterprobe
+TEST_F(PeakEwmaDeadlineTest, ProbeOffRefusedStaysRefused) {
+  setHost(0, 8000, 0);
+  setHost(1, 8000, 0);
+  expectTimer();
+  auto r = request(4000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&r->context).host, nullptr); // both refused, no probe: waits
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#filterprobe
+TEST_F(PeakEwmaDeadlineProbeTest, NeverSentHostIsProbedAndTheProbeResetsItsClock) {
+  setHost(0, 8000, 0); // cost 8000
+  setHost(1, 9000, 0); // cost 9000
+  ON_CALL(random_, random()).WillByDefault(Return(0)); // u = 0: heads whenever p > 0
+  auto a = request(4000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&a->context).host, hosts_[0]); // both refused, both never sent (p ~ 1): cheaper probed
+  auto b = request(4000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&b->context).host, hosts_[1]); // host 0 just sent (p = 0); host 1 still probed
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#filterprobe
+TEST_F(PeakEwmaDeadlineProbeTest, CoinFollowsTimeSinceLastSend) {
+  setHost(0, 100, 0);
+  setHost(1, 200, 0);
+  auto warm0 = request(absl::nullopt); // no deadline: never filtered; host 0 is cheaper
+  EXPECT_EQ(lb_->chooseHost(&warm0->context).host, hosts_[0]);
+  setHost(0, 300, 0);
+  auto warm1 = request(absl::nullopt); // now host 1 is cheaper
+  EXPECT_EQ(lb_->chooseHost(&warm1->context).host, hosts_[1]);
+  ON_CALL(random_, random()).WillByDefault(Return(1ULL << 63)); // u = 0.5
+  advance(400);
+  setHost(0, 8000, 0);
+  setHost(1, 8000, 0);
+  expectTimer();
+  auto early = request(4000 * kMs, 2); // an LB retry: refused retries wait apart, so the FIFO stays empty
+  EXPECT_EQ(lb_->chooseHost(&early->context).host, nullptr); // dt 0.4 s: p = 0.095 < 0.5: tails, waits
+  advance(3600);
+  setHost(0, 8000, 0);
+  setHost(1, 9000, 0);
+  auto later = request(4000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&later->context).host, hosts_[0]); // dt 4 s: p = 0.632 > 0.5: heads, cheaper
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#filterprobe
+TEST_F(PeakEwmaDeadlineProbeTest, LateRequestIsNeverProbed) {
+  setHost(0, 8000, 0);
+  setHost(1, 8000, 0);
+  ON_CALL(random_, random()).WillByDefault(Return(0));
+  expectTimer();
+  auto late = request(0);
+  EXPECT_EQ(lb_->chooseHost(&late->context).host, nullptr); // remaining <= 0: no backend, no coin
 }
 
 // Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline
