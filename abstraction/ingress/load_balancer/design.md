@@ -269,7 +269,7 @@ procedure fold(lb, s):
     for k in f ..= w-1, in order:
         (x, t) = peak[s].samples[k mod PEAK_EWMA_MAX_SAMPLES]
         if x <= 0 or t == 0: continue                 # an RTT under 1 ms (truncated to 0) is not a sample
-        a = time_alpha(t, t_prev)
+        a = 1 if probe_answer(lb, s, t) else time_alpha(t, t_prev)   # ProbeSample: a probe's answer replaces the average
         e = x if e == 0 else a * x + (1 - a) * e      # each product rounded, then the sum (binary64)
         t_prev = t
     peak[s].rtt_ms = e; peak[s].last_ns = t_prev; peak[s].folded = w
@@ -779,6 +779,7 @@ then anyway, more likely the longer it has received none, so it can prove it is 
 
 ```
 last_sent[s]: u64 monotonic ns = 0       # LastSentTime: set by every pick that returns s (pending_add), shared by workers
+probe_sent[s]: u64 monotonic ns or none = none   # set when a probe is sent to s; cleared by its answer (ProbeSample)
 
 function filter_probe(lb, s, now, remaining_ns, has_pending):   # s was refused by the test; -> boolean
     if lb.probe_tau_ms == 0 or remaining_ns is none or remaining_ns <= 0: return false
@@ -791,6 +792,20 @@ function filter_probe(lb, s, now, remaining_ns, has_pending):   # s was refused 
 
 - **Every decision flips.** A coin is flipped for each refused backend at every decision: a first attempt's
   admission, each `FILTER_QUEUE_TICK_MS` re-check of a waiting request, an LbRetry pick and its re-checks.
+- **ProbeSample.** When a probe is sent to `s`, `probe_sent[s] = now`. The first RTT sample of `s` taken at or after
+  that time is the probe's answer (a probed backend had nothing pending, so nothing else of `s` can answer first), and
+  [PeakEwmaRtt](#peakewmartt)'s fold gives it weight 1: the average becomes the probe's RTT, instead of moving by
+  `1 − e^(−Δt/τ_ewma)` (about 4% for a 400 ms answer). A backend refused because its average rose can thus be readmitted
+  by one quick answer.
+
+```
+function probe_answer(lb, s, t):          # in fold, for a sample of s at monotonic time t; -> boolean
+    p = probe_sent[s]
+    if p is none or t < p: return false
+    probe_sent[s] = none                  # compare-and-swap: of two workers folding at once, exactly one sees true
+    return true
+```
+
 - **Heads sends the request there.** Probed backends win over the backends that passed the test; among several, the
   lowest PeakEwmaCost (ties random). The probe is a normal pick: it sets `last_sent`, so `dt` starts again from 0.
 - **No flip** for an already-late request, a request without a RequestDeadline (never filtered), an avoided
@@ -808,6 +823,10 @@ function filter_probe(lb, s, now, remaining_ns, has_pending):   # s was refused 
 | 4 s | 8 s | 0.8646647167633873 | 1 − e^(−2) |
 | 0 (off) | any | — | no flip: refused stays refused |
 | 4 s | 8 s, something pending | — | no flip: only a backend with nothing pending is probed |
+
+ProbeSample, worked example: average 2604 ms (refused with 4 s left at `γ = 2`); the probe answers in 401 ms 0.40 s after
+the last sample. With the time-based weight the average would become `0.0392 × 401 + 0.9608 × 2604 = 2517.6` ms (still
+refused); as a ProbeSample it becomes 401 ms, and the backend passes again (`2 × 401 = 802 <= 4000`).
 
 ## PickLog
 
