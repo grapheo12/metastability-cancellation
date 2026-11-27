@@ -233,3 +233,4 @@
 | 0.59.0 | 2026-11-27T00:00:00Z | Ingress parameter `forward_mode`; glossary HedgedForwarding. Child bump: ingress 0.15.0 (frontend 0.11.0) |
 | 0.59.1 | 2026-11-27T00:00:00Z | Child bump: ingress 0.15.1 (load_balancer 0.18.1) |
 | 0.60.0 | 2026-11-27T00:00:00Z | Child bump: ingress 0.16.0 (retry_policy 0.8.0) |
+| 0.61.0 | 2026-11-27T00:00:00Z | Child bump: benchmark_runner 0.18.0 (config 0.28.0) |
