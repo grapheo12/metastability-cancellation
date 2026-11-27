@@ -1,4 +1,4 @@
-// Source: abstraction/server/heartbeat/design.md (heartbeat v0.1.0)
+// Source: abstraction/server/heartbeat/design.md (heartbeat v0.2.0)
 package server
 
 import (
@@ -111,5 +111,86 @@ func TestValidateHeartbeatInterval(t *testing.T) {
 		if _, err := Validate(p); err == nil || err.Error() != "heartbeat_interval_ms must be an integer >= 1" {
 			t.Fatalf("%q: %v", bad, err)
 		}
+	}
+}
+
+// End to end: a StalledState pauses the HeartbeatStream (no line during the
+// stall) and the next line comes as soon as the stall ends, with seq
+// continuing. Stall from 200 ms to 600 ms after the first /ping, 50 ms lines.
+//
+// Design: abstraction/server/heartbeat/design.md#heartbeatsender
+func TestHeartbeatPausedByStall(t *testing.T) {
+	sc, err := NewScenario(`{"states": {"fast": {"service_us": 1000}, "down": {"stall": true}},
+		"schedule": [[0, "fast"], [200, "down"], [600, "fast"]]}`, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := Listen(Config{ListenAddr: "127.0.0.1:0", ResponseBytes: 128, CancelMode: CancelCooperative,
+		CancelCheckIntervalUs: 50, NWorkerThreads: 1, HeartbeatIntervalMs: 50, Workload: WorkloadSleepConstant,
+		Scenario: sc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go s.Serve()
+	c := dialTest(t, s.Addr().String())
+	req, _ := http.NewRequest("GET", "http://"+c.addr+"/heartbeat", nil)
+	resp, err := c.cc.RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type line struct {
+		at  time.Time
+		seq uint64
+	}
+	lines := make(chan line, 1000)
+	go func() {
+		body := bufio.NewReader(resp.Body)
+		for {
+			b, err := body.ReadBytes('\n')
+			if err != nil {
+				close(lines)
+				return
+			}
+			if seq, err := protocol.ParseHeartbeatLine(b[:len(b)-1]); err == nil {
+				lines <- line{time.Now(), seq}
+			}
+		}
+	}()
+	if st, _ := c.do(t, "POST", "/ping", protocol.BuildBody(protocol.MakeRequestID(0, 1), 0, nil, 128)); st != 202 {
+		t.Fatalf("ping: %d", st)
+	}
+	armed := time.Now() // just after the arm
+	var got []line
+	deadline := time.After(900 * time.Millisecond)
+loop:
+	for {
+		select {
+		case l, ok := <-lines:
+			if !ok {
+				t.Fatal("stream ended early")
+			}
+			got = append(got, l)
+		case <-deadline:
+			break loop
+		}
+	}
+	s.Shutdown()
+	var during, after int
+	var prev uint64
+	for i, l := range got {
+		d := l.at.Sub(armed)
+		if i > 0 && l.seq != prev+1 {
+			t.Fatalf("seq %d after %d: seq must continue", l.seq, prev)
+		}
+		prev = l.seq
+		if d > 260*time.Millisecond && d < 590*time.Millisecond {
+			during++
+		}
+		if d >= 590*time.Millisecond {
+			after++
+		}
+	}
+	if during != 0 || after < 3 {
+		t.Fatalf("%d lines during the stall (want 0), %d after it (want >= 3): %v", during, after, got)
 	}
 }

@@ -1,4 +1,4 @@
-// Source: abstraction/server/heartbeat/design.md (heartbeat v0.1.0)
+// Source: abstraction/server/heartbeat/design.md (heartbeat v0.2.0)
 package server
 
 import (
@@ -10,7 +10,8 @@ import (
 
 // serveHeartbeat is the HeartbeatSender: 200 text/plain, then one
 // HeartbeatLine every HeartbeatIntervalMs, flushed at once. FreezeWait before
-// each line stops a frozen server's heartbeat; done is the stream's context
+// each line stops a frozen server's heartbeat for good and pauses it during a
+// StalledState (seq continues after the stall); done is the stream's context
 // (RST or connection close). It runs on the stream's handler goroutine.
 //
 // Design: abstraction/server/heartbeat/design.md#heartbeatsender
@@ -20,7 +21,7 @@ func serveHeartbeat(w http.ResponseWriter, done <-chan struct{}, task *StreamTas
 	w.WriteHeader(protocol.StatusStreamOK) // no content-length: x/net/http2 streams the body
 	flusher, _ := w.(http.Flusher)
 	for seq := uint64(0); ; seq++ {
-		q.FreezeWait() // WorkerFreeze: blocks until Close once frozen
+		q.FreezeWait() // WorkerFreeze: blocks until Close once frozen; StalledState: until it ends
 		if task.Cancelled.Load() || q.Closed() {
 			return
 		}

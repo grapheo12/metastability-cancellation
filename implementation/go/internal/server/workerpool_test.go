@@ -1,4 +1,4 @@
-// Source: abstraction/server/worker_pool/design.md (worker_pool v0.6.0)
+// Source: abstraction/server/worker_pool/design.md (worker_pool v0.7.0)
 package server
 
 import (
@@ -32,7 +32,7 @@ func TestWorkQueueEDFWorkedExample(t *testing.T) {
 	names := []string{"A", "B", "C", "D", "B'"}
 	deadlines := []uint64{300, 100, 200, NoDeadline, 100}
 	order := func(disc QueueDiscipline) string {
-		q := NewWorkQueue(0, disc, 0)
+		q := NewWorkQueue(0, disc, 0, nil)
 		byJob := map[*PingJob]string{}
 		for i, d := range deadlines {
 			j := deadlineJob(uint32(i), d)
@@ -57,7 +57,7 @@ func TestWorkQueueEDFWorkedExample(t *testing.T) {
 		t.Fatalf("fifo pop order %q", got)
 	}
 
-	q := NewWorkQueue(0, QueueEDF, 0) // close order is pop order
+	q := NewWorkQueue(0, QueueEDF, 0, nil) // close order is pop order
 	a, b, c := deadlineJob(0, 30), deadlineJob(1, 10), deadlineJob(2, 20)
 	for _, j := range []*PingJob{a, b, c} {
 		q.Push(j)
@@ -74,7 +74,7 @@ func TestWorkQueueEDFWorkedExample(t *testing.T) {
 		t.Fatal("closed queue is empty and pops nil")
 	}
 
-	q = NewWorkQueue(0, QueueEDF, 0) // no deadlines at all: push order
+	q = NewWorkQueue(0, QueueEDF, 0, nil) // no deadlines at all: push order
 	var jobs []*PingJob
 	for i := 0; i < 4; i++ {
 		jobs = append(jobs, testJob(uint32(i), 0))
@@ -92,7 +92,7 @@ func TestWorkQueueEDFWorkedExample(t *testing.T) {
 //
 // Design: abstraction/server/worker_pool/design.md#workqueue
 func TestWorkQueueFIFOAndClose(t *testing.T) {
-	q := NewWorkQueue(0, QueueFIFO, 0)
+	q := NewWorkQueue(0, QueueFIFO, 0, nil)
 	jobs := []*PingJob{testJob(0, 0), testJob(1, 0), testJob(2, 0)}
 	for _, j := range jobs {
 		if err := q.Push(j); err != nil {
@@ -121,7 +121,7 @@ func TestWorkQueueFIFOAndClose(t *testing.T) {
 //
 // Design: abstraction/server/worker_pool/design.md#failure-and-edge-cases
 func TestWorkerPoolJoinAfterClose(t *testing.T) {
-	q := NewWorkQueue(0, QueueFIFO, 0)
+	q := NewWorkQueue(0, QueueFIFO, 0, nil)
 	p := StartWorkerPool(4, q, Config{CancelMode: CancelCooperative, ResponseBytes: 128, CancelCheckIntervalUs: 50}, NewCancelRegistry(16), &CancelCounters{}, nil)
 	q.Close()
 	done := make(chan struct{})
@@ -143,7 +143,7 @@ func TestWorkerPoolOrdering(t *testing.T) {
 		n    uint32
 		want []uint32
 	}{{1, []uint32{0, 1, 2}}, {2, []uint32{1, 2, 0}}} {
-		q := NewWorkQueue(0, QueueFIFO, 0)
+		q := NewWorkQueue(0, QueueFIFO, 0, nil)
 		jobs := []*PingJob{testJob(0, 300_000), testJob(1, 100_000), testJob(2, 100_000)}
 		for _, j := range jobs {
 			_ = q.Push(j)
@@ -181,7 +181,7 @@ func TestWorkerPoolOrdering(t *testing.T) {
 //
 // Design: abstraction/server/worker_pool/design.md#failure-and-edge-cases
 func TestResetWhileQueued(t *testing.T) {
-	q := NewWorkQueue(0, QueueFIFO, 0)
+	q := NewWorkQueue(0, QueueFIFO, 0, nil)
 	reg := NewCancelRegistry(16)
 	j := testJob(9, 3_600_000_000) // an hour: must not run
 	j.Task.Cancelled.Store(true)
@@ -213,7 +213,7 @@ func TestNextSampleIndexWorkedExample(t *testing.T) {
 //
 // Design: abstraction/server/worker_pool/design.md#queuelengthlog
 func TestQueueSamplerRows(t *testing.T) {
-	q := NewWorkQueue(0, QueueFIFO, 0)
+	q := NewWorkQueue(0, QueueFIFO, 0, nil)
 	for i := uint32(0); i < 3; i++ {
 		_ = q.Push(testJob(i, 0))
 	}
@@ -256,7 +256,7 @@ func TestQueueSamplerRows(t *testing.T) {
 //
 // Design: abstraction/server/worker_pool/design.md#stallgate
 func TestStallGateOpensAfterStall(t *testing.T) {
-	q := NewWorkQueue(200, QueueFIFO, 0)
+	q := NewWorkQueue(200, QueueFIFO, 0, nil)
 	start := time.Now()
 	_ = q.Push(testJob(0, 0))
 	time.Sleep(50 * time.Millisecond)
@@ -275,7 +275,7 @@ func TestStallGateOpensAfterStall(t *testing.T) {
 		t.Fatal("open gate: second job must pop at once")
 	}
 
-	q0 := NewWorkQueue(0, QueueFIFO, 0)
+	q0 := NewWorkQueue(0, QueueFIFO, 0, nil)
 	_ = q0.Push(testJob(0, 0))
 	done := make(chan struct{})
 	go func() { q0.Pop(); close(done) }()
@@ -290,7 +290,7 @@ func TestStallGateOpensAfterStall(t *testing.T) {
 //
 // Design: abstraction/server/worker_pool/design.md#stallgate
 func TestStallGateCloseDuringStall(t *testing.T) {
-	q := NewWorkQueue(60_000, QueueFIFO, 0)
+	q := NewWorkQueue(60_000, QueueFIFO, 0, nil)
 	j := testJob(0, 0)
 	_ = q.Push(j)
 	p := StartWorkerPool(2, q, Config{CancelMode: CancelCooperative, ResponseBytes: 128, CancelCheckIntervalUs: 50}, NewCancelRegistry(16), &CancelCounters{}, nil)
@@ -312,7 +312,7 @@ func TestStallGateCloseDuringStall(t *testing.T) {
 //
 // Design: abstraction/server/worker_pool/design.md#workerfreeze
 func TestWorkerFreezeStopsPopping(t *testing.T) {
-	q := NewWorkQueue(0, QueueFIFO, 100)
+	q := NewWorkQueue(0, QueueFIFO, 100, nil)
 	_ = q.Push(testJob(0, 0)) // arms: freezeAt = now + 100ms
 	if q.Pop() == nil {
 		t.Fatal("before the freeze a job must pop")
@@ -355,7 +355,7 @@ func TestWorkerFreezeStopsPopping(t *testing.T) {
 //
 // Design: abstraction/server/worker_pool/design.md#workerfreeze
 func TestWorkerFreezeNever(t *testing.T) {
-	q := NewWorkQueue(0, QueueFIFO, 0)
+	q := NewWorkQueue(0, QueueFIFO, 0, nil)
 	_ = q.Push(testJob(0, 0))
 	time.Sleep(20 * time.Millisecond)
 	q.FreezeWait()
@@ -371,7 +371,7 @@ func TestWorkerFreezeNever(t *testing.T) {
 // Design: abstraction/server/ping_handler/design.md#cancelcheckpoints
 func TestWorkerFreezeHoldsRunningRequest(t *testing.T) {
 	for _, mode := range []CancelMode{CancelCooperative, CancelIgnore} {
-		q := NewWorkQueue(0, QueueFIFO, 50)
+		q := NewWorkQueue(0, QueueFIFO, 50, nil)
 		_ = q.Push(testJob(0, 300_000)) // arms the freeze at +50 ms
 		job := q.Pop()
 		cfg := Config{CancelMode: mode, ResponseBytes: 128, Workload: WorkloadSleep, FreezeAfterMs: 50}
@@ -390,6 +390,129 @@ func TestWorkerFreezeHoldsRunningRequest(t *testing.T) {
 			}
 		case <-time.After(2 * time.Second):
 			t.Fatalf("mode %v: Close did not release the request", mode)
+		}
+	}
+}
+
+// scenarioQueue returns a queue that follows a ScenarioSchedule given in ms.
+func scenarioQueue(t *testing.T, freezeAfterMs uint64, schedule string) *WorkQueue {
+	t.Helper()
+	sc, err := NewScenario(`{"states": {"fast": {"service_us": 40000}, "down": {"stall": true},
+		"slow": {"service_us": 80000}}, "schedule": `+schedule+`}`, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return NewWorkQueue(0, QueueFIFO, freezeAfterMs, sc)
+}
+
+// ScenarioStall worked example, scaled from s to ms: schedule fast -> down at
+// 60 -> slow at 80. A job popped in fast gets 40000 µs, one popped in slow
+// 80000 µs (the state at the pop, not at the push); nothing pops while down,
+// and FreezeWait holds until the stall ends.
+//
+// Design: abstraction/server/worker_pool/design.md#scenariostall
+func TestScenarioStallServiceTimeAtPop(t *testing.T) {
+	q := scenarioQueue(t, 0, `[[0, "fast"], [60, "down"], [80, "slow"]]`)
+	start := time.Now()
+	_ = q.Push(testJob(0, 999)) // arms the ScenarioClock
+	if j := q.Pop(); j == nil || j.ServiceUs != 40000 {
+		t.Fatalf("popped in fast: %+v, want service 40000", j)
+	}
+	_ = q.Push(testJob(1, 999)) // pushed in fast, popped in down -> slow
+	time.Sleep(time.Until(start.Add(65 * time.Millisecond)))
+	held := make(chan time.Time, 1)
+	go func() { q.FreezeWait(); held <- time.Now() }()
+	j := q.Pop()
+	popped := time.Since(start)
+	if j == nil || j.ServiceUs != 80000 {
+		t.Fatalf("popped after the stall: %+v, want service 80000", j)
+	}
+	if popped < 80*time.Millisecond || popped > 400*time.Millisecond {
+		t.Errorf("popped at %v, want just after 80 ms (the stall's end)", popped)
+	}
+	select {
+	case at := <-held:
+		if d := at.Sub(start); d < 80*time.Millisecond {
+			t.Errorf("FreezeWait returned at %v, during the stall", d)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("FreezeWait did not return after the stall")
+	}
+	q.FreezeWait() // not stalled: returns at once
+	q.Close()
+}
+
+// A first state that stalls holds Pop and FreezeWait before the first push
+// (no deadline yet); the push arms the clock and wakes them, so both end when
+// the stall does.
+//
+// Design: abstraction/server/worker_pool/design.md#scenariostall
+func TestScenarioStallFirstState(t *testing.T) {
+	q := scenarioQueue(t, 0, `[[0, "down"], [50, "fast"]]`)
+	popped := make(chan *PingJob, 1)
+	go func() { popped <- q.Pop() }()
+	waited := make(chan time.Time, 1)
+	go func() { q.FreezeWait(); waited <- time.Now() }()
+	time.Sleep(30 * time.Millisecond)
+	start := time.Now()
+	_ = q.Push(testJob(0, 0))
+	select {
+	case j := <-popped:
+		if d := time.Since(start); j == nil || j.ServiceUs != 40000 || d < 50*time.Millisecond {
+			t.Fatalf("pop %+v at %v, want service 40000 after 50 ms", j, d)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the first-state stall never ended for Pop")
+	}
+	select {
+	case at := <-waited:
+		if at.Sub(start) < 50*time.Millisecond {
+			t.Fatalf("FreezeWait ended at %v, before the stall's end", at.Sub(start))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the first-state stall never ended for FreezeWait")
+	}
+	q.Close()
+}
+
+// A stall that never ends (the last schedule entry) is like a WorkerFreeze:
+// Close releases Pop (nil) and FreezeWait. Combined with a WorkerFreeze, the
+// freeze wins and never ends.
+//
+// Design: abstraction/server/worker_pool/design.md#failure-and-edge-cases
+func TestScenarioStallPermanentAndClose(t *testing.T) {
+	for _, freeze := range []uint64{0, 10} {
+		q := scenarioQueue(t, freeze, `[[0, "fast"], [20, "down"]]`)
+		_ = q.Push(testJob(0, 0))
+		if j := q.Pop(); j == nil {
+			t.Fatal("pop before the stall")
+		}
+		time.Sleep(40 * time.Millisecond)
+		_ = q.Push(testJob(1, 0))
+		popped := make(chan *PingJob, 1)
+		go func() { popped <- q.Pop() }()
+		waited := make(chan struct{})
+		go func() { q.FreezeWait(); close(waited) }()
+		select {
+		case <-popped:
+			t.Fatalf("freeze %d: popped during a permanent stall", freeze)
+		case <-waited:
+			t.Fatalf("freeze %d: FreezeWait returned during a permanent stall", freeze)
+		case <-time.After(200 * time.Millisecond):
+		}
+		q.Close()
+		select {
+		case j := <-popped:
+			if j != nil {
+				t.Fatalf("freeze %d: after Close, Pop must return nil", freeze)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("freeze %d: Close did not release Pop", freeze)
+		}
+		select {
+		case <-waited:
+		case <-time.After(time.Second):
+			t.Fatalf("freeze %d: Close did not release FreezeWait", freeze)
 		}
 	}
 }

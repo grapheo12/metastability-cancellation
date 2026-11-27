@@ -1,4 +1,4 @@
-// Source: abstraction/server/ping_handler/design.md (ping_handler v0.13.0)
+// Source: abstraction/server/ping_handler/design.md (ping_handler v0.14.0)
 package server
 
 import (
@@ -50,7 +50,7 @@ func TestExecReportInBody(t *testing.T) {
 		{"no deadline", NoDeadline, false, 0, 0},
 	}
 	for _, c := range cases {
-		q := NewWorkQueue(0, QueueFIFO, 0)
+		q := NewWorkQueue(0, QueueFIFO, 0, nil)
 		_ = q.Push(newPingJob(&StreamTask{}, protocol.MakeRequestID(0, 0), 0, 20_000, c.deadline)) // 20 ms
 		job := q.Pop()
 		cfg := Config{CancelMode: CancelCooperative, ResponseBytes: 128, Workload: WorkloadSleep}
@@ -91,7 +91,7 @@ func TestPastDeadlineRejectionWorkedExamples(t *testing.T) {
 		{"off: late runs", CancelCooperative, false, now - 1_000_000_000, false, 202, false},
 	}
 	for _, c := range cases {
-		q := NewWorkQueue(0, QueueFIFO, 0)
+		q := NewWorkQueue(0, QueueFIFO, 0, nil)
 		job := newPingJob(&StreamTask{}, protocol.MakeRequestID(0, 0), 0, 1_000, c.deadline) // 1 ms sleep
 		job.Task.Cancelled.Store(c.rst)
 		_ = q.Push(job)
@@ -176,7 +176,7 @@ func TestAdmitSleepConstantNoDraw(t *testing.T) {
 		t.Fatal("sleep_constant advanced the rng")
 	}
 	// A 20 ms constant sleep runs as QuantumSleep and reports about 20 ms.
-	q := NewWorkQueue(0, QueueFIFO, 0)
+	q := NewWorkQueue(0, QueueFIFO, 0, nil)
 	_ = q.Push(newPingJob(&StreamTask{}, protocol.MakeRequestID(0, 0), 0, constantServiceUs(50), NoDeadline))
 	r := runPing(q.Pop(), Config{CancelMode: CancelCooperative, ResponseBytes: 128, Workload: WorkloadSleepConstant},
 		NewCancelRegistry(16), &CancelCounters{}, nil, q)
@@ -184,4 +184,63 @@ func TestAdmitSleepConstantNoDraw(t *testing.T) {
 		t.Fatalf("status %d exec %d %v", r.Status, ex, ok)
 	}
 	q.Close()
+}
+
+// ScenarioServiceTime: admission draws nothing and leaves ServiceUs 0; the pop
+// sets it from the state at that moment. Worked example scaled to fit 20 ms
+// quanta: fast = 200 ms, down (stall) from 100 ms to 300 ms, slow = 100 ms.
+// A request popped at 0 is held from its check at 100 ms to 300 ms and is then
+// answered at once (its sleep deadline, 200 ms, has passed); one pushed during
+// the stall pops at 300 ms with 100 ms. Both cancel modes.
+//
+// Design: abstraction/server/ping_handler/design.md#scenarioservicetime
+func TestScenarioServiceTime(t *testing.T) {
+	for _, mode := range []CancelMode{CancelCooperative, CancelIgnore} {
+		sc, err := NewScenario(`{"states": {"fast": {"service_us": 200000}, "down": {"stall": true},
+			"slow": {"service_us": 100000}}, "schedule": [[0, "fast"], [100, "down"], [300, "slow"]]}`, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg := Config{CancelMode: mode, ResponseBytes: 128, Workload: WorkloadSleepConstant, Scenario: sc}
+		rng, ref := sampling.NewRng(9), sampling.NewRng(9)
+		st := &ConnectionCancelState{}
+		var jobs []*PingJob
+		for seq := uint32(0); seq < 2; seq++ {
+			job, _ := admitPing(&StreamTask{Body: protocol.BuildBody(protocol.MakeRequestID(seq, 1), 0, nil, 128)}, cfg, rng, st)
+			if job == nil || job.ServiceUs != 0 {
+				t.Fatalf("mode %v: admitted %+v, want service 0", mode, job)
+			}
+			jobs = append(jobs, job)
+		}
+		if rng.NextU64() != ref.NextU64() {
+			t.Fatalf("mode %v: admission advanced the rng", mode)
+		}
+		q := NewWorkQueue(0, QueueFIFO, 0, sc)
+		start := time.Now()
+		_ = q.Push(jobs[0]) // arms the ScenarioClock
+		a := q.Pop()
+		if a.ServiceUs != 200000 {
+			t.Fatalf("mode %v: popped in fast with %d", mode, a.ServiceUs)
+		}
+		gotA := make(chan Response, 1)
+		go func() { gotA <- runPing(a, cfg, NewCancelRegistry(16), &CancelCounters{}, nil, q) }()
+		time.Sleep(time.Until(start.Add(150 * time.Millisecond)))
+		_ = q.Push(jobs[1])
+		b := q.Pop() // waits for the stall's end
+		poppedB := time.Since(start)
+		if b.ServiceUs != 100000 || poppedB < 300*time.Millisecond {
+			t.Fatalf("mode %v: second job popped at %v with %d, want slow after 300 ms", mode, poppedB, b.ServiceUs)
+		}
+		rB := runPing(b, cfg, NewCancelRegistry(16), &CancelCounters{}, nil, q)
+		rA := <-gotA
+		exA, okA, _, _ := protocol.ParseExecReport(rA.Body)
+		exB, okB, _, _ := protocol.ParseExecReport(rB.Body)
+		if rA.Status != 202 || !okA || exA < 290_000_000 || exA > 600_000_000 {
+			t.Errorf("mode %v: held request: status %d exec %d ns, want about 300 ms", mode, rA.Status, exA)
+		}
+		if rB.Status != 202 || !okB || exB < 100_000_000 || exB > 400_000_000 {
+			t.Errorf("mode %v: slow request: status %d exec %d ns, want about 100 ms", mode, rB.Status, exB)
+		}
+		q.Close()
+	}
 }

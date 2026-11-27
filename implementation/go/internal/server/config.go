@@ -1,7 +1,7 @@
 // Package server implements the HTTP/2 /ping + /cancel server. Each file maps
 // to one component of abstraction/server.
 //
-// Source: abstraction/server/design.md (server v0.14.1)
+// Source: abstraction/server/design.md (server v0.18.0)
 package server
 
 import (
@@ -61,6 +61,8 @@ type Config struct {
 	WindowSize            uint32 // MessageBuffer slots
 	NGCBinaryTreeSize     int    // nodes per MessageTree
 	NMessagesPerRequest   int
+	Scenario              *Scenario // ServiceScenario (shared, internally locked); nil: none
+	ScenarioLogPath       string    // empty: no ScenarioLog
 }
 
 // Params holds the raw command-line values, named after the API parameters.
@@ -83,6 +85,8 @@ type Params struct {
 	WindowSize            string
 	NGCBinaryTreeSize     string
 	NMessagesPerRequest   string
+	ServiceScenario       string // JSON; empty: none
+	ScenarioLogPath       string
 }
 
 // DefaultParams returns the defaults from abstraction/server/api.md#program-parameters.
@@ -123,8 +127,12 @@ func Validate(p Params) (Config, error) {
 	default:
 		return c, errors.New("workload must be cpu_burn, message_buffer, sleep or sleep_constant")
 	}
-	if (c.Workload == WorkloadCPUBurn || c.Workload == WorkloadSleep || c.Workload == WorkloadSleepConstant) &&
-		p.ResponseRate == "" {
+	// Design: abstraction/server/design.md#configuration-validation
+	if p.ServiceScenario != "" && c.Workload != WorkloadSleepConstant { // ServiceScenario; parsed once the seed is
+		return c, errors.New("service_scenario needs workload sleep_constant")
+	}
+	if (c.Workload == WorkloadCPUBurn || c.Workload == WorkloadSleep ||
+		(c.Workload == WorkloadSleepConstant && p.ServiceScenario == "")) && p.ResponseRate == "" {
 		return c, errors.New("response_rate is required")
 	}
 	if p.ResponseRate != "" { // validated whenever given
@@ -163,6 +171,14 @@ func Validate(p Params) (Config, error) {
 		return c, errors.New("seed must be an unsigned 64-bit integer")
 	}
 	c.Seed = seed
+	if p.ServiceScenario != "" {
+		sc, err := NewScenario(p.ServiceScenario, seed) // its error, as is
+		if err != nil {
+			return c, err
+		}
+		c.Scenario = sc
+	}
+	c.ScenarioLogPath = p.ScenarioLogPath
 	nw, err := strconv.ParseUint(p.NWorkerThreads, 10, 32)
 	if err != nil || nw < 1 {
 		return c, errors.New("n_worker_threads must be an integer in 1..=4294967295")
