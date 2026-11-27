@@ -11,7 +11,8 @@ OneShot: a slot written exactly once and read by one waiter
 ```
 
 A PingJob is created only for a `POST /ping` whose body parses and whose client id matches the connection's
-binding. Its ServiceTime is already drawn, so a worker never touches a connection's Rng. `deadline_unix_ns` is the
+binding. Its ServiceTime is already drawn, so a worker never touches a connection's Rng; with a ServiceScenario it is
+set instead when the job is popped ([ScenarioStall](#scenariostall)), from the ScenarioState at that moment. `deadline_unix_ns` is the
 request's RequestDeadline, or `NO_DEADLINE = 2^64 - 1` if the body had none; only the `edf` QueueDiscipline reads
 it ([EarliestDeadlineFirst](#earliestdeadlinefirst)). Every PingJob that was
 pushed successfully gets exactly one `reply.put`: from the worker that ran it ([WorkerPool](#workerpool)), or from
@@ -32,11 +33,13 @@ WorkQueue: { lock, not_empty: condition variable, discipline: fifo | edf,
              next_seq: u64 = 0,                                              # edf: push_seq of the next push
              closed: boolean = false,
              stall_ns: u64, open_at_ns: u64 or none = none,       # StallGate, see below
-             freeze_ns: u64 or none, freeze_at_ns: u64 or none = none }   # WorkerFreeze, see below
+             freeze_ns: u64 or none, freeze_at_ns: u64 or none = none,    # WorkerFreeze, see below
+             scenario: ServiceScenario or none }                          # ScenarioStall, see below
 
-function queue_new(initial_stall_ms, discipline, freeze_after_ms):     # freeze_after_ms: u64 >= 1, or none
+function queue_new(initial_stall_ms, discipline, freeze_after_ms, scenario):   # freeze_after_ms: u64 >= 1, or none
     return WorkQueue(discipline = discipline, stall_ns = initial_stall_ms * 1_000_000,
-                     freeze_ns = freeze_after_ms * 1_000_000 if freeze_after_ms is not none else none)
+                     freeze_ns = freeze_after_ms * 1_000_000 if freeze_after_ms is not none else none,
+                     scenario = scenario)
 
 function add_item(q, job):                       # caller holds q.lock
     if q.discipline == fifo: q.items.push_back(job)
@@ -51,10 +54,13 @@ function take_item(q):                           # caller holds q.lock; q.items 
 function queue_push(q, job):
     with q.lock:
         if q.closed: return Closed
-        if q.open_at_ns is none:                 # StallGate and WorkerFreeze: the first push arms both
+        if q.open_at_ns is none:                 # StallGate, WorkerFreeze, ScenarioClock: the first push arms all
             armed_at = monotonic_now_ns()
             q.open_at_ns = armed_at + q.stall_ns
             if q.freeze_ns is not none: q.freeze_at_ns = armed_at + q.freeze_ns
+            if q.scenario is not none:
+                service_scenario.scenario_arm(q.scenario, armed_at, wall_clock_unix_ns())
+                q.not_empty.notify_all()         # waiters of a first-state stall now get a deadline
             if q.stall_ns > 0: schedule q.not_empty.notify_all() at q.open_at_ns
         add_item(q, job)
         q.not_empty.notify_one()
@@ -64,12 +70,28 @@ function queue_pop(q):
     with q.lock:
         loop:
             if q.closed: return None             # closed wins over queued items
-            if q.items is not empty and monotonic_now_ns() >= q.open_at_ns and not frozen(q):
-                return take_item(q)
-            q.not_empty.wait()                   # woken by a push, the gate opening, or close
+            now = monotonic_now_ns()
+            if q.items is not empty and now >= q.open_at_ns and not frozen(q):
+                if q.scenario is none: return take_item(q)
+                s = service_scenario.state_at(q.scenario, now)
+                if not s.stall:                  # ScenarioStall: nothing is popped in a StalledState
+                    job = take_item(q)
+                    job.service_us = s.service_us        # ConstantServiceTime of the state at the pop
+                    return job
+            wait_for_change(q, now)              # woken by a push, the gate opening, close, or a stall's end
 
-function frozen(q):                              # caller holds q.lock
+function frozen(q):                              # caller holds q.lock; the WorkerFreeze (permanent)
     return q.freeze_at_ns is not none and monotonic_now_ns() >= q.freeze_at_ns
+
+function stall_ends_at(q, now):                  # caller holds q.lock -> monotonic ns, or none
+    if q.scenario is none or frozen(q): return none
+    if not service_scenario.state_at(q.scenario, now).stall: return none
+    return service_scenario.next_change_at(q.scenario, now)   # none: the stall cannot end (or not armed)
+
+procedure wait_for_change(q, now):               # caller holds q.lock
+    n = stall_ends_at(q, now)
+    if n is none: q.not_empty.wait()
+    else: q.not_empty.wait_until(n)              # a StalledState: re-check when it can end
 
 procedure queue_close(q):
     with q.lock:
@@ -89,6 +111,8 @@ procedure queue_close(q):
   `queue_close` are not affected by it.
 - **WorkerFreeze.** Workers pop nothing once the freeze has started ([WorkerFreeze](#workerfreeze)). Pushes,
   `queue_len` and `queue_close` are not affected by it either.
+- **ScenarioStall.** With a ServiceScenario, workers pop nothing while it is in a StalledState, and each popped job
+  gets the ConstantServiceTime of the state at its pop ([ScenarioStall](#scenariostall)).
 - **No reordering after the push.** A job's place is fixed when it is pushed (its key, for `edf`). It is never
   pushed back or skipped. If its stream was reset while it was queued, it is still popped in turn, and the Ping Handler's CancelCheckPoint 1 sees the RST flag
   ([../ping_handler/design.md#cancelcheckpoints](../ping_handler/design.md#cancelcheckpoints)).
@@ -136,10 +160,15 @@ that fails fast.
 
 ```
 function freeze_wait(q):                          # called by the Ping Handler at each check of a running request
-    if q.freeze_ns is none: return                # no WorkerFreeze: never waits, takes no lock
+    if q.freeze_ns is none and q.scenario is none: return   # neither: never waits, takes no lock
     with q.lock:
-        while not q.closed and frozen(q):
-            q.not_empty.wait()                    # only queue_close ends the wait
+        loop:
+            if q.closed: return
+            if frozen(q): q.not_empty.wait(); continue      # only queue_close ends a WorkerFreeze
+            now = monotonic_now_ns()
+            if q.scenario is not none and service_scenario.state_at(q.scenario, now).stall:
+                wait_for_change(q, now); continue           # ScenarioStall: until the stall can end
+            return
 ```
 
 - **Armed with the StallGate.** The first successful `queue_push` sets `freeze_at_ns = arm time + freeze_after_ms`,
@@ -176,6 +205,39 @@ started:
 | `queue_close` at 120500 | 60250 | queued jobs `Aborted`; the frozen request finishes its last 40 ms and is answered into a closing stream; workers return | close ends the freeze |
 | `freeze_after_ms` empty | none | no freeze | `freeze_ns` is none |
 | `freeze_after_ms = 500`, `initial_stall_ms = 1000`, first push at 250 | 750 | nothing ever runs | 750 < 1250 |
+
+## ScenarioStall
+
+With a ServiceScenario ([../service_scenario/design.md](../service_scenario/design.md#servicescenario)), the WorkQueue
+applies its states:
+
+- **Armed with the StallGate.** The first successful `queue_push` starts the ScenarioClock at the same instant as the
+  StallGate and the WorkerFreeze, and reads the wall clock once for the ScenarioLog. Before that, `next_change_at` is
+  none, so if the first state is a StalledState every waiter waits without a deadline; arming therefore wakes all of
+  them (`notify_all`) so that each re-checks and sets its deadline.
+- **Service time at the pop.** `queue_pop` sets the job's `service_us` to the ConstantServiceTime of the state at the
+  moment it pops (under the queue lock); the Ping Handler drew nothing at admission. A state change between the pop
+  and the end of the request does not change that request.
+- **StalledState.** While the scenario is in one, `queue_pop` hands out nothing and `freeze_wait` holds running
+  requests and the HeartbeatSender, exactly as a WorkerFreeze does ([WorkerFreeze](#workerfreeze)), except that the
+  waits end: each waits until `next_change_at` (a timed wait), re-checks, and goes on once the state is no longer a
+  stall. No notification is needed at the end of a stall: every waiter set its own deadline.
+- **With a WorkerFreeze.** `frozen` is checked first and never ends; a stall adds nothing to it.
+- **Cost.** With a scenario, `freeze_wait` takes the queue lock and the scenario's lock at every check of a running
+  request (every QuantumSleep wake-up); without one it returns at once, as before.
+
+Worked example, `workload = sleep_constant`, `initial_stall_ms = 0`, `schedule = [[0, fast], [60000, down],
+[80000, slow]]` with `fast = 400 ms`, `down` stalled and `slow = 800 ms`; times are ScenarioClock time:
+
+| Event | Effect | Check |
+|---|---|---|
+| a job is popped at 10.000 s | `service_us = 400000`; answered at 10.400 s | fast |
+| a job is popped at 59.900 s | `service_us = 400000`; its QuantumSleep wakes at 59.92 … 60.00; at 60.00 `freeze_wait` waits until 80 s | stall from 60 s |
+| workers finishing other jobs at 60.1 s | `queue_pop` waits until 80 s; the queue grows | StalledState |
+| heartbeat line due at 60.4 s | not written until 80 s | `freeze_wait` |
+| 80.000 s | the held request's sleep deadline (60.300 s) has passed: answered at once, `exec_ns` about 20.1 s; workers pop again with `service_us = 800000` | slow |
+| a job is popped at 80.000 s | answered at 80.800 s | slow |
+| no scenario | as before: no lock in `freeze_wait` unless `freeze_after_ms` is set | |
 
 ## WorkerPool
 
@@ -333,7 +395,9 @@ ends. Real parallelism needs at least `n_worker_threads + 1` CPUs or OS threads 
 does not check this, and the ProcessPlacement `threads` of the Benchmark Runner is the knob for it
 ([../../benchmark_runner/config/api.md#processplacement-keys](../../benchmark_runner/config/api.md#processplacement-keys)).
 
-The WorkQueue lock is held only to move one job in or out. A worker never holds it while running a job.
+The WorkQueue lock is held only to move one job in or out, or for one `freeze_wait` check. A worker never holds it
+while running a job. With a ServiceScenario, `queue_pop`, `freeze_wait` and `queue_push` take the scenario's lock
+while holding the queue lock; the scenario never takes the queue lock, so the order is always queue, then scenario.
 
 ## Failure and edge cases
 
@@ -348,3 +412,6 @@ The WorkQueue lock is held only to move one job in or out. A worker never holds 
 | `queue_close` called twice | The second call does nothing |
 | `queue_close` during the stall | As above: queued jobs `Aborted`, workers return, the timer's wake-up later finds the queue closed |
 | `queue_close` while frozen | Queued jobs `Aborted`; workers in `queue_pop` return `None`; workers in `freeze_wait` resume their request, fill `reply`, then pop `None` and return ([WorkerFreeze](#workerfreeze)) |
+| `queue_close` in a StalledState | As while frozen: the timed waits end at once ([ScenarioStall](#scenariostall)) |
+| A ScenarioSchedule whose last state is a StalledState | `next_change_at` is none, so the waits are untimed: the server stays stalled until `queue_close`, like a WorkerFreeze |
+| A wait woken before the stall ends (a push, a spurious wake-up, a repeated state) | Re-checks the state and waits again with a new deadline |
