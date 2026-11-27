@@ -39,6 +39,8 @@ function derive_seed(base_seed, kind, index):
   `derive_seed(derive_seed(seed, STREAM_SERVER_MESSAGES, client_id), STREAM_SERVER_MESSAGES, seq)`: one stream per
   request, the same whichever worker runs it and whenever it runs.
 - The server's MessageBuffer fill at startup uses `derive_seed(seed, STREAM_SERVER_PREFILL, 0)`.
+- A server's MarkovSchedule uses `derive_seed(seed, STREAM_SERVER_SCENARIO, stream)`, one `next_unit` per step
+  ([../server/service_scenario/design.md#markovschedule](../server/service_scenario/design.md#markovschedule)).
 
 ## Generator
 

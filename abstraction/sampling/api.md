@@ -12,6 +12,7 @@ Kind tags for [design.md#seedderivation](design.md#seedderivation):
 | `STREAM_INGRESS_LB` | `4` | Kind tag for an Ingress LoadBalancer's single stream (index `0`), used by the `power_of_two` policy |
 | `STREAM_SERVER_MESSAGES` | `5` | Kind tag for a server request's MessageTree stream, derived twice (client id, then seq) |
 | `STREAM_SERVER_PREFILL` | `6` | Kind tag for the server's single MessageBuffer fill stream (index `0`) |
+| `STREAM_SERVER_SCENARIO` | `7` | Kind tag for a server's MarkovSchedule stream (index: the scenario's `stream`) |
 
 ## Types
 
