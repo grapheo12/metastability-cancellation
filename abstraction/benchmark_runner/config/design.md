@@ -16,17 +16,19 @@ PROGRAM_PARAMS = {
                 "lb_retry_timeout_ms", "lb_retry_anxiety_ratio", "lb_retry_late_factor"],
 }
 PLACEMENT_KEYS = ["threads", "cpu_set"]                                  # ProcessPlacement
-RUNNER_KEYS = { "server":    ["listen_port", "instances", "gc_trace", "freeze_instance"] + PLACEMENT_KEYS,
+RUNNER_KEYS = { "server":    ["listen_port", "instances", "gc_trace", "freeze_instance",
+                              "scenario", "scenario_by_instance"] + PLACEMENT_KEYS,
                 "load_gen":  PLACEMENT_KEYS,
                 "ingress":   ["machine", "listen_port", "cancel_rate_fraction"] + PLACEMENT_KEYS }
 SWEEPABLE_RUNNER_KEYS = ["ingress.cancel_rate_fraction"]                 # CancelRateFraction
-FORBIDDEN   = { "server": ["listen_addr", "queue_log_path"], "load_gen": ["target", "output_path"],
+FORBIDDEN   = { "server": ["listen_addr", "queue_log_path", "service_scenario", "scenario_log_path"],
+                "load_gen": ["target", "output_path"],
                 "ingress": ["listen_addr", "backends", "num_clients", "output_path"] }
 SECTIONS    = [server, load_gen, ingress]
 
 function load_config(path):
     doc = parse_toml(path)                                  # ConfigError on syntax error
-    allowed tables: repo, machines (with exactly server, client), server, load_gen, ingress, run
+    allowed tables: repo, machines (with exactly server, client), server, load_gen, ingress, run, scenarios
     repo_url = doc.repo.url if present else git_origin_url_of_operator_repo()
     if repo_url is none: ConfigError("[repo] url is required (no origin remote)")
     server_machines = validate_server_machines(doc.machines.server)   # ServerMachines: a list, in file order
@@ -50,6 +52,7 @@ function load_config(path):
                          else ConfigError("server.listen_port + server.instances - 1 must be <= 65535")
     check_ingress_placement(config)                           # IngressPlacement: one server machine, port collision
     check_freeze_target(config)                               # FreezeTarget
+    check_scenario_assignment(config)                         # ScenarioAssignment
     validate run table; fill defaults
     link = run.link or empty map                              # LinkedSweep
     # swept keys: every array-valued program parameter and every array-valued SWEEPABLE_RUNNER_KEY,
@@ -71,6 +74,8 @@ Error messages for the runner keys added with ProcessPlacement and CancelRateFra
 | `gc_trace` not a boolean (an array included: it cannot be swept) | `server.gc_trace must be true or false` |
 | `machine` not `"client"` or `"server"` | `ingress.machine must be "client" or "server"` |
 | `freeze_instance` problems | see [FreezeTarget](#freezetarget) |
+| `[scenarios]`, `scenario` or `scenario_by_instance` problems | see [ScenarioAssignment](#scenarioassignment) |
+| `[server] service_scenario` or `scenario_log_path` | `server.<key> is set by the runner` (from the ScenarioAssignment) |
 | `[machines.server]` problems | see [ServerMachines](#servermachines) |
 | a `[canceller]` table (from before the Ingress) | `unknown table [canceller]` |
 | `run.link` problems | see [LinkedSweep](#linkedsweep) |
@@ -137,6 +142,7 @@ function expand_sweep(config):
             freeze = { "instance": config.server.freeze_instance,
                        "freeze_after_ms": value of freeze_after_ms in server_args }
             remove ("freeze_after_ms", ...) from server_args
+        scenarios = scenario_assignment(config)                                 # ScenarioAssignment: same every point
         placement = { program: { "threads": config[section].threads or none,     # ProcessPlacement
                                  "cpu_set": config[section].cpu_set or none }
                       for (program, section) in [("server", "server"), ("loadgen", "load_gen"),
@@ -144,7 +150,7 @@ function expand_sweep(config):
         points.append(SweepPoint(id, swept, linked, server_args, loadgen_args, ingress_args,
                                  len(config.machines.server) × config.server.instances,   # ServerMachines
                                  server_hosts(config), config.ingress.machine, loadgen_target(config),
-                                 placement, freeze))
+                                 placement, freeze, scenarios))
     return points          # with no swept keys: exactly one point, id 0
 ```
 
@@ -443,6 +449,91 @@ function check_freeze_target(config):
 | `freeze_instance = 2` with 2 server machines × 1 instance | — | ConfigError `server.freeze_instance must be an integer in 0..=1` |
 | `freeze_instance = 0` only | — | ConfigError `server.freeze_instance needs server.freeze_after_ms` |
 | `freeze_instance = [0, 1]` | — | ConfigError `server.freeze_instance cannot be swept` |
+
+## ScenarioAssignment
+
+A server's ServiceScenario ([../../server/service_scenario/design.md](../../server/service_scenario/design.md#servicescenario))
+is a JSON server parameter. The runner lets the config name scenarios as TOML tables, `[scenarios.<name>]`, and
+assign them to instances: `[server] scenario` names the scenario of every instance, `[server] scenario_by_instance`
+overrides it per instance id. This mapping is the **ScenarioAssignment**. The runner turns each instance's table into
+its `service_scenario` JSON, with `stream` = the instance id, so instances that share a MarkovSchedule draw
+independent chains. The runner checks names and shapes only; the server validates the scenario itself and fails the
+point on a bad one, as for every program parameter.
+
+```
+SCENARIO_KEYS = ["states", "schedule", "markov"]
+
+function check_scenario_assignment(config):
+    scen = config.scenarios if present else empty table           # [scenarios.<name>], in file order
+    for (name, t) in scen:
+        t is a table                                 else ConfigError("scenarios.<name> must be a table")
+        for key in t:
+            key != "stream"                          else ConfigError("scenarios.<name>.stream is set by the runner")
+            key in SCENARIO_KEYS                     else ConfigError("unknown key scenarios.<name>.<key>")
+        "states" in t                                else ConfigError("scenarios.<name>.states is required")
+        exactly one of "schedule", "markov" in t     else ConfigError("scenarios.<name> needs exactly one of schedule and markov")
+        every value inside t is a table, an array, a string, an integer, a finite float or a boolean
+                                                     else ConfigError("scenarios.<name> may hold only tables, arrays, strings, numbers and booleans")
+    total = len(config.machines.server) × config.server.instances            # ServerMachines
+    default = config.server.scenario if present else none     # an array was already refused: cannot be swept
+    default is none or (default is a string and default in scen)
+                                                     else ConfigError("server.scenario must name a [scenarios] table")
+    by = config.server.scenario_by_instance if present else empty table
+    by is a table                                    else ConfigError("server.scenario_by_instance must be a table of \"<instance>\" = \"<scenario>\"")
+    for (k, name) in by:
+        k is "0", or decimal digits without a leading 0, and int(k) <= total - 1
+                                                     else ConfigError("server.scenario_by_instance: instance <k> must be in 0..=<total - 1>")
+        name is a string and name in scen            else ConfigError("server.scenario_by_instance: <name> must name a [scenarios] table")
+    if default is not none or by is not empty:
+        "workload" in config.server and every value of it (the scalar, or each element) is "sleep_constant"
+                                                     else ConfigError("server.scenario needs server.workload = \"sleep_constant\"")
+
+function scenario_assignment(config):                 # -> list of length total: {name, service_scenario} or none
+    out = []
+    for k in 0 ..= total - 1:
+        name = by[decimal(k)] if decimal(k) in by else default
+        if name is none: out.append(none); continue
+        obj = an ordered JSON object: each key of config.scenarios[name] in file order -> to_json(its value),
+              then "stream" -> k                                                   # integer
+        out.append({ "name": name, "service_scenario": compact_json(obj) })
+    return out
+```
+
+- **`to_json`.** A TOML table becomes a JSON object with its keys in file order, an array an array, a string a
+  string, an integer an integer, a float the shortest decimal that parses back to the same value (as in
+  [Argument formatting](#argument-formatting): `0.05`, `1.0`), a boolean `true` / `false`.
+- **`compact_json`.** No whitespace: `,` and `:` separators only. Non-ASCII characters in strings are written as
+  `\uXXXX`. The result is one argument word; quoting it for the remote shell is the Transport's job.
+- **Not sweepable.** `scenario` and `scenario_by_instance` are runner keys and cannot be swept; every SweepPoint gets
+  the same ScenarioAssignment. A `[scenarios]` table that no instance uses is allowed and ignored.
+- **Other server parameters** go to every instance as usual. `response_rate` is still needed by any instance without
+  a scenario; an instance with one ignores it ([../../server/design.md#configuration-validation](../../server/design.md#configuration-validation)).
+- **With a FreezeTarget.** The two are independent: an instance may have both a WorkerFreeze and a scenario.
+
+Worked example, 2 server machines × 1 instance:
+
+```
+[scenarios.stall_then_slow]
+states = { fast = { service_us = 400000 }, down = { stall = true }, slow = { service_us = 800000 } }
+schedule = [[0, "fast"], [60000, "down"], [80000, "slow"]]
+
+[scenarios.flap]
+states = { fast = { service_us = 400000 }, down = { stall = true } }
+markov = { initial = "fast", step_ms = 1000, p = { fast = { fast = 0.95, down = 0.05 }, down = { down = 0.7, fast = 0.3 } } }
+```
+
+| `[server]` keys | Instance 0 `service_scenario` | Instance 1 `service_scenario` |
+|---|---|---|
+| neither | none | none |
+| `scenario_by_instance = { "0" = "stall_then_slow" }` | `{"states":{"fast":{"service_us":400000},"down":{"stall":true},"slow":{"service_us":800000}},"schedule":[[0,"fast"],[60000,"down"],[80000,"slow"]],"stream":0}` | none |
+| `scenario = "flap"` | `{"states":{"fast":{"service_us":400000},"down":{"stall":true}},"markov":{"initial":"fast","step_ms":1000,"p":{"fast":{"fast":0.95,"down":0.05},"down":{"down":0.7,"fast":0.3}}},"stream":0}` | the same with `"stream":1` |
+| `scenario = "flap"`, `scenario_by_instance = { 0 = "stall_then_slow" }` | `stall_then_slow`, `"stream":0` | `flap`, `"stream":1` |
+| `scenario_by_instance = { "2" = "flap" }` | — | ConfigError `server.scenario_by_instance: instance 2 must be in 0..=1` |
+| `scenario = "nope"` | — | ConfigError `server.scenario must name a [scenarios] table` |
+| `scenario = ["flap", "stall_then_slow"]` | — | ConfigError `server.scenario cannot be swept` |
+| `scenario = "flap"` with `workload = "sleep"` | — | ConfigError `server.scenario needs server.workload = "sleep_constant"` |
+| `[scenarios.x]` with `stream = 3` | — | ConfigError `scenarios.x.stream is set by the runner` |
+| `[scenarios.x]` with both `schedule` and `markov` | — | ConfigError `scenarios.x needs exactly one of schedule and markov` |
 
 ## Argument formatting
 
