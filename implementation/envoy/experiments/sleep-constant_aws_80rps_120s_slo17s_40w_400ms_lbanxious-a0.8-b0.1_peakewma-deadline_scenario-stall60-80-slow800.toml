@@ -1,0 +1,72 @@
+# impl/envoy: ServiceScenario demo, schedule. Server instance 0 (metafail-exp-2) follows a ScenarioSchedule:
+# fast (400 ms) from the first /ping, down (StalledState: nothing popped, running requests held) from 60 s, then
+# slow (800 ms, half capacity) from 80 s to the end. Replaces the permanent WorkerFreeze of the freeze-half configs
+# with a stall that recovers.
+# Servers: 40 workers, sleep_constant; instance 1 (metafail-exp-3) always sleeps 400 ms (100 req/s).
+# Load: 80 req/s Poisson from 16 clients, SLO 17 s, 120 s, DrainDeadline 30 s.
+# Ingress: Envoy Peak EWMA with the peak_ewma_deadline filter (ProvisionalCurrentRTT) and AnxiousRetry
+# (alpha 0.8, beta 0.1, one retry); on the Go stack the same file runs the Go Ingress's EwmaPolicy + deadline_mean
+# and its anxious RetryPolicy. No heartbeats.
+# Each point also writes server_0.scenario.csv (ScenarioLog: t_ns,unix_ns,state at every change of state).
+#
+# Meant to be run ON metafail-exp-1 (client = "local"), detached, from a checkout of impl/envoy:
+#   python3 implementation/scripts/bench.py run implementation/envoy/experiments/sleep-constant_aws_80rps_120s_slo17s_40w_400ms_lbanxious-a0.8-b0.1_peakewma-deadline_scenario-stall60-80-slow800.toml
+[repo]
+url = "https://github.com/grapheo12/metastability-cancellation.git"
+
+[[machines.server]]
+host = "172.31.30.174"   # metafail-exp-2
+user = "ubuntu"
+ssh_key = "~/.ssh/id_ed25519_bench"
+data_addr = "172.31.30.174"
+
+[[machines.server]]
+host = "172.31.21.15"    # metafail-exp-3
+user = "ubuntu"
+ssh_key = "~/.ssh/id_ed25519_bench"
+data_addr = "172.31.21.15"
+
+[machines.client]
+host = "local"           # metafail-exp-1, where this runner runs
+
+[server]
+listen_port = 8080
+instances = 1   # per server machine: 2 servers in total
+workload = "sleep_constant"   # a fixed sleep; instance 0 takes it from its scenario state at the pop
+response_rate = 2.5   # instances without a scenario: 400 ms each (100 req/s per 40-worker server)
+initial_stall_ms = 0
+n_worker_threads = 40
+queue_discipline = "edf"
+response_bytes = 128
+scenario_by_instance = { "0" = "stall_then_slow" }   # ScenarioAssignment: only instance 0 (metafail-exp-2)
+
+[load_gen]
+num_clients = 16
+global_rate = 80   # 40% of 2 x 100 req/s
+request_bytes = 128
+slo_ms = 17000
+duration_s = 120
+n_waiting_requests = 500
+max_retries = 0           # no client retries
+initial_stall_ms = 0      # no StallWindow
+slo_cancel = false        # late requests run to completion; DrainDeadline ends the rest
+drain_timeout_ms = 30000  # DrainDeadline: 30 s after duration_s
+
+[ingress]
+machine = "client"   # Ingress next to the load generator on metafail-exp-1
+listen_port = 9090
+lb_policy = "ewma"   # Envoy: contrib Peak EWMA; Go: the Go Ingress EwmaPolicy
+heartbeat_timeout_ms = 0     # no Heartbeat Monitor
+lb_retry_policy = "anxious"  # AnxiousRetry (abstraction/ingress/retry_policy/design.md#anxious)
+lb_max_retries = 1
+lb_retry_anxiety_ratio = 0.8  # alpha
+lb_retry_late_factor = 0.1    # beta
+lb_filter = ["deadline_mean"]  # Envoy: peak_ewma_deadline; Go: EwmaPolicy + DeadlineFilter deadline_mean
+
+[run]
+sweep_order = ["ingress.lb_filter"]
+cooldown_s = 2
+
+[scenarios.stall_then_slow]
+states = { fast = { service_us = 400000 }, down = { stall = true }, slow = { service_us = 800000 } }
+schedule = [[0, "fast"], [60000, "down"], [80000, "slow"]]
