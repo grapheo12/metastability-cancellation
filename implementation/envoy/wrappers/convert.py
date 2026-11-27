@@ -1,8 +1,8 @@
 # Source: abstraction/load_generator/design.md (load_generator v0.9.2)
 # Source: abstraction/load_generator/client/design.md (client v0.10.0)
 # Source: abstraction/load_generator/metrics/design.md (metrics v0.6.1)
-# Source: abstraction/ingress/design.md (ingress v0.19.0)
-# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.23.0)
+# Source: abstraction/ingress/design.md (ingress v0.19.1)
+# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.24.0)
 # Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
 # Source: abstraction/protocol/design.md (protocol v0.8.0)
 """impl/envoy wrappers: pure conversions from Envoy's access log and Nighthawk's per-request logs to the testbed's
@@ -208,7 +208,8 @@ def ingress_summary(rows, backends, config, run_start_unix_ns, run_end_s, filter
 #   <prefix>.exec.0.csv     t_unix_ns,host,exec_ns,backend,ewma_exec_ns,ewma_anti_ns   (one row per backend
 #                           after each ExecReport sample)
 #   <prefix>.tokens.0.csv   t_unix_ns,event,host,latency_ms,rate_before,rate_after,tokens   (TokenBucketFilter: take,
-#                           race, untaken at a pick; slow, slow_held, fast, mid at an answered attempt)
+#                           race, untaken at a pick; stuck (StuckAttempt) at a decision, latency_ms the oldest pending
+#                           attempt's age; slow, slow_held, fast, fast_held, mid at an answered attempt)
 # (picks: Peak EWMA; evals and queue: peak_ewma_deadline; anxious and exec: the testbed_anxious filter). The merged outputs replace hosts by server ids
 # (--backends order; an empty host stays empty) and Unix times by t_ns since run_start_unix_ns (the forwards.csv
 # time base), add the instance number as `worker` where decisions or queues are per worker, and are sorted by t_ns

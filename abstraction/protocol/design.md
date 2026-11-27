@@ -499,6 +499,6 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [CancelReplyBody](#cancelreplybody) | not traced |
 | [Parsing](#parsing) | [filter.cc:23](../../implementation/envoy/envoy/contrib/peak_ewma/anxious/source/filter.cc#L23), [anxious_tracker_test.cc:171](../../implementation/envoy/envoy/contrib/peak_ewma/anxious/test/anxious_tracker_test.cc#L171), [request_log.cc:64](../../implementation/envoy/nighthawk/source/client/request_log.cc#L64), [request_log.cc:79](../../implementation/envoy/nighthawk/source/client/request_log.cc#L79), [ping_request_source_plugin_test.cc:51](../../implementation/envoy/nighthawk/test/request_source/ping_request_source_plugin_test.cc#L51) |
 | [HeartbeatLine](#heartbeatline) | not traced |
-| [Status classification (load-generator client)](#status-classification-load-generator-client) | [convert.py:344](../../implementation/envoy/wrappers/convert.py#L344) |
+| [Status classification (load-generator client)](#status-classification-load-generator-client) | [convert.py:345](../../implementation/envoy/wrappers/convert.py#L345) |
 | [Status classification (load canceller)](#status-classification-load-canceller) | not traced |
 <!-- trace:end -->

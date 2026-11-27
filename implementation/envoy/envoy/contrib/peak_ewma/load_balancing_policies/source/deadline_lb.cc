@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.23.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.24.0)
 // Source: abstraction/protocol/design.md (protocol v0.8.0)
 #include "contrib/peak_ewma/load_balancing_policies/source/deadline_lb.h"
 
@@ -243,6 +243,24 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
   }
   double best = std::numeric_limits<double>::infinity();
   const int64_t now_mono = monoNowNs();
+  // Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
+  if (token_params_.has_value()) { // StuckAttempt, before any token test: oldest pending attempt past the SLO
+    for (size_t i = 0; i < hosts.size(); ++i) {
+      auto pending = hosts[i]->typedLbPolicyData<PendingRequests>();
+      if (excluded[i] || !pending.has_value()) {
+        continue;
+      }
+      const absl::optional<int64_t> oldest = pending->oldest();
+      if (oldest.has_value() && now_mono - *oldest > token_params_->slo_ns) {
+        const auto change = pending->tokenBucket().stuck(now_mono);
+        if (change.has_value()) {
+          tokenTrace(nowUnixNs(), change->event, hosts[i]->address()->asString(),
+                     static_cast<double>(now_mono - *oldest) / 1e6, change->rate_before, change->rate_after,
+                     change->tokens);
+        }
+      }
+    }
+  }
   for (size_t i = 0; i < hosts.size(); ++i) {
     auto* data = getPeakEwmaData(hosts[i]);
     const double ewma_ms = data != nullptr ? data->getEwmaRtt() : 0.0;

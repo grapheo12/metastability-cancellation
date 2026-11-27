@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.23.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.24.0)
 #include "contrib/peak_ewma/load_balancing_policies/source/token_bucket.h"
 
 #include <algorithm>
@@ -22,6 +22,7 @@ void TokenBucket::init(const TokenParams& params, int64_t now_ns) {
   rate_ = params.init_rate;   // TokenRate = init_r
   last_refill_ns_ = now_ns;
   last_decrease_ns_ = absl::nullopt;
+  last_increase_ns_ = absl::nullopt;
 }
 
 bool TokenBucket::initialized() const {
@@ -70,20 +71,43 @@ absl::optional<TokenRateChange> TokenBucket::rateSample(int64_t latency_ns, int6
   refill(now_ns); // the old rate holds up to now
   TokenRateChange change{"mid", rate_, rate_, 0.0};
   if (latency_ns > params_.slo_ns) {
-    if (!last_decrease_ns_.has_value() || now_ns - *last_decrease_ns_ >= params_.slo_ns) {
-      rate_ = std::max(params_.r_min, rate_ / params_.mult_dec); // at most once per SLO, floor r_min
-      last_decrease_ns_ = now_ns;
-      change.event = "slow";
-    } else {
-      change.event = "slow_held";
-    }
+    change.event = decrease(now_ns) ? "slow" : "slow_held";
   } else if (static_cast<double>(latency_ns) < static_cast<double>(params_.slo_ns) / params_.add_inc_limit) {
-    rate_ = rate_ + params_.add_inc; // no upper bound: max_tokens bounds a burst
-    change.event = "fast";
+    if (!last_increase_ns_.has_value() || now_ns - *last_increase_ns_ >= params_.slo_ns) { // once per SLO window
+      rate_ = rate_ + params_.add_inc; // no upper bound: max_tokens bounds a burst
+      last_increase_ns_ = now_ns;
+      change.event = "fast";
+    } else {
+      change.event = "fast_held";
+    }
   }
   change.rate_after = rate_;
   change.tokens = tokens_;
   return change;
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
+bool TokenBucket::decrease(int64_t now_ns) {
+  if (last_decrease_ns_.has_value() && now_ns - *last_decrease_ns_ < params_.slo_ns) {
+    return false; // within the SLO window of the last halving
+  }
+  rate_ = std::max(params_.r_min, rate_ / params_.mult_dec); // floor r_min
+  last_decrease_ns_ = now_ns;
+  return true;
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
+absl::optional<TokenRateChange> TokenBucket::stuck(int64_t now_ns) {
+  absl::MutexLock lock(&mu_);
+  if (!init_) {
+    return absl::nullopt;
+  }
+  refill(now_ns);
+  const double before = rate_;
+  if (!decrease(now_ns)) {
+    return absl::nullopt;
+  }
+  return TokenRateChange{"stuck", before, rate_, tokens_};
 }
 
 double TokenBucket::rate() const {

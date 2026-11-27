@@ -359,7 +359,7 @@ TEST_F(PeakEwmaHostLifecycleTest, AggregationHappensInlineOnChooseHost) {
   EXPECT_GT(data->getEwmaRtt(), 0.0) << "EWMA should be updated after inline aggregation";
 }
 
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.23.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.24.0)
 // impl/envoy: alpha = 1 - e^(-max(dt, 0)/tau). A sample that reaches the ring buffer out of order (dt < 0, e.g.
 // from another worker a few ns earlier) or at the same instant (dt = 0) gets no weight; upstream gave it alpha = 1,
 // replacing the whole EWMA by that one sample (seen in a testbed run: dt = -9 ns moved an EWMA from 400 to 1151 ms).

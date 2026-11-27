@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.23.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.24.0)
 #include "contrib/peak_ewma/token_bucket/source/filter.h"
 
 #include <chrono>

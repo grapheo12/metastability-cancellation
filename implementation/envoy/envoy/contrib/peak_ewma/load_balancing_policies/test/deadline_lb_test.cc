@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.23.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.24.0)
 // impl/envoy (cancellation testbed): tests of the peak_ewma_deadline load balancer (deadline_lb.h): the deadline
 // filter over every host, the lowest-cost choice, and the per-worker FIFO wait queue.
 
@@ -320,6 +320,29 @@ TEST_F(PeakEwmaDeadlineTokenTest, NoDeadlineIsNeverFilteredAndTakesATokenIfAny) 
   EXPECT_EQ(lb_->chooseHost(&b->context).host, hosts_[0]);
   EXPECT_DOUBLE_EQ(tokens(0), 0.0); // it took the token it found
   EXPECT_DOUBLE_EQ(tokens(1), 1.0);
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
+TEST_F(PeakEwmaDeadlineTokenTest, StuckAttemptHalvesTheStalledHostsRate) {
+  setHost(0, 100, 0);
+  setHost(1, 300, 0);
+  auto stuck = request(absl::nullopt); // sent to host 0 and never answered: stays pending
+  EXPECT_EQ(lb_->chooseHost(&stuck->context).host, hosts_[0]);
+  auto& bucket0 = hosts_[0]->typedLbPolicyData<PendingRequests>()->tokenBucket();
+  auto& bucket1 = hosts_[1]->typedLbPolicyData<PendingRequests>()->tokenBucket();
+  advance(4000); // exactly the SLO: not past it
+  auto a = request(absl::nullopt);
+  lb_->chooseHost(&a->context);
+  EXPECT_DOUBLE_EQ(bucket0.rate(), 50.0);
+  advance(1); // 4.001 s > 4 s: StuckAttempt halves host 0 only
+  auto b = request(absl::nullopt);
+  lb_->chooseHost(&b->context);
+  EXPECT_DOUBLE_EQ(bucket0.rate(), 25.0);
+  EXPECT_DOUBLE_EQ(bucket1.rate(), 50.0);
+  advance(1000); // still stuck, within the window
+  auto c = request(absl::nullopt);
+  lb_->chooseHost(&c->context);
+  EXPECT_DOUBLE_EQ(bucket0.rate(), 25.0);
 }
 
 // Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter

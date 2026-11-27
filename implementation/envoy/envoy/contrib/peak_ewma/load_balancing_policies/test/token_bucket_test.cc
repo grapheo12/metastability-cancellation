@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.23.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.24.0)
 // impl/envoy (cancellation testbed): tests of the TokenBucketFilter's TokenBucket and TokenRate (token_bucket.h),
 // the spec's worked examples.
 
@@ -71,9 +71,11 @@ TEST(TokenBucketTest, RateWorkedExample) {
       {4 * kS, 4500, 12.5, "slow"},  // 4 s >= 4 s
       {8 * kS, 4500, 6.25, "slow"},
       {12 * kS, 4500, 5, "slow"},    // max(5, 3.125): the floor
-      {13 * kS, 1500, 10, "fast"},   // 1500 < 2000
-      {14 * kS, 2000, 10, "mid"},    // not < 2000
-      {15 * kS, 4000, 10, "mid"},    // not > 4000
+      {13 * kS, 1500, 10, "fast"},      // 1500 < 2000, no earlier increase
+      {14 * kS, 1500, 10, "fast_held"}, // 1 s < 4 s since the last increase
+      {15 * kS, 2000, 10, "mid"},       // not < 2000
+      {16 * kS, 4000, 10, "mid"},       // not > 4000
+      {17 * kS, 1500, 15, "fast"},      // 17 - 13 = 4 s >= 4 s
   };
   for (const Step& s : steps) {
     const auto change = b.rateSample(s.latency_ms * kMs, s.at_ns);
@@ -82,6 +84,25 @@ TEST(TokenBucketTest, RateWorkedExample) {
     EXPECT_STREQ(change->event, s.event) << s.at_ns;
     EXPECT_DOUBLE_EQ(b.rate(), s.rate_after);
   }
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
+TEST(TokenBucketTest, StuckAttemptHalvesOncePerWindow) {
+  TokenBucket b;
+  EXPECT_FALSE(b.stuck(0).has_value()); // not initialized
+  b.init(params(), 0);
+  b.rateSample(4500 * kMs, 12 * kS); // last halving at 12 s: 50 -> 25
+  const auto at18 = b.stuck(18 * kS); // 18 - 12 = 6 s >= 4 s
+  ASSERT_TRUE(at18.has_value());
+  EXPECT_STREQ(at18->event, "stuck");
+  EXPECT_DOUBLE_EQ(at18->rate_before, 25.0);
+  EXPECT_DOUBLE_EQ(at18->rate_after, 12.5);
+  EXPECT_FALSE(b.stuck(19 * kS).has_value()); // 1 s < 4 s: held
+  EXPECT_DOUBLE_EQ(b.rate(), 12.5);
+  for (int64_t t = 22; t <= 34; t += 4) {
+    b.stuck(t * kS); // 6.25, then the floor 5
+  }
+  EXPECT_DOUBLE_EQ(b.rate(), 5.0);
 }
 
 // Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
