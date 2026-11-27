@@ -13,7 +13,7 @@ three on remote machines. Its interface is in [Benchmark runner](#benchmark-runn
 |---|---|---|---|
 | `listen_addr` | `host:port` | `0.0.0.0:8080` | Address to accept connections on |
 | `workload` | `cpu_burn` \| `message_buffer` \| `sleep` \| `sleep_constant` | `cpu_burn` | The ServerWorkload. `cpu_burn`: each `/ping` burns its ServiceTime. `sleep`: each `/ping` sleeps its ServiceTime in 20 ms quanta, using no CPU ([server/sleeper/design.md](server/sleeper/design.md#quantumsleep)). `sleep_constant`: as `sleep`, but every ServiceTime is the ConstantServiceTime `1/response_rate` s ([server/ping_handler/design.md](server/ping_handler/design.md#constantservicetime)). `message_buffer`: each `/ping` writes `n_messages_per_request` new messages into the MessageBuffer ([server/design.md](server/design.md#why-a-messagebuffer-workload)) |
-| `response_rate` | float, requests/s, `> 0` | required when `workload` is `cpu_burn`, `sleep` or `sleep_constant` | Rate of the exponential ServiceTime. Mean CPU time (or sleep time) per request is `1/response_rate` s; with `sleep_constant`, every request sleeps exactly `1/response_rate` s |
+| `response_rate` | float, requests/s, `> 0` | required when `workload` is `cpu_burn` or `sleep`, or `sleep_constant` without `service_scenario` | Rate of the exponential ServiceTime. Mean CPU time (or sleep time) per request is `1/response_rate` s; with `sleep_constant`, every request sleeps exactly `1/response_rate` s |
 | `response_bytes` | integer, bytes, `>= 115` | required | Exact byte length of every `/ping` response body (`202` and `503`) |
 | `cancel_mode` | `ignore` \| `cooperative` | `cooperative` | `ignore`: never cancel work (RST and `/cancel` both ignored). `cooperative`: stop work on RST or on a matching `/cancel` |
 | `cancel_check_interval_us` | integer, µs, `>= 1` | `50` | How often CooperativeCpuBurn checks the RST flag |
@@ -29,6 +29,8 @@ three on remote machines. Its interface is in [Benchmark runner](#benchmark-runn
 | `window_size` | integer, `1 ..= 2^32-1` | `200000` | Number of messages in the MessageBuffer, all created before the server listens. Used only by `message_buffer` ([server/message_buffer/design.md](server/message_buffer/design.md#messagebuffer)) |
 | `n_gc_binary_tree_size` | integer, `1 ..= 65536` | `15` | Nodes in every message's MessageTree (a random binary tree). Used only by `message_buffer` ([server/message_buffer/design.md](server/message_buffer/design.md#messagetree)) |
 | `n_messages_per_request` | integer, `>= 1` | `50` | Messages each `/ping` creates and writes. Used only by `message_buffer` ([server/ping_handler/design.md](server/ping_handler/design.md#messagework)) |
+| `service_scenario` | JSON string, or empty; only with `workload = sleep_constant` | empty | The server's ServiceScenario: ScenarioStates (`service_us` or `stall`) and a ScenarioSchedule or a MarkovSchedule; replaces `response_rate`. Empty: none ([server/service_scenario/design.md](server/service_scenario/design.md#servicescenario)) |
+| `scenario_log_path` | path, or empty | empty | Where the server writes its ScenarioLog (`t_ns,unix_ns,state`, one row per change of ScenarioState); empty: none ([server/service_scenario/design.md](server/service_scenario/design.md#scenariolog)) |
 
 The server runs until it receives an interrupt or termination signal. On shutdown it prints its
 CancelCounters ([Server outputs](#server-outputs)).
