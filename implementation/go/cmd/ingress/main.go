@@ -1,7 +1,7 @@
 // Command ingress runs the Ingress: a load-balancing /ping proxy with an
 // in-process LoadCanceller.
 //
-// Source: abstraction/ingress/api.md (ingress v0.13.3)
+// Source: abstraction/ingress/api.md (ingress v0.16.0)
 package main
 
 import (
@@ -21,7 +21,8 @@ func main() {
 	fs.StringVar(&p.ListenAddr, "listen_addr", p.ListenAddr, "host:port to accept client connections on")
 	fs.StringVar(&p.Backends, "backends", p.Backends, "comma-separated host:port of the servers (required)")
 	fs.StringVar(&p.NumClients, "num_clients", p.NumClients, "number of load-generator clients (required)")
-	fs.StringVar(&p.LbPolicy, "lb_policy", p.LbPolicy, "round_robin | least_outstanding | power_of_two | ewma")
+	fs.StringVar(&p.LbPolicy, "lb_policy", p.LbPolicy, "round_robin | least_outstanding | power_of_two | ewma (peak_ewma is not supported here)")
+	fs.StringVar(&p.ForwardMode, "forward_mode", p.ForwardMode, "relay (hedge is not supported here)")
 	fs.StringVar(&p.LbRetryPolicy, "lb_retry_policy", p.LbRetryPolicy, "RetryPolicy for LbRetries (registered name; none: never retry)")
 	fs.StringVar(&p.LbRetryTimeoutMs, "lb_retry_timeout_ms", p.LbRetryTimeoutMs, "timeout RetryPolicy: retry once the newest attempt has run this long, ms (> 0)")
 	fs.StringVar(&p.LbRetryAnxietyRatio, "lb_retry_anxiety_ratio", p.LbRetryAnxietyRatio, "anxious RetryPolicy: retry when moving is expected to finish at least this fraction sooner (>= 0)")

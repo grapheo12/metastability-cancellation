@@ -2,7 +2,7 @@
 // proxy in front of several servers, with an in-process LoadCanceller that
 // picks victims from the InFlightMap.
 //
-// Source: abstraction/ingress/design.md (ingress v0.13.3)
+// Source: abstraction/ingress/design.md (ingress v0.16.0)
 package ingress
 
 import (
@@ -28,12 +28,17 @@ const (
 	PolicyLeastOutstanding = "least_outstanding"
 	PolicyPowerOfTwo       = "power_of_two"
 	PolicyEwma             = "ewma"
+	PolicyPeakEwma         = "peak_ewma" // OptionalValue, not realized in Go
 	// DeadlineFilter switch, as accepted by --lb_filter.
 	FilterNone                       = "none"
 	FilterDeadlineMean               = "deadline_mean"                  // (n+1) * e <= T
 	FilterDeadlineMeanPerWorker      = "deadline_mean_per_worker"       // (n+1) * e / k <= T
 	FilterDeadlineMeanQueuePlusShare = "deadline_mean_queue_plus_share" // (n + 1/k) * e <= T
 	FilterDeadlineMMK                = "deadline_mmk"                   // M/M/k Pr(late) <= DeadlineFilterMiss
+	FilterDeadlineProvisionalRtt     = "deadline_provisional_rtt"       // OptionalValue, not realized in Go
+	// ForwardMode values, as accepted by --forward_mode.
+	ForwardRelay = "relay"
+	ForwardHedge = "hedge" // OptionalValue (HedgedForwarding), not realized in Go
 )
 
 // Config is the validated IngressConfig.
@@ -83,6 +88,7 @@ type Params struct {
 	InitialStallMs      string
 	HeartbeatTimeoutMs  string
 	LbRetryPolicy       string
+	ForwardMode         string // relay (the only value realized here) or hedge
 	LbMaxRetries        string
 	LbRetryTimeoutMs    string
 	LbRetryAnxietyRatio string
@@ -91,7 +97,7 @@ type Params struct {
 
 // DefaultParams returns the defaults from abstraction/ingress/api.md#program-parameters.
 func DefaultParams() Params {
-	return Params{ListenAddr: "0.0.0.0:9090", LbPolicy: PolicyLeastOutstanding, LbFilter: FilterNone, EwmaBeta: "0.7", CancelRate: "0", Seed: "0",
+	return Params{ListenAddr: "0.0.0.0:9090", LbPolicy: PolicyLeastOutstanding, LbFilter: FilterNone, ForwardMode: ForwardRelay, EwmaBeta: "0.7", CancelRate: "0", Seed: "0",
 		OutputPath: "ingress", InitialStallMs: "1000", HeartbeatTimeoutMs: "0",
 		LbRetryPolicy: RetryPolicyNone, LbMaxRetries: "0", LbRetryTimeoutMs: "150",
 		LbRetryAnxietyRatio: "0.3", LbRetryLateFactor: "10"}
@@ -125,16 +131,28 @@ func Validate(p Params) (Config, error) {
 	}
 	c.NumClients = uint32(n)
 	switch p.LbPolicy {
-	case PolicyRoundRobin, PolicyLeastOutstanding, PolicyPowerOfTwo, PolicyEwma:
+	case PolicyRoundRobin, PolicyLeastOutstanding, PolicyPowerOfTwo, PolicyEwma, PolicyPeakEwma:
 		c.LbPolicy = p.LbPolicy
 	default:
-		return c, errors.New("lb_policy must be round_robin, least_outstanding, power_of_two or ewma")
+		return c, errors.New("lb_policy must be round_robin, least_outstanding, power_of_two, ewma or peak_ewma")
 	}
 	switch p.LbFilter {
-	case FilterNone, FilterDeadlineMean, FilterDeadlineMeanPerWorker, FilterDeadlineMeanQueuePlusShare, FilterDeadlineMMK:
+	case FilterNone, FilterDeadlineMean, FilterDeadlineMeanPerWorker, FilterDeadlineMeanQueuePlusShare, FilterDeadlineMMK,
+		FilterDeadlineProvisionalRtt:
 		c.LbFilter = p.LbFilter
 	default:
-		return c, errors.New("lb_filter must be none, deadline_mean, deadline_mean_per_worker, deadline_mean_queue_plus_share or deadline_mmk")
+		return c, errors.New("lb_filter must be none, deadline_mean, deadline_mean_per_worker, deadline_mean_queue_plus_share, deadline_mmk or deadline_provisional_rtt")
+	}
+	if c.LbFilter == FilterDeadlineProvisionalRtt && c.LbPolicy != PolicyPeakEwma {
+		return c, errors.New("lb_filter deadline_provisional_rtt needs lb_policy peak_ewma")
+	}
+	if c.LbPolicy == PolicyPeakEwma && c.LbFilter != FilterNone && c.LbFilter != FilterDeadlineProvisionalRtt {
+		return c, errors.New("lb_policy peak_ewma needs lb_filter none or deadline_provisional_rtt")
+	}
+	// OptionalValues this implementation does not realize: rejected, never run as another value.
+	// Design: abstraction/ingress/design.md#configuration-validation
+	if c.LbPolicy == PolicyPeakEwma {
+		return c, errors.New("lb_policy peak_ewma is not supported by this implementation")
 	}
 	// !(in range) also rejects NaN; the range rejects infinities.
 	if c.EwmaBeta, err = strconv.ParseFloat(p.EwmaBeta, 64); err != nil || !(c.EwmaBeta >= 0 && c.EwmaBeta <= 1) {
@@ -169,6 +187,13 @@ func Validate(p Params) (Config, error) {
 		return c, errors.New("lb_retry_policy must be one of " + retryPolicyNames())
 	}
 	c.LbRetryPolicy = p.LbRetryPolicy
+	switch p.ForwardMode {
+	case ForwardRelay, "": // empty: the default, so Params built in tests keep relay
+	case ForwardHedge:
+		return c, errors.New("forward_mode hedge is not supported by this implementation")
+	default:
+		return c, errors.New("forward_mode must be relay or hedge")
+	}
 	mr, err := strconv.ParseUint(p.LbMaxRetries, 10, 32)
 	if err != nil {
 		return c, errors.New("lb_max_retries must be an integer in 0 ..= 2^32-1")
