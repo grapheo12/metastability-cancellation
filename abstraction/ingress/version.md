@@ -56,3 +56,4 @@
 | 0.15.0 | 2026-11-27T00:00:00Z | Parameter `forward_mode` (`relay` \| `hedge`, OptionalValue) and its validation. Child bump: frontend 0.11.0 (HedgedForwarding); load_balancer link to it |
 | 0.15.1 | 2026-11-27T00:00:00Z | Child bump: load_balancer 0.18.1 (wording) |
 | 0.16.0 | 2026-11-27T00:00:00Z | Child bump: retry_policy 0.8.0 (policies under HedgedForwarding) |
+| 0.16.1 | 2026-11-27T00:00:00Z | forwards.csv columns for a ForwardLog built from an access log. Child bump: load_balancer 0.18.2 |

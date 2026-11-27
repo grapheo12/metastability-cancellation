@@ -816,6 +816,11 @@ function forward_log(lb):                            # -> list of ForwardRecord,
   30 s run at 4000 forwards/s is 120000 records.
 - `forward_log` is called by the Ingress's shutdown after it waited for the forwards in progress. The copy makes
   it safe even if an abandoned forward finishes during the write.
+- **Recorded from outside the balancer.** An implementation whose balancer cannot keep this log (it is reused, not
+  written for the testbed) may build it at shutdown from a per-attempt access log instead. Then `latency_ns` runs from
+  the client request's arrival at the Ingress to the end of the attempt's upstream answer, `ewma_latency_ns` is
+  recomputed from those latencies by [EwmaLatency](#ewmalatency), and `exec_ns`, `ewma_exec_ns` and `estimate_ns`
+  are empty (ForwardLogFromAccessLog). The rows, outcomes and `attempt` numbers are the same.
 
 ## Worked examples
 
