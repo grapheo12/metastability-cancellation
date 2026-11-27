@@ -37,3 +37,4 @@
 | 0.13.0 | 2026-11-23T00:00:00Z | Parameter `reject_past_deadline` (`true`/`false`, default `false`), validation. Child bump: ping_handler 0.12.0 |
 | 0.14.0 | 2026-11-25T00:00:00Z | Workload `sleep_constant` (constant ServiceTime, QuantumSleep); validation and `response_rate`. Child bump: ping_handler 0.13.0 |
 | 0.14.1 | 2026-11-25T00:00:00Z | Child bump: sleeper 0.1.1 (wording) |
+| 0.15.0 | 2026-11-27T00:00:00Z | ServiceScenario: parameters `service_scenario` (JSON, only with `sleep_constant`, replaces `response_rate`) and `scenario_log_path`; validation; the scenario is passed to the WorkQueue and its ScenarioLog writer started; ScenarioLog output; wall-clock arm read. Child: service_scenario 0.1.0 (new) |

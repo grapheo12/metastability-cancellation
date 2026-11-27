@@ -17,6 +17,8 @@ flowchart TD
   CH -->|"DELETE /cancel, inline"| HC[Cancel Tracker: handle_cancel]
   CH -->|"GET /heartbeat, own coroutine"| HB[Heartbeat: HeartbeatSender]
   HB -.freeze_wait.-> Q
+  Q -.state at pop, StalledState.-> SC[(Service Scenario: state machine, global)]
+  SC --> SL[ScenarioLog writer, own activity]
   HC -->|push| R[(CancelRegistry, global)]
   CM -->|"drain, under the client's lock"| R
   PR --> P[(Protocol)]
@@ -34,13 +36,19 @@ flowchart TD
 | Sleeper | Sleep for an exact time in 20 ms quanta, checking RST and `/cancel` at each wake-up (`workload = sleep` or `sleep_constant`) | [sleeper/description.md](sleeper/description.md) |
 | Cancel Tracker | CancelRegistry, CancelInbox, per-client cancel state, CancelMatching, CancelCounters, `handle_cancel` | [cancel_tracker/description.md](cancel_tracker/description.md) |
 | Heartbeat | Stream a HeartbeatLine every `heartbeat_interval_ms` on `GET /heartbeat`, stopping once the WorkerFreeze has started | [heartbeat/description.md](heartbeat/description.md) |
+| Service Scenario | The optional ServiceScenario: ScenarioStates (ConstantServiceTime or StalledState), ScenarioSchedule or MarkovSchedule, ScenarioClock, ScenarioLog | [service_scenario/description.md](service_scenario/description.md) |
 
 ## Configuration validation
 
 ```
 function validate(params):
     workload in {cpu_burn, message_buffer, sleep, sleep_constant}    else error
-    if workload in {cpu_burn, sleep, sleep_constant} or response_rate is given:
+    if service_scenario is not empty:                                # ServiceScenario
+        workload == sleep_constant            else error "service_scenario needs workload sleep_constant"
+        scenario = service_scenario.scenario_new(service_scenario, seed)   # its ConfigError, as is
+    else: scenario = none
+    if workload in {cpu_burn, sleep} or (workload == sleep_constant and scenario is none)
+       or response_rate is given:
         response_rate > 0                     else error "response_rate must be a number > 0"
     protocol.validate_body_size(response_bytes)
     cancel_mode in {ignore, cooperative}      else error
@@ -57,7 +65,8 @@ function validate(params):
     n_gc_binary_tree_size is an integer in 1 ..= 65536   else error
     n_messages_per_request is an integer >= 1        else error
     queue_log_path is any string; empty means no QueueLengthLog
-    return ServerConfig(params)
+    scenario_log_path is any string; empty means no ScenarioLog
+    return ServerConfig(params, scenario)
 ```
 
 ## ProcessStart
@@ -73,9 +82,10 @@ procedure main(argv):
   times relative to the process start. The BenchmarkRunner turns them into wall-clock times with this line.
 - **Accuracy.** The line is read at the start of the program's entry point. A runtime starts its own clock a
   little earlier, during its initialization; the difference is well under 1 ms and is accepted.
-- Apart from this line, the only wall-clock read is the StartSlack of each request's ExecReport
-  ([ping_handler/design.md#execreport](ping_handler/design.md#execreport)); every duration still uses the monotonic
-  clock ([Concurrency model](#concurrency-model)).
+- Apart from this line, the only wall-clock reads are the StartSlack of each request's ExecReport
+  ([ping_handler/design.md#execreport](ping_handler/design.md#execreport)) and, with a ServiceScenario, the
+  ScenarioClock's arm time ([service_scenario/design.md#scenarioclock](service_scenario/design.md#scenarioclock)), used
+  only for the ScenarioLog's `unix_ns`; every duration still uses the monotonic clock ([Concurrency model](#concurrency-model)).
 
 ## Listener
 
@@ -84,16 +94,21 @@ function serve(config):
     registry = cancel_tracker.registry_new(CANCEL_REGISTRY_CAPACITY)     # one per process
     counters = cancel_tracker.counters_new()                            # one per process
     queue = worker_pool.queue_new(config.initial_stall_ms, config.queue_discipline,
-                                  config.freeze_after_ms)                # one per process; StallGate, QueueDiscipline, WorkerFreeze
+                                  config.freeze_after_ms, config.scenario)   # one per process; StallGate, QueueDiscipline,
+                                                                          # WorkerFreeze, ServiceScenario (or none)
     buf = message_buffer.buffer_new(config.window_size, config.n_gc_binary_tree_size, config.seed)
           if config.workload == message_buffer
           else none                                                     # MessageBuffer: full before bind
     pool = worker_pool.pool_start(config.n_worker_threads, queue, config, registry, counters, buf)
     log = open_for_write(config.queue_log_path) if config.queue_log_path != "" else none   # error: exit non-zero
+    slog = open_for_write(config.scenario_log_path)
+           if config.scenario is not none and config.scenario_log_path != "" else none   # error: exit non-zero
     socket = bind_and_listen(config.listen_addr)
     print("listening on " + config.listen_addr)
     if log is not none:
         sampler = spawn worker_pool.queue_sampler(queue, log, config.queue_sample_interval_ms)   # QueueLengthLog
+    if slog is not none:
+        spawn service_scenario.scenario_logger(config.scenario, slog)                         # ScenarioLog
     conn_index = 0
     loop until shutdown requested:
         conn = accept(socket)

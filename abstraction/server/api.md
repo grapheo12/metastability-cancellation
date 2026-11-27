@@ -8,7 +8,7 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 |---|---|---|
 | `listen_addr` | `host:port` | `0.0.0.0:8080` |
 | `workload` | `cpu_burn` \| `message_buffer` \| `sleep` \| `sleep_constant` | `cpu_burn` |
-| `response_rate` | float, requests/s, `> 0` | required when `workload` is `cpu_burn`, `sleep` or `sleep_constant` |
+| `response_rate` | float, requests/s, `> 0` | required when `workload` is `cpu_burn` or `sleep`, or `sleep_constant` without `service_scenario` |
 | `response_bytes` | integer, bytes, `>= 115` | required |
 | `cancel_mode` | `ignore` \| `cooperative` | `cooperative` |
 | `cancel_check_interval_us` | integer, µs, `>= 1` | `50` |
@@ -24,6 +24,8 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 | `window_size` | integer, `1 ..= 2^32-1` | `200000` |
 | `n_gc_binary_tree_size` | integer, `1 ..= 65536` | `15` |
 | `n_messages_per_request` | integer, `>= 1` | `50` |
+| `service_scenario` | JSON string, or empty; only with `workload = sleep_constant` | empty |
+| `scenario_log_path` | path, or empty | empty |
 
 ## Constants
 
@@ -36,7 +38,8 @@ Same as [../api.md#server-parameters](../api.md#server-parameters):
 
 ### `ServerConfig`
 
-An immutable record holding the sixteen parameters above after validation
+An immutable record holding the twenty parameters above after validation, with the ServiceScenario parsed
+([service_scenario/design.md#servicescenario](service_scenario/design.md#servicescenario))
 ([design.md#configuration-validation](design.md#configuration-validation)). One read-only copy is
 shared by all Connection Handlers and workers.
 
@@ -55,6 +58,10 @@ shared by all Connection Handlers and workers.
   `/ping`, and answers `/cancel` ([worker_pool/design.md#workerfreeze](worker_pool/design.md#workerfreeze)).
 - Answers `GET /heartbeat` with a HeartbeatStream, one line every `heartbeat_interval_ms`, never queued; no more
   lines once the WorkerFreeze has started ([heartbeat/design.md#heartbeatsender](heartbeat/design.md#heartbeatsender)).
+- With `service_scenario` set (`workload = sleep_constant`), the server follows its ServiceScenario from the first
+  admitted `/ping` on: a request sleeps the ConstantServiceTime of the ScenarioState it is popped in, and in a
+  StalledState the server behaves as frozen (no request progresses, no heartbeat line) until the state is left
+  ([service_scenario/design.md#stalledstate](service_scenario/design.md#stalledstate)).
 - Binds each connection to the client id of its first valid `/ping`.
 - Cancels work as `cancel_mode` says ([design.md#cancellation-semantics](design.md#cancellation-semantics)).
 
@@ -105,15 +112,36 @@ Rows are in increasing `t_ms` order, one every `queue_sample_interval_ms` unless
 decimal with no padding, and there is no whitespace. The file is complete once the CancelCounters line has been
 printed.
 
+## ScenarioLog output
+
+Written only when `service_scenario` and `scenario_log_path` are both set. A CSV file, overwritten if it exists:
+
+```
+t_ns,unix_ns,state
+0,1795655130338542000,fast
+60000000000,1795655190338542000,down
+80000000000,1795655210338542000,slow
+```
+
+| Column | Type / unit | Meaning |
+|---|---|---|
+| `t_ns` | u64, ns | ScenarioClock time of the change (since the first admitted `/ping`) |
+| `unix_ns` | u64, ns | Wall-clock time of the change: the arm time read on the wall clock plus `t_ns` |
+| `state` | string | The ScenarioState entered |
+
+One row for the first state at `t_ns = 0`, then one per change of state, in order
+([service_scenario/design.md#scenariolog](service_scenario/design.md#scenariolog)). The file is complete once the
+CancelCounters line has been printed.
+
 ## Lifecycle
 
-- **Start:** print the ProcessStart line, validate the config, create the CancelRegistry, the CancelCounters, the WorkQueue and the
-  WorkerPool, fill the MessageBuffer when `workload = message_buffer`, open `queue_log_path` if set, bind `listen_addr`, print one line `listening on <addr>` to standard
-  output, then start the QueueLengthLog sampler if set.
+- **Start:** print the ProcessStart line, validate the config (parsing the ServiceScenario), create the CancelRegistry, the CancelCounters, the WorkQueue and the
+  WorkerPool, fill the MessageBuffer when `workload = message_buffer`, open `queue_log_path` and `scenario_log_path` if set, bind `listen_addr`, print one line `listening on <addr>` to standard
+  output, then start the QueueLengthLog sampler and the ScenarioLog writer if set.
 - **Run:** accept connections until stopped.
-- **Stop:** on interrupt or termination signal, stop accepting, stop the QueueLengthLog sampler and close its
-  file, close the WorkQueue and all connections, wait for the workers, print the CancelCounters line, exit `0`.
-- **Error:** an invalid config, a `queue_log_path` that cannot be created, or a failed bind exits non-zero before
+- **Stop:** on interrupt or termination signal, stop accepting, stop the QueueLengthLog sampler and the ScenarioLog
+  writer and close their files, close the WorkQueue and all connections, wait for the workers, print the CancelCounters line, exit `0`.
+- **Error:** an invalid config (including an invalid `service_scenario`), a `queue_log_path` or `scenario_log_path` that cannot be created, or a failed bind exits non-zero before
   accepting. A write error on the QueueLengthLog later does not stop the server: sampling stops and one warning
   line goes to standard error.
 
@@ -128,3 +156,4 @@ printed.
 | Message Buffer | [message_buffer/api.md](message_buffer/api.md) |
 | Cancel Tracker | [cancel_tracker/api.md](cancel_tracker/api.md) |
 | Heartbeat | [heartbeat/api.md](heartbeat/api.md) |
+| Service Scenario | [service_scenario/api.md](service_scenario/api.md) |
