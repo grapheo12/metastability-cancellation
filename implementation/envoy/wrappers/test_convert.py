@@ -1,6 +1,6 @@
 # Source: abstraction/load_generator/client/design.md (client v0.10.0)
 # Source: abstraction/load_generator/metrics/design.md (metrics v0.6.1)
-# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.22.0)
+# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.23.0)
 # Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
 """Unit tests for the impl/envoy wrappers' conversions (python3 -m unittest discover -s implementation/envoy/wrappers)."""
 import csv
@@ -128,7 +128,7 @@ class PeakEwmaTraceMerge(unittest.TestCase):
             out = os.path.join(d, "ing")
             merged = convert.merge_peak_ewma(pre, backends, 1_000_000_000, out)
             self.assertEqual({k: len(v) for k, v in merged.items()}, {"ewma": 3, "picks": 1, "evals": 0, "queue": 0,
-                                                                     "anxious": 0, "exec": 0})
+                                                                     "anxious": 0, "exec": 0, "tokens": 0})
             up = open(out + ".peak_ewma_updates.csv").read().splitlines()
             self.assertEqual(up, [convert.PEAK_EWMA_UPDATES_HEADER,
                                   "100,0,390,-5,1,401,390",
@@ -143,7 +143,7 @@ class PeakEwmaTraceMerge(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             out = os.path.join(d, "ing")
             self.assertEqual(convert.merge_peak_ewma(out + ".peak_ewma", ["a:1"], 0, out),
-                             {"ewma": [], "picks": [], "evals": [], "queue": [], "anxious": [], "exec": []})
+                             {"ewma": [], "picks": [], "evals": [], "queue": [], "anxious": [], "exec": [], "tokens": []})
             self.assertEqual(os.listdir(d), [])  # no outputs without trace files
 
 
@@ -207,6 +207,22 @@ class AnxiousTraceMerge(unittest.TestCase):
             self.assertEqual(open(out + ".exec.csv").read().splitlines()[1], "50,0,80,0,80,")
             self.assertEqual(convert.exec_ewmas(merged["exec"], 2), [(80.0, 100.0), (100.0, 80.0)])
             self.assertEqual(convert.exec_ewmas([], 2), [(None, None), (None, None)])
+
+
+class TokenTraceMerge(unittest.TestCase):
+    # Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
+    def test_tokens(self):
+        backends = ["10.0.0.1:8080", "10.0.0.2:8080"]
+        with tempfile.TemporaryDirectory() as d:
+            pre = os.path.join(d, "ing.peak_ewma")
+            open(pre + ".tokens.0.csv", "w").write(
+                "t_unix_ns,event,host,latency_ms,rate_before,rate_after,tokens\n"
+                "1000000300,slow,10.0.0.2:8080,4500,50,25,0.5\n"
+                "1000000100,take,10.0.0.1:8080,0,50,50,0.5\n")
+            out = os.path.join(d, "ing")
+            convert.merge_peak_ewma(pre, backends, 1_000_000_000, out)
+            self.assertEqual(open(out + ".peak_ewma_tokens.csv").read().splitlines(),
+                             [convert.PEAK_EWMA_TOKENS_HEADER, "100,take,0,0,50,50,0.5", "300,slow,1,4500,50,25,0.5"])
 
 
 class LoadgenConversion(unittest.TestCase):

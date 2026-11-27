@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Source: abstraction/ingress/design.md (ingress v0.18.2)
-# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.22.0)
+# Source: abstraction/ingress/design.md (ingress v0.19.0)
+# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.23.0)
 # Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
 # Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.8.0)
 # Source: abstraction/ingress/upstream_pool/design.md (upstream_pool v0.1.2)
@@ -12,7 +12,9 @@ from Envoy's access log when interrupted (SIGINT/SIGTERM), as the BenchmarkRunne
 Realized (abstraction/ingress, Design specific to Envoy): a static cluster of --backends;
 lb_policy peak_ewma (Envoy's contrib Peak EWMA: PeakEwmaRtt, PeakEwmaCost) with lb_filter none, or with
 deadline_provisional_rtt (the testbed's peak_ewma_deadline policy: ProvisionalCurrentRtt <= time left over every
-backend, lowest PeakEwmaCost, per-worker wait queue; RequestDeadline from the x-request-deadline header);
+backend, lowest PeakEwmaCost, per-worker wait queue; RequestDeadline from the x-request-deadline header), or with
+token_bucket (the same policy with its TokenBucketFilter: a per-backend token bucket, the testbed_token_bucket
+upstream filter reporting each attempt's latency for the TokenRate AIMD);
 forward_mode hedge only (HedgedForwarding: the first answer of any attempt wins, the others are reset);
 lb_retry_policy none, timeout (TimeoutHedge: Envoy hedging on per_try_timeout) or anxious (the testbed_anxious
 upstream filter and the router's 10 ms retry hook, RetryElsewhere through previous_hosts).
@@ -38,8 +40,19 @@ import convert  # noqa: E402
 ENVOY = os.path.join(HERE, "..", "build", "envoy-static")
 LB_POLICIES = ("round_robin", "least_outstanding", "power_of_two", "ewma", "peak_ewma")
 LB_FILTERS = ("none", "deadline_mean", "deadline_mean_per_worker", "deadline_mean_queue_plus_share", "deadline_mmk",
-              "deadline_provisional_rtt")
+              "deadline_provisional_rtt", "token_bucket")
 RETRY_POLICIES = ("none", "timeout", "anxious")
+# (flag, valid, error) of the TokenBucketFilter parameters, in the spec's validation order
+# (abstraction/ingress/design.md#configuration-validation).
+TOKEN_PARAMS = (
+    ("lb_tb_slo_ms", lambda v: v >= 0, "lb_tb_slo_ms must be a finite number > 0"),
+    ("lb_tb_init_rate", lambda v: v > 0, "lb_tb_init_rate must be a finite number > 0"),
+    ("lb_tb_max_tokens", lambda v: v >= 1, "lb_tb_max_tokens must be a finite number >= 1"),
+    ("lb_tb_mult_dec", lambda v: v > 1, "lb_tb_mult_dec must be a finite number > 1"),
+    ("lb_tb_add_inc_limit", lambda v: v >= 1, "lb_tb_add_inc_limit must be a finite number >= 1"),
+    ("lb_tb_add_inc_frac", lambda v: v >= 0, "lb_tb_add_inc_frac must be a finite number >= 0"),
+    ("lb_tb_min_rate_frac", lambda v: 0 < v <= 1, "lb_tb_min_rate_frac must be a number in (0, 1]"),
+)
 UNLIMITED = 1_000_000  # circuit-breaker limits: the Go Ingress has none
 
 
@@ -57,10 +70,10 @@ def validate(args):
         fail("lb_policy must be " + ", ".join(LB_POLICIES[:-1]) + " or " + LB_POLICIES[-1])
     if args.lb_filter not in LB_FILTERS:
         fail("lb_filter must be " + ", ".join(LB_FILTERS[:-1]) + " or " + LB_FILTERS[-1])
-    if args.lb_filter == "deadline_provisional_rtt" and args.lb_policy != "peak_ewma":
-        fail("lb_filter deadline_provisional_rtt needs lb_policy peak_ewma")
-    if args.lb_policy == "peak_ewma" and args.lb_filter not in ("none", "deadline_provisional_rtt"):
-        fail("lb_policy peak_ewma needs lb_filter none or deadline_provisional_rtt")
+    if args.lb_filter in ("deadline_provisional_rtt", "token_bucket") and args.lb_policy != "peak_ewma":
+        fail(f"lb_filter {args.lb_filter} needs lb_policy peak_ewma")
+    if args.lb_policy == "peak_ewma" and args.lb_filter not in ("none", "deadline_provisional_rtt", "token_bucket"):
+        fail("lb_policy peak_ewma needs lb_filter none, deadline_provisional_rtt or token_bucket")
     if args.lb_policy != "peak_ewma":
         fail(f"lb_policy {args.lb_policy} is not supported by this implementation")
     try:
@@ -77,6 +90,17 @@ def validate(args):
     if not (tau >= 0) or tau == float("inf"):
         fail("lb_probe_tau_ms must be a finite number >= 0")
     args.lb_probe_tau_ms = tau
+    # TokenBucketFilter parameters: validated always, used only by token_bucket.
+    for name, ok, message in TOKEN_PARAMS:
+        try:
+            v = float(getattr(args, name))
+        except ValueError:
+            v = float("nan")
+        if v != v or v in (float("inf"), float("-inf")) or not ok(v):
+            fail(message)
+        setattr(args, name, v)
+    if args.lb_filter == "token_bucket" and not args.lb_tb_slo_ms > 0:
+        fail("lb_tb_slo_ms is required with lb_filter token_bucket")
     if args.lb_retry_policy not in RETRY_POLICIES:
         fail("lb_retry_policy must be one of none, timeout, anxious")
     if args.forward_mode not in ("relay", "hedge"):
@@ -112,6 +136,13 @@ def parse(argv):
     a("--forward_mode", default="relay")
     a("--lb_filter_margin", default="1")
     a("--lb_probe_tau_ms", default="0")
+    a("--lb_tb_slo_ms", default="0")
+    a("--lb_tb_init_rate", default="50")
+    a("--lb_tb_max_tokens", default="10")
+    a("--lb_tb_mult_dec", default="2")
+    a("--lb_tb_add_inc_limit", default="2")
+    a("--lb_tb_add_inc_frac", default="0.1")
+    a("--lb_tb_min_rate_frac", default="0.1")
     args = p.parse_args(argv)
     validate(args)
     return args
@@ -130,9 +161,40 @@ def anxious(args):
 # Design: abstraction/ingress/load_balancer/design.md#lbpolicy
 def cluster_policy(args):
     """The Envoy load-balancing policy for the validated flags (lb_policy is peak_ewma)."""
-    if args.lb_filter == "deadline_provisional_rtt":
+    if args.lb_filter in ("deadline_provisional_rtt", "token_bucket"):
         return "PEAK_EWMA_DEADLINE"
     return "PEAK_EWMA"
+
+
+def upstream_filters(args, backends):
+    """The cluster's upstream HTTP filters (per upstream attempt), or [] for none: the TokenBucketFilter's latency
+    reports, the AnxiousTracker's observations, then the codec."""
+    filters = []
+    if args.lb_filter == "token_bucket":
+        # Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
+        filters.append({"name": "envoy.filters.http.testbed_token_bucket", "typed_config": {
+            "@type": "type.googleapis.com/envoy.extensions.filters.http.testbed_token_bucket.v3alpha."
+                     "TestbedTokenBucket"}})
+    if anxious(args):
+        filters.append({"name": "envoy.filters.http.testbed_anxious", "typed_config": {
+            "@type": "type.googleapis.com/envoy.extensions.filters.http.testbed_anxious.v3alpha.TestbedAnxious",
+            "alpha": float(args.lb_retry_anxiety_ratio), "beta": float(args.lb_retry_late_factor),
+            "ewma_beta": float(args.ewma_beta), "backends": backends}})
+    if not filters:
+        return []
+    return filters + [{"name": "envoy.filters.http.upstream_codec", "typed_config": {
+        "@type": "type.googleapis.com/envoy.extensions.filters.http.upstream_codec.v3.UpstreamCodec"}}]
+
+
+def token_bucket_config(args):
+    """The peak_ewma_deadline token_bucket block (TokenBucketFilter), or {} without lb_filter token_bucket."""
+    if args.lb_filter != "token_bucket":
+        return {}
+    # Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
+    return {"token_bucket": {"slo": f"{args.lb_tb_slo_ms / 1000:.6f}s", "init_rate": args.lb_tb_init_rate,
+                             "max_tokens": args.lb_tb_max_tokens, "mult_dec": args.lb_tb_mult_dec,
+                             "add_inc_limit": args.lb_tb_add_inc_limit, "add_inc_frac": args.lb_tb_add_inc_frac,
+                             "min_rate_frac": args.lb_tb_min_rate_frac}}
 
 
 def free_port():
@@ -157,15 +219,7 @@ def envoy_config(args, backends, admin_port, access_log, upstream_log=None):
         "typed_extension_protocol_options": {"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": {
             "@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
             "explicit_http_config": {"http2_protocol_options": {}},
-            **({"http_filters": [  # per upstream attempt: the AnxiousTracker's observations, then the codec
-                {"name": "envoy.filters.http.testbed_anxious", "typed_config": {
-                    "@type": "type.googleapis.com/envoy.extensions.filters.http.testbed_anxious.v3alpha."
-                             "TestbedAnxious",
-                    "alpha": float(args.lb_retry_anxiety_ratio), "beta": float(args.lb_retry_late_factor),
-                    "ewma_beta": float(args.ewma_beta), "backends": backends}},
-                {"name": "envoy.filters.http.upstream_codec", "typed_config": {
-                    "@type": "type.googleapis.com/envoy.extensions.filters.http.upstream_codec.v3.UpstreamCodec"}}]}
-               if anxious(args) else {})}},
+            **({"http_filters": upstream_filters(args, backends)} if upstream_filters(args, backends) else {})}},
         "circuit_breakers": {"thresholds": [{"max_connections": UNLIMITED, "max_pending_requests": UNLIMITED,
                                              "max_requests": UNLIMITED, "max_retries": UNLIMITED}]},
         "load_assignment": {"cluster_name": "servers", "endpoints": [{"lb_endpoints": [
@@ -184,7 +238,8 @@ def envoy_config(args, backends, admin_port, access_log, upstream_log=None):
                                       "peak_ewma_deadline.v3alpha.PeakEwmaDeadline",
                              "filter_margin": args.lb_filter_margin,  # FilterMargin gamma
                              # Design: abstraction/ingress/load_balancer/design.md#filterprobe
-                             **({"probe_tau": f"{args.lb_probe_tau_ms / 1000:.6f}s"} if args.lb_probe_tau_ms > 0 else {})}}}]}
+                             **({"probe_tau": f"{args.lb_probe_tau_ms / 1000:.6f}s"} if args.lb_probe_tau_ms > 0 else {}),
+                             **token_bucket_config(args)}}}]}
     router = {"name": "envoy.filters.http.router", "typed_config": {
         "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"}}
     if upstream_log is not None:  # one line per upstream attempt (forwards.csv)

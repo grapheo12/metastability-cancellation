@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package envoy.extensions.filters.http.testbed_token_bucket.v3alpha;
+
+import "xds/annotations/v3/status.proto";
+
+import "udpa/annotations/status.proto";
+
+option java_package = "io.envoyproxy.envoy.extensions.filters.http.testbed_token_bucket.v3alpha";
+option java_outer_classname = "TestbedTokenBucketProto";
+option java_multiple_files = true;
+option go_package = "github.com/envoyproxy/go-control-plane/contrib/envoy/extensions/filters/http/testbed_token_bucket/v3alpha";
+option (udpa.annotations.file_status).package_version_status = ACTIVE;
+option (xds.annotations.v3.file_status).work_in_progress = true;
+
+// [#protodoc-title: Testbed TokenRate samples (upstream filter)]
+// impl/envoy (cancellation testbed): the TokenBucketFilter's TokenRate input
+// (abstraction/ingress/load_balancer/design.md#tokenbucketfilter). Configured as an upstream HTTP filter of the
+// cluster, it measures every upstream attempt from its request headers to its response headers and reports that
+// latency to the host's token bucket (kept by the peak_ewma_deadline load balancer when its token_bucket is set).
+// An attempt that ends without response headers reports nothing.
+// [#extension: envoy.filters.http.testbed_token_bucket]
+message TestbedTokenBucket {
+  option (xds.annotations.v3.message_status).work_in_progress = true;
+}

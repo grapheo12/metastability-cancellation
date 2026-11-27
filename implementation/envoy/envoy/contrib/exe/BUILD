@@ -44,7 +44,7 @@ envoy_cc_test(
 
 # impl/envoy (cancellation testbed): the standard envoy-static plus only the Peak EWMA load balancing policies (Peak
 # EWMA and the testbed's peak_ewma_deadline), the RTT-recording HTTP filter and the testbed's AnxiousRetry upstream
-# filter (testbed_anxious), without the other contrib extensions (and their heavy dependencies).
+# filter (testbed_anxious) and the TokenBucketFilter's upstream filter (testbed_token_bucket), without the other contrib extensions (and their heavy dependencies).
 envoy_cc_binary(
     name = "envoy-static-peak-ewma",
     stamped = True,
@@ -55,6 +55,7 @@ envoy_cc_binary(
         "//contrib/peak_ewma/filters/http/source:config",
         "//contrib/peak_ewma/load_balancing_policies/source:config",
         "//contrib/peak_ewma/load_balancing_policies/source:deadline_config",
+        "//contrib/peak_ewma/token_bucket/source:config",
         "//source/exe:envoy_main_entry_lib",
     ],
 )

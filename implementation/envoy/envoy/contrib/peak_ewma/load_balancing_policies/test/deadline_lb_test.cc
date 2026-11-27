@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.22.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.23.0)
 // impl/envoy (cancellation testbed): tests of the peak_ewma_deadline load balancer (deadline_lb.h): the deadline
 // filter over every host, the lowest-cost choice, and the per-worker FIFO wait queue.
 
@@ -244,6 +244,93 @@ TEST_F(PeakEwmaDeadlineProbeTest, LateRequestIsNeverProbed) {
   expectTimer();
   auto late = request(0);
   EXPECT_EQ(lb_->chooseHost(&late->context).host, nullptr); // remaining <= 0: no backend, no coin
+}
+
+// TokenBucketFilter: slo 4 s, the other parameters at their defaults (init_r 50/s, max_tokens 10).
+class PeakEwmaDeadlineTokenTest : public PeakEwmaDeadlineTest {
+protected:
+  void SetUp() override {
+    config_.mutable_token_bucket()->mutable_slo()->set_seconds(4);
+    PeakEwmaDeadlineTest::SetUp();
+  }
+  double tokens(size_t i) {
+    return hosts_[i]->typedLbPolicyData<PendingRequests>()->tokenBucket().tokens(mono_ns_);
+  }
+};
+
+// Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
+TEST_F(PeakEwmaDeadlineTokenTest, BucketsStartEmptySoTheFirstRequestWaits) {
+  setHost(0, 100, 0);
+  setHost(1, 100, 0);
+  expectTimer();
+  auto r = request(4000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&r->context).host, nullptr);
+  EXPECT_EQ(lb_->queueLength(), 1u);
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
+TEST_F(PeakEwmaDeadlineTokenTest, LowestCostAmongHostsWithATokenTakesIt) {
+  advance(20); // 50/s x 0.02 s = 1 token each
+  setHost(0, 100, 0); // cost 100
+  setHost(1, 300, 0); // cost 300
+  auto a = request(4000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&a->context).host, hosts_[0]); // RTT test ignored: only tokens and cost
+  EXPECT_DOUBLE_EQ(tokens(0), 0.0);
+  auto b = request(4000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&b->context).host, hosts_[1]); // host 0 has no token left
+  expectTimer();
+  auto c = request(4000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&c->context).host, nullptr); // no token anywhere: waits
+  EXPECT_EQ(lb_->queueLength(), 1u);
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
+TEST_F(PeakEwmaDeadlineTokenTest, RttTestIsNotApplied) {
+  advance(20);
+  setHost(0, 9000, 0); // the RTT test would refuse it with 4 s left
+  setHost(1, 9500, 0);
+  auto a = request(4000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&a->context).host, hosts_[0]);
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
+TEST_F(PeakEwmaDeadlineTokenTest, RetryTakesATokenAndIsRefusedWithoutOne) {
+  advance(20);
+  setHost(0, 100, 0);
+  setHost(1, 300, 0);
+  auto a = request(4000 * kMs, 2); // an LB retry
+  EXPECT_EQ(lb_->chooseHost(&a->context).host, hosts_[0]);
+  auto b = request(4000 * kMs, 2);
+  EXPECT_EQ(lb_->chooseHost(&b->context).host, hosts_[1]);
+  expectTimer();
+  auto c = request(4000 * kMs, 2);
+  EXPECT_EQ(lb_->chooseHost(&c->context).host, nullptr); // refused: waits apart, re-checked every scan
+  EXPECT_EQ(lb_->retryWaiters(), 1u);
+  EXPECT_EQ(lb_->queueLength(), 0u);
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
+TEST_F(PeakEwmaDeadlineTokenTest, NoDeadlineIsNeverFilteredAndTakesATokenIfAny) {
+  setHost(0, 100, 0);
+  setHost(1, 300, 0);
+  auto a = request(absl::nullopt);
+  EXPECT_EQ(lb_->chooseHost(&a->context).host, hosts_[0]); // no token, still sent
+  advance(20);
+  auto b = request(absl::nullopt);
+  EXPECT_EQ(lb_->chooseHost(&b->context).host, hosts_[0]);
+  EXPECT_DOUBLE_EQ(tokens(0), 0.0); // it took the token it found
+  EXPECT_DOUBLE_EQ(tokens(1), 1.0);
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
+TEST_F(PeakEwmaDeadlineTokenTest, LateRequestGetsNoHost) {
+  advance(20);
+  setHost(0, 100, 0);
+  setHost(1, 100, 0);
+  expectTimer();
+  auto late = request(0);
+  EXPECT_EQ(lb_->chooseHost(&late->context).host, nullptr);
+  EXPECT_DOUBLE_EQ(tokens(0), 1.0); // no token taken
 }
 
 // Design: abstraction/ingress/load_balancer/design.md#peakewmadeadline

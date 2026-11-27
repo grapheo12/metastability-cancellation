@@ -416,9 +416,9 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 | [start_request](#start_request) | [ping_request_source_plugin_impl.cc:43](../../../implementation/envoy/nighthawk/source/request_source/ping_request_source_plugin_impl.cc#L43) |
 | [RequestDeadline](#requestdeadline) | [ping_request_source_plugin_impl.cc:52](../../../implementation/envoy/nighthawk/source/request_source/ping_request_source_plugin_impl.cc#L52), [ping_request_source_plugin_test.cc:34](../../../implementation/envoy/nighthawk/test/request_source/ping_request_source_plugin_test.cc#L34) |
 | [RetryTimer](#retrytimer) | not traced |
-| [StallWindow](#stallwindow) | [convert.py:364](../../../implementation/envoy/wrappers/convert.py#L364), [test_convert.py:259](../../../implementation/envoy/wrappers/test_convert.py#L259) |
+| [StallWindow](#stallwindow) | [convert.py:368](../../../implementation/envoy/wrappers/convert.py#L368), [test_convert.py:275](../../../implementation/envoy/wrappers/test_convert.py#L275) |
 | [SLOCancellation](#slocancellation) | not traced |
 | [DrainDeadline](#draindeadline) | [loadgen.py:109](../../../implementation/envoy/bin/loadgen.py#L109), [stream_decoder.cc:99](../../../implementation/envoy/nighthawk/source/client/stream_decoder.cc#L99) |
-| [Outcome classification](#outcome-classification) | [convert.py:340](../../../implementation/envoy/wrappers/convert.py#L340) |
+| [Outcome classification](#outcome-classification) | [convert.py:344](../../../implementation/envoy/wrappers/convert.py#L344) |
 | [State machine](#state-machine) | not traced |
 <!-- trace:end -->

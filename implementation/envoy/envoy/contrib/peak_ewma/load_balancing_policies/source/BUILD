@@ -51,13 +51,29 @@ envoy_cc_contrib_extension(
 )
 
 # impl/envoy (cancellation testbed): Peak EWMA with a deadline filter over every host and a FIFO wait queue.
+# impl/envoy (cancellation testbed): the TokenBucketFilter's per-host TokenBucket (pure logic) and its trace.
+envoy_cc_library(
+    name = "token_bucket_lib",
+    srcs = ["token_bucket.cc"],
+    hdrs = ["token_bucket.h"],
+    visibility = ["//contrib/peak_ewma/load_balancing_policies/test:__pkg__"],
+    deps = [
+        "@abseil-cpp//absl/synchronization",
+        "@abseil-cpp//absl/types:optional",
+    ],
+)
+
 envoy_cc_library(
     name = "deadline_lb_lib",
     srcs = ["deadline_lb.cc"],
     hdrs = ["deadline_lb.h"],
-    visibility = ["//contrib/peak_ewma/load_balancing_policies/test:__pkg__"],
+    visibility = [
+        "//contrib/peak_ewma/load_balancing_policies/test:__pkg__",
+        "//contrib/peak_ewma/token_bucket/source:__pkg__",
+    ],
     deps = [
         ":peak_ewma_lb_lib",
+        ":token_bucket_lib",
         "//envoy/event:dispatcher_interface",
         "//envoy/event:timer_interface",
         "//envoy/http:header_map_interface",

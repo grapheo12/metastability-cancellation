@@ -57,6 +57,7 @@
 #include "absl/types/optional.h"
 #include "contrib/envoy/extensions/load_balancing_policies/peak_ewma_deadline/v3alpha/peak_ewma_deadline.pb.h"
 #include "contrib/peak_ewma/load_balancing_policies/source/peak_ewma_lb.h"
+#include "contrib/peak_ewma/load_balancing_policies/source/token_bucket.h"
 
 namespace Envoy {
 namespace Extensions {
@@ -84,12 +85,15 @@ struct PendingRequests : public Upstream::HostLbPolicyData {
   // sample at t >= that time and clears the mark (compare-and-swap: exactly one caller sees true).
   void markProbe(int64_t now_ns) { probe_sent_ns_.store(now_ns, std::memory_order_relaxed); }
   bool takeProbeAnswer(int64_t t_ns);
+  // TokenBucketFilter: this host's TokenBucket (initialized by the balancer when lb_filter = token_bucket).
+  TokenBucket& tokenBucket() { return token_bucket_; }
 
 private:
   mutable absl::Mutex mu_;
   std::multiset<int64_t> starts_ ABSL_GUARDED_BY(mu_);
   std::atomic<int64_t> last_sent_ns_{0};
   std::atomic<int64_t> probe_sent_ns_{0};
+  TokenBucket token_bucket_;
 };
 
 // A request's pending entries (one per host handed to it, retries included); removed from the hosts'
@@ -141,7 +145,9 @@ private:
   };
 
   // Attaches PendingRequests to hosts that do not have it yet.
-  static void addPendingDataToHosts(const Upstream::HostVector& hosts);
+  // With token parameters, also initializes each host's TokenBucket (once per host) at now_mono_ns.
+  static void addPendingDataToHosts(const Upstream::HostVector& hosts,
+                                    const absl::optional<TokenParams>& token_params, int64_t now_mono_ns);
   // Records that host was handed to the request (its pending entry, until the request's stream ends).
   void registerPending(Upstream::LoadBalancerContext* context, const Upstream::HostConstSharedPtr& host);
   int64_t monoNowNs() const;
@@ -166,6 +172,8 @@ private:
   const std::chrono::milliseconds queue_tick_;
   const double filter_margin_; // FilterMargin gamma >= 1 (abstraction/ingress/load_balancer/design.md#peakewmadeadline)
   const double probe_tau_ms_;  // FilterProbe tau in ms; 0: off (abstraction/ingress/load_balancer/design.md#filterprobe)
+  // TokenBucketFilter parameters; set iff the config has token_bucket (lb_filter = token_bucket).
+  const absl::optional<TokenParams> token_params_;
   std::list<Entry> queue_;         // first attempts waiting (FilterWaitQueue, FIFO)
   std::list<Entry> retry_waiters_; // refused LB retries, re-checked every scan, never dropped
   Event::TimerPtr timer_; // created on the first enqueue, on this worker's dispatcher

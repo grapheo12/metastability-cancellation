@@ -81,6 +81,14 @@ envoy_cc_test(
 
 # impl/envoy (cancellation testbed): the peak_ewma_deadline load balancer.
 envoy_cc_test(
+    name = "token_bucket_test",
+    srcs = ["token_bucket_test.cc"],
+    deps = [
+        "//contrib/peak_ewma/load_balancing_policies/source:token_bucket_lib",
+    ],
+)
+
+envoy_cc_test(
     name = "deadline_lb_test",
     srcs = ["deadline_lb_test.cc"],
     deps = [

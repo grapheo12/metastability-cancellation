@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.22.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.23.0)
 // Source: abstraction/protocol/design.md (protocol v0.8.0)
 #include "contrib/peak_ewma/load_balancing_policies/source/deadline_lb.h"
 
@@ -66,15 +66,40 @@ void PendingRegistration::add(Upstream::HostConstSharedPtr host, int64_t start_n
   entries_.emplace_back(std::move(host), start_ns);
 }
 
-void PeakEwmaDeadlineLoadBalancer::addPendingDataToHosts(const Upstream::HostVector& hosts) {
+void PeakEwmaDeadlineLoadBalancer::addPendingDataToHosts(const Upstream::HostVector& hosts,
+                                                         const absl::optional<TokenParams>& token_params,
+                                                         int64_t now_mono_ns) {
   static absl::Mutex attach_mu; // worker balancers are created concurrently; attach once per host
   absl::MutexLock lock(&attach_mu);
   for (const auto& host : hosts) {
     if (!host->typedLbPolicyData<PendingRequests>().has_value()) {
       host->addLbPolicyData(std::make_unique<PendingRequests>());
     }
+    // Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
+    if (token_params.has_value()) { // TokenBucket: empty, rate init_r, from the first balancer's start
+      host->typedLbPolicyData<PendingRequests>()->tokenBucket().init(*token_params, now_mono_ns);
+    }
   }
 }
+
+namespace {
+// TokenBucketFilter parameters from the config (lb_tb_*); unset fields take the spec defaults.
+absl::optional<TokenParams> tokenParamsOf(const DeadlineConfig& config) {
+  if (!config.has_token_bucket()) {
+    return absl::nullopt;
+  }
+  const auto& tb = config.token_bucket();
+  TokenParams p;
+  p.slo_ns = DurationUtil::durationToMilliseconds(tb.slo()) * 1000000;
+  p.init_rate = tb.has_init_rate() ? tb.init_rate().value() : 50.0;
+  p.max_tokens = tb.has_max_tokens() ? tb.max_tokens().value() : 10.0;
+  p.mult_dec = tb.has_mult_dec() ? tb.mult_dec().value() : 2.0;
+  p.add_inc_limit = tb.has_add_inc_limit() ? tb.add_inc_limit().value() : 2.0;
+  p.add_inc = (tb.has_add_inc_frac() ? tb.add_inc_frac().value() : 0.1) * p.init_rate;
+  p.r_min = (tb.has_min_rate_frac() ? tb.min_rate_frac().value() : 0.1) * p.init_rate;
+  return p;
+}
+} // namespace
 
 PeakEwmaDeadlineLoadBalancer::PeakEwmaDeadlineLoadBalancer(
     const Upstream::PrioritySet& priority_set, const Upstream::PrioritySet* local_priority_set,
@@ -91,13 +116,14 @@ PeakEwmaDeadlineLoadBalancer::PeakEwmaDeadlineLoadBalancer(
       filter_margin_(config.filter_margin() >= 1.0 ? config.filter_margin() : 1.0),
       probe_tau_ms_(config.has_probe_tau()
                         ? static_cast<double>(DurationUtil::durationToMilliseconds(config.probe_tau()))
-                        : 0.0) {
+                        : 0.0),
+      token_params_(tokenParamsOf(config)) {
   for (const auto& host_set : priority_set_.hostSetsPerPriority()) {
-    addPendingDataToHosts(host_set->hosts());
+    addPendingDataToHosts(host_set->hosts(), token_params_, monoNowNs());
   }
   pending_update_cb_ = priority_set_.addPriorityUpdateCb(
-      [](uint32_t, const Upstream::HostVector& hosts_added, const Upstream::HostVector&) -> absl::Status {
-        addPendingDataToHosts(hosts_added);
+      [this](uint32_t, const Upstream::HostVector& hosts_added, const Upstream::HostVector&) -> absl::Status {
+        addPendingDataToHosts(hosts_added, token_params_, monoNowNs());
         return absl::OkStatus();
       });
 }
@@ -229,6 +255,10 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
       keep[i] = true; // no deadline: not filtered
     } else if (late) {
       keep[i] = false;
+    } else if (token_params_.has_value()) {
+      // Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
+      auto pending = hosts[i]->typedLbPolicyData<PendingRequests>(); // TokenBucketFilter: a whole token, no RTT test
+      keep[i] = pending.has_value() && pending->tokenBucket().hasToken(now_mono);
     } else if (ewma_ms <= 0.0 && !has_pending) {
       keep[i] = true; // no RTT sample and nothing pending: eligible (as the Go DeadlineFilter with no sample)
     } else {
@@ -277,6 +307,20 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
     auto pending = hosts[chosen]->typedLbPolicyData<PendingRequests>();
     if (pending.has_value()) {
       pending->markProbe(now_mono);
+    }
+  }
+
+  // Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
+  if (token_params_.has_value() && chosen < hosts.size()) { // every attempt takes one token
+    auto pending = hosts[chosen]->typedLbPolicyData<PendingRequests>();
+    const bool took = pending.has_value() && pending->tokenBucket().take(now_mono);
+    if (pending.has_value()) {
+      const double rate = pending->tokenBucket().rate();
+      tokenTrace(nowUnixNs(), took ? "take" : (remaining_ns.has_value() ? "race" : "untaken"),
+                 hosts[chosen]->address()->asString(), 0.0, rate, rate, pending->tokenBucket().tokens(now_mono));
+    }
+    if (!took && remaining_ns.has_value()) {
+      chosen = hosts.size(); // another worker took the token first: Dropped, re-checked at the next scan
     }
   }
 

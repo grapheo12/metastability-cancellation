@@ -5,6 +5,7 @@ package envoy.extensions.load_balancing_policies.peak_ewma_deadline.v3alpha;
 import "contrib/envoy/extensions/load_balancing_policies/peak_ewma/v3alpha/peak_ewma.proto";
 
 import "google/protobuf/duration.proto";
+import "google/protobuf/wrappers.proto";
 
 import "xds/annotations/v3/status.proto";
 
@@ -49,4 +50,36 @@ message PeakEwmaDeadline {
   // FilterProbe tau: a host the filter refuses still gets the request with probability 1 - e^(-dt/tau), dt the time
   // since it was last handed a request. Unset or 0: off.
   google.protobuf.Duration probe_tau = 5;
+
+  // TokenBucketFilter (abstraction/ingress/load_balancer/design.md#tokenbucketfilter). When set, the deadline test
+  // above (filter_margin, probe_tau) is replaced: a host is kept for a request with a deadline only if its token
+  // bucket holds a whole token, the chosen host gives one up, and the bucket's refill rate adapts by AIMD from the
+  // latencies the testbed_token_bucket upstream filter reports. Waiting is as above.
+  TokenBucket token_bucket = 6;
+}
+
+// The TokenBucketFilter's parameters (the Ingress's lb_tb_*). Unset fields take the defaults given.
+message TokenBucket {
+  option (xds.annotations.v3.message_status).work_in_progress = true;
+
+  // The SLO an answered attempt's latency is judged against (lb_tb_slo_ms). Required (> 0).
+  google.protobuf.Duration slo = 1;
+
+  // init_r, tokens/s per host (lb_tb_init_rate). Default 50.
+  google.protobuf.DoubleValue init_rate = 2;
+
+  // Bucket capacity (lb_tb_max_tokens). Default 10.
+  google.protobuf.DoubleValue max_tokens = 3;
+
+  // A slow answer divides the rate by this, at most once per slo (lb_tb_mult_dec). Default 2.
+  google.protobuf.DoubleValue mult_dec = 4;
+
+  // An answer faster than slo / add_inc_limit raises the rate (lb_tb_add_inc_limit). Default 2.
+  google.protobuf.DoubleValue add_inc_limit = 5;
+
+  // The rate rises by add_inc_frac * init_rate per fast answer (lb_tb_add_inc_frac). Default 0.1.
+  google.protobuf.DoubleValue add_inc_frac = 6;
+
+  // The rate never falls below min_rate_frac * init_rate (lb_tb_min_rate_frac). Default 0.1.
+  google.protobuf.DoubleValue min_rate_frac = 7;
 }

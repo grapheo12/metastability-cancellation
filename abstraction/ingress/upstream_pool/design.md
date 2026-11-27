@@ -82,6 +82,6 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [UpstreamPool](#upstreampool) | [ingress.py:156](../../../implementation/envoy/bin/ingress.py#L156) |
-| [Get](#get) | [ingress.py:156](../../../implementation/envoy/bin/ingress.py#L156) |
+| [UpstreamPool](#upstreampool) | [ingress.py:218](../../../implementation/envoy/bin/ingress.py#L218) |
+| [Get](#get) | [ingress.py:218](../../../implementation/envoy/bin/ingress.py#L218) |
 <!-- trace:end -->
