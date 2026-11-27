@@ -222,3 +222,4 @@
 | 0.50.1 | 2026-11-27T00:00:00Z | Child bump: sampling 0.4.0 (stream kind `STREAM_SERVER_SCENARIO = 7`) |
 | 0.50.2 | 2026-11-27T00:00:00Z | Child bump: server 0.15.1 (service_scenario 0.1.1) |
 | 0.51.0 | 2026-11-27T00:00:00Z | Glossary ScenarioStall. Child bump: server 0.16.0 (worker_pool 0.7.0, ScenarioStall) |
+| 0.52.0 | 2026-11-27T00:00:00Z | Glossary ScenarioServiceTime. Child bump: server 0.17.0 (ping_handler 0.14.0) |
