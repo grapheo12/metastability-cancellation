@@ -378,7 +378,7 @@ function random_pair(lb, L):                         # two different members of 
   end as they would have. When no backend is live, `L` falls back to all of them, so requests still go somewhere.
   `L` is read once per pick; a backend that changes state during the pick is seen in either state.
 - **AvoidedBackends.** Under HedgedForwarding an LbRetry decided `RetryElsewhere` passes `avoid` = every backend its
-  request has already been sent to (the Frontend's `forward_mode = hedge`, [../frontend/design.md](../frontend/design.md)).
+  request has already been sent to ([../frontend/design.md#hedgedforwarding](../frontend/design.md#hedgedforwarding)).
   They are left out of `L` unless that would leave nothing, in which case `L` is kept whole: unlike `exclude`, `avoid`
   never makes a pick `Dropped`. With `avoid = {}` nothing changes.
 - **ExcludedBackend.** A pick with `exclude = e` (an LbRetry decided `RetryElsewhere`,
