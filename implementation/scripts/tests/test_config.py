@@ -1,5 +1,5 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/config/design.md (config v0.26.0)
+# Source: abstraction/benchmark_runner/config/design.md (config v0.27.0)
 """Run from the repository root:
 python3 -B -m unittest discover -s implementation/scripts/tests -t implementation/scripts"""
 
@@ -241,6 +241,76 @@ class ConfigTest(unittest.TestCase):
                                "server.freeze_instance needs server.freeze_after_ms")
         self.assertConfigError(two.replace("response_rate = 2000", "freeze_after_ms = 1\nfreeze_instance = [0, 1]"),
                                "server.freeze_instance cannot be swept")
+
+    # Design: abstraction/benchmark_runner/config/design.md#scenarioassignment
+    def test_scenario_assignment(self):
+        scen = """
+[scenarios.stall_then_slow]
+states = { fast = { service_us = 400000 }, down = { stall = true }, slow = { service_us = 800000 } }
+schedule = [[0, "fast"], [60000, "down"], [80000, "slow"]]
+
+[scenarios.flap]
+states = { fast = { service_us = 400000 }, down = { stall = true } }
+markov = { initial = "fast", step_ms = 1000, p = { fast = { fast = 0.95, down = 0.05 }, down = { down = 0.7, fast = 0.3 } } }
+"""
+        two = (BASE.replace('[machines.server]\nhost = "local"\n',
+                            '[[machines.server]]\nhost = "h0"\ndata_addr = "10.0.0.0"\n'
+                            '[[machines.server]]\nhost = "h1"\ndata_addr = "10.0.0.1"\n')
+               .replace("response_rate = 2000", 'response_rate = 2.5\nworkload = "sleep_constant"') + scen)
+        stall = ('{"states":{"fast":{"service_us":400000},"down":{"stall":true},"slow":{"service_us":800000}},'
+                 '"schedule":[[0,"fast"],[60000,"down"],[80000,"slow"]],"stream":0}')
+        flap = ('{"states":{"fast":{"service_us":400000},"down":{"stall":true}},"markov":{"initial":"fast",'
+                '"step_ms":1000,"p":{"fast":{"fast":0.95,"down":0.05},"down":{"down":0.7,"fast":0.3}}},"stream":%d}')
+
+        def scenarios(server_keys):
+            text = two.replace('workload = "sleep_constant"', 'workload = "sleep_constant"\n' + server_keys)
+            points = cfg.expand_sweep(self.load(text))
+            self.assertTrue(all(p.scenarios == points[0].scenarios for p in points))  # the same every point
+            self.assertEqual(points[0].to_json()["scenarios"], points[0].scenarios)
+            return points[0].scenarios
+
+        self.assertEqual(scenarios(""), [None, None])
+        self.assertEqual(scenarios('scenario_by_instance = { "0" = "stall_then_slow" }'),
+                         [{"name": "stall_then_slow", "service_scenario": stall}, None])
+        self.assertEqual(scenarios('scenario = "flap"'),
+                         [{"name": "flap", "service_scenario": flap % 0}, {"name": "flap", "service_scenario": flap % 1}])
+        self.assertEqual(scenarios('scenario = "flap"\nscenario_by_instance = { 0 = "stall_then_slow" }'),
+                         [{"name": "stall_then_slow", "service_scenario": stall},
+                          {"name": "flap", "service_scenario": flap % 1}])
+        p = cfg.expand_sweep(self.load(two.replace('workload = "sleep_constant"',
+                                                   'workload = "sleep_constant"\nscenario = "flap"')))[0]
+        self.assertEqual(p.arg("server", "response_rate"), 2.5)  # other parameters go to every instance
+        # errors
+        bad = lambda keys, extra="": two.replace('workload = "sleep_constant"', 'workload = "sleep_constant"\n' + keys) + extra
+        self.assertConfigError(bad('scenario_by_instance = { "2" = "flap" }'),
+                               "server.scenario_by_instance: instance 2 must be in 0..=1")
+        self.assertConfigError(bad('scenario_by_instance = { "01" = "flap" }'),
+                               "server.scenario_by_instance: instance 01 must be in 0..=1")
+        self.assertConfigError(bad('scenario_by_instance = { "0" = "nope" }'),
+                               "server.scenario_by_instance: nope must name a [scenarios] table")
+        self.assertConfigError(bad('scenario = "nope"'), "server.scenario must name a [scenarios] table")
+        self.assertConfigError(bad('scenario = ["flap", "stall_then_slow"]'), "server.scenario cannot be swept")
+        self.assertConfigError(bad('scenario_by_instance = "flap"'),
+                               'server.scenario_by_instance must be a table of "<instance>" = "<scenario>"')
+        self.assertConfigError(two.replace('workload = "sleep_constant"', 'workload = "sleep"\nscenario = "flap"'),
+                               'server.scenario needs server.workload = "sleep_constant"')
+        self.assertConfigError(two.replace('workload = "sleep_constant"', 'workload = ["sleep_constant", "sleep"]\nscenario = "flap"'),
+                               'server.scenario needs server.workload = "sleep_constant"')
+        self.assertConfigError(bad("", '[scenarios.x]\nstates = {}\nschedule = []\nstream = 3\n'),
+                               "scenarios.x.stream is set by the runner")
+        self.assertConfigError(bad("", '[scenarios.x]\nstates = {}\nschedule = []\nmarkov = {}\n'),
+                               "scenarios.x needs exactly one of schedule and markov")
+        self.assertConfigError(bad("", '[scenarios.x]\nschedule = []\n'), "scenarios.x.states is required")
+        self.assertConfigError(bad("", '[scenarios.x]\nstates = {}\nschedule = []\nother = 1\n'),
+                               "unknown key scenarios.x.other")
+        self.assertConfigError(bad("", '[scenarios.x]\nstates = { a = { at = 1979-05-27 } }\nschedule = []\n'),
+                               "scenarios.x may hold only tables, arrays, strings, numbers and booleans")
+        self.assertConfigError(bad("", '[scenarios.x]\nstates = { a = { p = inf } }\nschedule = []\n'),
+                               "scenarios.x may hold only tables, arrays, strings, numbers and booleans")
+        self.assertConfigError(bad('service_scenario = "{}"'), "server.service_scenario is set by the runner")
+        self.assertConfigError(bad('scenario_log_path = "x"'), "server.scenario_log_path is set by the runner")
+        # a [scenarios] table that no instance uses is allowed
+        self.assertEqual(cfg.expand_sweep(self.load(two))[0].scenarios, [None, None])
 
     def test_defaults(self):
         c = self.load(BASE)

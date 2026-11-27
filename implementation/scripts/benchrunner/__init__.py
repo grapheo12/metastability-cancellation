@@ -1,3 +1,3 @@
 # Tooling language: Python 3.11+ (shared tool implementation/scripts)
-# Source: abstraction/benchmark_runner/design.md (benchmark_runner v0.9.5)
+# Source: abstraction/benchmark_runner/design.md (benchmark_runner v0.17.0)
 """BenchmarkRunner package: one module per abstraction/benchmark_runner leaf."""
