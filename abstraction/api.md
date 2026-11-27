@@ -4,9 +4,12 @@ The system ships as three programs: **server**, **loadgen** and **ingress**. Eac
 on the command line as `--<parameter_name> <value>`. Invalid or missing required parameters make the
 program exit with a non-zero status and a one-line error message, before any network activity.
 
-A parameter value marked **OptionalValue** need not be realized by every implementation. An implementation that
-does not realize it rejects it like an invalid value, before any network activity, with the one-line error
-`<parameter> <value> is not supported by this implementation`; it never runs it as some other value.
+An implementation need not realize every parameter value. A value it does not realize, or a configuration that
+needs a part it does not realize (for example `cancel_rate > 0` without a LoadCanceller), is rejected like an invalid
+value, before any network activity, with the one-line error `<parameter> <value> is not supported by this
+implementation`; it is never run as some other value. Each implementation lists what it does not realize in its
+`Design specific to <Impl>` sections. A value marked **OptionalValue** is one that some implementation of this
+repository does not realize.
 
 A fourth program, **bench** (the Benchmark Runner), runs on an operator machine and drives the other
 three on remote machines. Its interface is in [Benchmark runner](#benchmark-runner).
