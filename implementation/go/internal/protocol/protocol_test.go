@@ -1,4 +1,4 @@
-// Source: abstraction/protocol/design.md (protocol v0.7.0)
+// Source: abstraction/protocol/design.md (protocol v0.8.0)
 package protocol
 
 import (
@@ -237,6 +237,21 @@ func TestParseWorkerCount(t *testing.T) {
 	}{{"10", 10, true}, {"1", 1, true}, {"4294967295", 4294967295, true}, {"0", 0, false},
 		{"4294967296", 0, false}, {"", 0, false}, {"ten", 0, false}, {"-3", 0, false}, {"12345678901", 0, false}} {
 		if n, ok := ParseWorkerCount(c.v); n != c.n || ok != c.ok {
+			t.Errorf("%q: %d %v", c.v, n, ok)
+		}
+	}
+}
+
+// Design: abstraction/protocol/design.md#requestdeadlineheader
+func TestParseDeadlineHeader(t *testing.T) {
+	for _, c := range []struct {
+		v  string
+		n  int64
+		ok bool
+	}{{"1794533190000000000", 1794533190000000000, true}, {" 17 ", 17, true}, {"+5", 5, true}, {"-3", -3, true},
+		{"9223372036854775807", 9223372036854775807, true}, {"9223372036854775808", 0, false}, {"", 0, false},
+		{"soon", 0, false}, {"1.5e18", 0, false}, {"+", 0, false}, {"1 2", 0, false}} {
+		if n, ok := ParseDeadlineHeader(c.v); n != c.n || ok != c.ok {
 			t.Errorf("%q: %d %v", c.v, n, ok)
 		}
 	}

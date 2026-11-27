@@ -1,13 +1,14 @@
 // Package protocol implements the /ping, /cancel and /heartbeat wire formats shared by
 // the server, the load generator and the load canceller.
 //
-// Source: abstraction/protocol/design.md (protocol v0.7.0)
+// Source: abstraction/protocol/design.md (protocol v0.8.0)
 package protocol
 
 import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 )
 
 // API: abstraction/protocol/api.md#constants
@@ -19,7 +20,8 @@ const (
 	HeartbeatPath          = "/heartbeat"
 	HeartbeatMethod        = "GET"
 	ContentTypeJSON        = "application/json"
-	WorkerThreadsHeader    = "x-worker-threads" // WorkerCount on /ping 202 and 503
+	WorkerThreadsHeader    = "x-worker-threads"   // WorkerCount on /ping 202 and 503
+	RequestDeadlineHeader  = "x-request-deadline" // RequestDeadlineHeader on every client /ping
 	ContentTypeText        = "text/plain"
 	StatusStreamOK         = 200 // /heartbeat: the HeartbeatStream follows
 	StatusOK               = 202
@@ -345,4 +347,30 @@ func ParseHeartbeatLine(line []byte) (uint64, error) {
 		return 0, ErrParse
 	}
 	return n, nil
+}
+
+// ParseDeadlineHeader reads the RequestDeadline from an x-request-deadline header value: surrounding ASCII
+// whitespace removed, then an optional sign and decimal digits fitting in a signed 64-bit integer; ok is false
+// (none) otherwise, never an error.
+//
+// Design: abstraction/protocol/design.md#requestdeadlineheader
+func ParseDeadlineHeader(value string) (int64, bool) {
+	v := strings.Trim(value, " \t\n\r\f\v")
+	digits := v
+	if len(digits) > 0 && (digits[0] == '+' || digits[0] == '-') {
+		digits = digits[1:]
+	}
+	if len(digits) == 0 {
+		return 0, false
+	}
+	for i := 0; i < len(digits); i++ {
+		if digits[i] < '0' || digits[i] > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.ParseInt(v, 10, 64) // accepts the leading sign; range-checked
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
