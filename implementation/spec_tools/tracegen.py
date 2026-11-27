@@ -8,6 +8,7 @@ Source: AGENTS.md#traceability-generator-tracegen
 Usage (from the repository root):
     python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment //          # check
     python3 implementation/spec_tools/tracegen.py --lang Go --ext .go --comment // --write  # rewrite, then check
+An extension may carry its own comment prefix: --ext .cc --ext .h --comment // --ext .py:#
 
 Exit status: 0 OK, 1 problems reported, 2 usage or I/O error.
 """
@@ -23,16 +24,30 @@ BEGIN_MARKER = "<!-- trace:begin -->"
 END_MARKER = "<!-- trace:end -->"
 TAG_RE = re.compile(r"Design:\s*(abstraction/\S+?design\.md)#(\S+)")
 HEADING_RE = re.compile(r"^## (.+)$", re.M)
+SECTION_PREFIX = "## Design specific to "
+NOT_TRACED = "### Not traced"
+LINK_ANCHOR_RE = re.compile(r"^\|\s*\[[^\]]*\]\(#([^)\s]+)\)")
 
 
-def collect_tags(root, impl_dir, exts, comment):
-    """Map (design path, anchor) -> [(file path from root, line)]. A tag
-    resolves to the first following line that is neither blank nor a comment."""
+def parse_exts(exts, comment):
+    """[(extension, comment prefix)], in command-line order; "ext:prefix" overrides the default prefix."""
+    out = []
+    for e in exts:
+        ext, sep, prefix = e.partition(":")
+        out.append((ext, prefix if sep and prefix else comment))
+    return out
+
+
+def collect_tags(root, impl_dir, exts):
+    """Map (design path, anchor) -> [(file path from root, line)]. exts is [(extension, comment prefix)]; a file
+    uses the prefix of the first extension its name ends with. A tag resolves to the first following line that is
+    neither blank nor a comment."""
     refs = {}
     for dirpath, dirnames, filenames in os.walk(os.path.join(root, impl_dir)):
         dirnames.sort()
         for name in sorted(filenames):
-            if not name.endswith(tuple(exts)):
+            comment = next((c for e, c in exts if name.endswith(e)), None)
+            if comment is None:
                 continue
             path = os.path.join(dirpath, name)
             rel = os.path.relpath(path, root).replace(os.sep, "/")
@@ -52,29 +67,75 @@ def collect_tags(root, impl_dir, exts, comment):
     return refs
 
 
+def has_line(text, line):
+    return any(l == line for l in text.splitlines())
+
+
 def design_files(root, section_header, refs):
-    """Every design.md that has the language section, plus every tagged one."""
+    """Every design.md that has the language section (a line equal to its header), plus every tagged one."""
     found = {k[0] for k in refs}
     for dirpath, dirnames, filenames in os.walk(os.path.join(root, "abstraction")):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]  # e.g. proofs/.lake/
         if "design.md" in filenames:
             path = os.path.join(dirpath, "design.md")
             with open(path, encoding="utf-8") as f:
-                if section_header in f.read():
+                if has_line(f.read(), section_header):
                     found.add(os.path.relpath(path, root).replace(os.sep, "/"))
     return sorted(found)
 
 
-def build_table(root, design, spec_part, refs, problem):
+def split_design(text, section_header):
+    """(spec part, (start, end) of this language's section or None). The spec part ends at the first line that
+    starts with SECTION_PREFIX; the section runs from its header line to the next such line, or the end."""
+    starts, pos = [], 0
+    for line in text.splitlines(keepends=True):
+        if line.startswith(SECTION_PREFIX):
+            starts.append((pos, line.rstrip("\n")))
+        pos += len(line)
+    spec_end = starts[0][0] if starts else len(text)
+    for i, (start, line) in enumerate(starts):
+        if line == section_header:
+            end = starts[i + 1][0] if i + 1 < len(starts) else len(text)
+            return text[:spec_end], (start, end)
+    return text[:spec_end], None
+
+
+def not_traced_anchors(section):
+    """Anchors linked in the first column of the section's '### Not traced' table: the first run of table lines
+    after that heading (blank lines before it are skipped; the first other line ends it)."""
+    anchors, state = [], "out"  # out -> heading seen -> in table -> done
+    for line in section.splitlines():
+        s = line.strip()
+        if state == "out":
+            if s == NOT_TRACED:
+                state = "heading"
+        elif state == "heading":
+            if s.startswith("|"):
+                state = "table"
+            elif s:
+                break  # no table under the heading
+        if state == "table":
+            if not s.startswith("|"):
+                break
+            m = LINK_ANCHOR_RE.match(s)
+            if m:
+                anchors.append(m.group(1))
+    return anchors
+
+
+def build_table(root, design, spec_part, refs, not_traced, problem):
     """One row per '## ' heading of the spec part, links relative to the design file."""
     to_root = os.path.relpath(root, os.path.dirname(os.path.join(root, design))).replace(os.sep, "/")
     rows = ["| Design subsection | Implementation (file:line) |", "|---|---|"]
     for heading in HEADING_RE.findall(spec_part):
         anchor = slug(heading)
         locs = sorted(set(refs.get((design, anchor), [])))
-        if not locs:
+        if not locs and anchor not in not_traced:
             problem(f"UNCOVERED {design}#{anchor}")
-        links = ", ".join(f"[{os.path.basename(f)}:{n}]({to_root}/{f}#L{n})" for f, n in locs)
+        if locs:
+            links = ", ".join(f"[{os.path.basename(f)}:{n}]({to_root}/{f}#L{n})" for f, n in locs)
+        else:
+            links = "not traced" if anchor in not_traced else ""
         rows.append(f"| [{heading}](#{anchor}) | {links} |")
     return "\n".join(rows)
 
@@ -87,8 +148,8 @@ def run(root, impl_dir, lang, exts, comment, write, out=sys.stdout):
         problems.append(msg)
         print(msg, file=out)
 
-    section_header = "## Design specific to " + lang
-    refs = collect_tags(root, impl_dir, exts, comment)
+    section_header = SECTION_PREFIX + lang
+    refs = collect_tags(root, impl_dir, parse_exts(exts, comment))
     for design in design_files(root, section_header, refs):
         path = os.path.join(root, design)
         if not os.path.exists(path):
@@ -96,16 +157,25 @@ def run(root, impl_dir, lang, exts, comment, write, out=sys.stdout):
             continue
         with open(path, encoding="utf-8") as f:
             text = f.read()
-        spec_part = text.split(section_header, 1)[0]
+        spec_part, bounds = split_design(text, section_header)
+        section = text[bounds[0]:bounds[1]] if bounds else ""
+        not_traced = not_traced_anchors(section)
         anchors = {slug(h) for h in HEADING_RE.findall(spec_part)}
         for d, a in sorted(refs):
             if d == design and a not in anchors:
                 problem(f"UNKNOWN ANCHOR {design}#{a}")
-        table = build_table(root, design, spec_part, refs, problem)
-        i, j = text.find(BEGIN_MARKER), text.find(END_MARKER)
-        if section_header not in text or i < 0 or j < i:
+        for a in not_traced:
+            if a not in anchors:
+                problem(f"UNKNOWN ANCHOR {design}#{a}")
+            elif refs.get((design, a)):
+                problem(f"LISTED BUT TRACED {design}#{a}")
+        table = build_table(root, design, spec_part, refs, set(not_traced), problem)
+        i = section.find(BEGIN_MARKER)
+        j = section.find(END_MARKER)
+        if not bounds or i < 0 or j < i:
             problem(f"NO SECTION {design}")
             continue
+        i, j = bounds[0] + i, bounds[0] + j
         updated = text[:i] + BEGIN_MARKER + "\n" + table + "\n" + text[j:]
         if updated == text:
             continue
@@ -123,7 +193,8 @@ def main(argv=None):
     p.add_argument("--root", default=".", help="repository root (default: .)")
     p.add_argument("--lang", required=True, help="language name in the section header, e.g. Go")
     p.add_argument("--impl", help="implementation directory relative to root (default: implementation/<lang lowercase>)")
-    p.add_argument("--ext", action="append", required=True, help="source file extension to scan; repeatable")
+    p.add_argument("--ext", action="append", required=True,
+                   help="source file extension to scan, optionally with its own comment prefix (.py:#); repeatable")
     p.add_argument("--comment", required=True, help="line-comment prefix, e.g. // or #")
     p.add_argument("--write", action="store_true", help="rewrite the traceability tables")
     args = p.parse_args(argv)
