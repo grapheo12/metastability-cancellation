@@ -175,10 +175,8 @@ def envoy_config(args, backends, admin_port, access_log, upstream_log=None):
             "@type": "type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog",
             "path": upstream_log, "log_format": {"text_format_source": {
                 "inline_string": convert.UPSTREAM_LOG_FORMAT}}}}]
-    # WorkerCount (x-worker-threads) is read by an Ingress, never relayed to the client.
-    # Design: abstraction/protocol/design.md#workercount
     # Design: abstraction/ingress/frontend/design.md#forwardtask
-    route = {"cluster": "servers", "timeout": "0s", "response_headers_to_remove": ["x-worker-threads"]}
+    route = {"cluster": "servers", "timeout": "0s"}
     # Design: abstraction/ingress/frontend/design.md#hedgedforwarding
     # Design: abstraction/ingress/retry_policy/design.md#retrypolicyregistry
     if hedging(args):
@@ -216,7 +214,10 @@ def envoy_config(args, backends, admin_port, access_log, upstream_log=None):
         "stream_idle_timeout": "0s", "request_timeout": "0s",
         "http2_protocol_options": {"max_concurrent_streams": 100000},
         "route_config": {"name": "ping", "virtual_hosts": [{"name": "all", "domains": ["*"], "routes": [
-            {"match": {"prefix": "/"}, "route": route}]}]},
+            # WorkerCount (x-worker-threads) is read by an Ingress, never relayed to the client: removed on the
+            # route entry (envoy.config.route.v3.Route, not its RouteAction).
+            # Design: abstraction/protocol/design.md#workercount
+            {"match": {"prefix": "/"}, "route": route, "response_headers_to_remove": ["x-worker-threads"]}]}]},
         # Design: abstraction/ingress/frontend/design.md#client-connections
         "http_filters": http_filters,
         "access_log": [{"name": "envoy.access_loggers.file", "typed_config": {
