@@ -30,8 +30,9 @@ function admit_ping(task, config, rng, conn_state):
     service_us = 0
     if config.workload in {cpu_burn, sleep}:
         service_us = sampling.exponential_us(rng, config.response_rate)  # see Sampling order
-    else if config.workload == sleep_constant:
+    else if config.workload == sleep_constant and config.scenario is none:
         service_us = constant_service_us(config.response_rate)         # ConstantServiceTime: no draw
+    # sleep_constant with a ServiceScenario: 0 here; queue_pop sets it (ScenarioServiceTime)
     deadline = protocol.parse_deadline(task.body)          # RequestDeadline; none if missing or malformed
     if deadline is none: deadline = NO_DEADLINE            # 2^64 - 1: after every deadline under edf
     return PingJob(task = task, request_id = id, client_id = client_id,
@@ -87,7 +88,8 @@ function run_ping(job, config, registry, counters, buf, queue):  # buf: MessageB
         if past_deadline(config, report):                                # PastDeadlineRejection: the only check in ignore mode
             counters.rejected_past_deadline.fetch_add(1, relaxed)
             finish(false); return Response(503, body())
-        freeze_check = (() -> { freeze(); return false }) if config.freeze_after_ms is set else NONE
+        held = config.freeze_after_ms is set or config.scenario is not none     # WorkerFreeze or StalledState possible
+        freeze_check = (() -> { freeze(); return false }) if held else NONE
         if config.workload == cpu_burn:
             cpu_burner.burn(job.service_us, NONE, config.cancel_check_interval_us, freeze_check, CHECK_ITER)
         else if config.workload in {sleep, sleep_constant}:
@@ -128,8 +130,8 @@ function exec_ns(report):                                   # u64; read when the
 ```
 
 - **ExecutionTime** is read when the `202` or `503` body is built, so it covers everything the worker did for the
-  request: the ServiceTime burn, sleep or MessageWork, CancelCheckPoints, a WorkerFreeze, and the CancelMatching
-  bookkeeping. Queueing delay (push to pop) is outside it.
+  request: the ServiceTime burn, sleep or MessageWork, CancelCheckPoints, a WorkerFreeze or StalledState hold, and
+  the CancelMatching bookkeeping. Queueing delay (push to pop) is outside it.
 - **StartSlack** uses the server's wall clock, read once per request. The RequestDeadline is the client's wall clock,
   so clock offset between the machines adds directly to it.
 - `Aborted` requests write no body, so their ExecReport is dropped. A job dropped by `queue_close` never reaches
@@ -270,6 +272,32 @@ request that is answered at once.
 | 1.6 | 625000 | 625_000 |
 | 3_000_000 | 0.333… | 0 |
 
+## ScenarioServiceTime
+
+With a ServiceScenario ([../service_scenario/design.md](../service_scenario/design.md#servicescenario), only with
+`workload = sleep_constant`), a request's ServiceTime is the ConstantServiceTime of the ScenarioState the server is in
+when a worker **pops** it, not when it is admitted:
+
+- `admit_ping` puts `service_us = 0` in the PingJob and draws nothing; `response_rate` is not used.
+- `queue_pop` overwrites `job.service_us` with the state's `service_us` under the queue lock
+  ([../worker_pool/design.md#scenariostall](../worker_pool/design.md#scenariostall)); `run_ping` then sleeps it
+  exactly as for `sleep_constant` (QuantumSleep).
+- A state change after the pop does not change that request's ServiceTime. A StalledState after the pop holds the
+  request at its next check ([WorkerFreeze checks](#cancelcheckpoints)); the hold counts in its ExecutionTime, not in its
+  ServiceTime.
+- The Sampling order is unchanged: as for `sleep_constant`, the connection's `rng` is not used
+  ([Sampling order](#sampling-order)). The ServiceScenario's own draws use its own stream.
+
+Worked example, ScenarioSchedule `[[0, fast], [60000, down], [80000, slow]]`, `fast = 400000 µs`, `down` stalled,
+`slow = 800000 µs`, ScenarioClock time in s:
+
+| Admitted | Popped | `service_us` in the PingJob | Answered | `exec_ns` | Check |
+|---|---|---|---|---|---|
+| 10.0 | 10.0 | 0, then 400000 | 10.4 | 0.4 s | fast at the pop |
+| 59.5 | 59.9 | 0, then 400000 | 80.0 | 20.1 s | held from its check at 60.00 to 80; its sleep deadline (60.3) has passed |
+| 59.95 | 80.0 | 0, then 800000 | 80.8 | 0.8 s | admitted in `fast`, popped in `slow`: the state at the pop counts |
+| 61.0 | 80.0 | 0, then 800000 | 80.8 | 0.8 s | admitted in `down` (queued: nothing is popped while stalled), popped in `slow` |
+
 ## CancelCheckPoints
 
 In `cooperative` mode the worker running the request checks for cancellation at these points:
@@ -290,8 +318,10 @@ every id, so `should_cancel` is never needed.
 
 **WorkerFreeze checks.** Every check of a running request first calls `worker_pool.freeze_wait(queue)`
 ([../worker_pool/design.md#workerfreeze](../worker_pool/design.md#workerfreeze)), which returns at once unless the
-queue is frozen, and then blocks until `queue_close`. In `cooperative` mode it runs at the start of check point 1
-and inside `id_check`, so at every check of check point 2. In `ignore` mode, when `freeze_after_ms` is set, the burn,
+queue is frozen, and then blocks until `queue_close`, or, in a StalledState of a ServiceScenario, until the state is
+left ([../worker_pool/design.md#scenariostall](../worker_pool/design.md#scenariostall)). In `cooperative` mode it
+runs at the start of check point 1 and inside `id_check`, so at every check of check point 2. In `ignore` mode, when
+`freeze_after_ms` or `service_scenario` is set, the burn,
 the sleep and the MessageWork get a `freeze_check` in place of `id_check` that only waits and always answers
 `false`, so it never cancels anything. The freeze therefore stops a running request at its next check:
 

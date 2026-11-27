@@ -8,8 +8,9 @@ A `POST /ping` is handled in two steps on two different activities: `admit_ping`
 ### `admit_ping(task: StreamTask, config: ServerConfig, rng: Rng, conn_state: ConnectionCancelState) -> PingJob | Response`
 
 - `PingJob`: the body parses and its client id matches the connection's binding (or binds it). The job carries
-  the RequestId, the client id and a freshly drawn ServiceTime (`0` with `workload = message_buffer`, which
-  draws nothing), the RequestDeadline (`2^64 - 1` if the body has none), and has an empty `reply`
+  the RequestId, the client id and a freshly drawn ServiceTime (the ConstantServiceTime with `workload =
+  sleep_constant`; `0` with `workload = message_buffer`, which draws nothing, and with a ServiceScenario, whose
+  ServiceTime `queue_pop` sets: [design.md#scenarioservicetime](design.md#scenarioservicetime)), the RequestDeadline (`2^64 - 1` if the body has none), and has an empty `reply`
   ([../worker_pool/api.md#pingjob](../worker_pool/api.md#pingjob)).
 - `Response(400, empty)`: the body is unparseable, or its client id differs from the connection's. No sample is
   drawn.
@@ -24,8 +25,10 @@ order the requests were fully received, so it uses `rng` and `conn_state` exclus
   completed. Body is a PaddedJsonBody carrying the ExecReport ([design.md#execreport](design.md#execreport)). See [design.md#messagework](design.md#messagework).
 - `Response(503, body)`: a `/cancel` matched (`cooperative` only), or, with `reject_past_deadline = true`, the request was popped after its RequestDeadline ([design.md#pastdeadlinerejection](design.md#pastdeadlinerejection)). Body is a PaddedJsonBody carrying the ExecReport.
 - `Aborted`: the RST flag stopped the request (`cooperative` only). Nothing is written.
-- Does not return while the WorkerFreeze holds it: every check calls `freeze_wait(queue)` first
+- Does not return while the WorkerFreeze or a StalledState holds it: every check calls `freeze_wait(queue)` first
   ([design.md#cancelcheckpoints](design.md#cancelcheckpoints)).
+- Sleeps `job.service_us` as set at the pop when a ServiceScenario is set
+  ([design.md#scenarioservicetime](design.md#scenarioservicetime)).
 
 Called by a worker ([../worker_pool/design.md#workerpool](../worker_pool/design.md#workerpool)). Any worker may
 run any client's job, and two jobs of one client may run at once; the client's shared state is reached through
