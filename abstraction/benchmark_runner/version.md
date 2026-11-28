@@ -83,3 +83,4 @@
 | 0.20.0 | 2026-11-27T00:00:00Z | Child bump: config 0.30.0 (`lb_probe_tau_ms`) |
 | 0.21.0 | 2026-11-27T00:00:00Z | Child bump: config 0.31.0 (`lb_tb_*`) |
 | 0.22.0 | 2026-11-27T00:00:00Z | Child bump: config 0.32.0 (`lb_bbr_init_cwnd`) |
+| 0.23.0 | 2026-11-28T00:00:00Z | Child bump: config 0.33.0 (`rate_schedule`) |

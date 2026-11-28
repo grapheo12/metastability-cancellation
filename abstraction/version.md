@@ -251,3 +251,4 @@
 | 0.69.0 | 2026-11-28T00:00:00Z | Glossary HedgeCancel; AttemptLoss excludes it. Child bump: ingress 0.20.1 (load_balancer 0.26.0) |
 | 0.70.0 | 2026-11-28T00:00:00Z | Glossary RateSchedule; `rate_schedule` parameter row. Child bump: load_generator 0.10.0 (client 0.11.0) |
 | 0.70.1 | 2026-11-28T00:00:00Z | Child bump: load_generator 0.10.1 (run_controller 0.9.0) |
+| 0.70.2 | 2026-11-28T00:00:00Z | Child bump: benchmark_runner 0.23.0 (config 0.33.0) |
