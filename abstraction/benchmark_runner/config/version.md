@@ -35,3 +35,4 @@
 | 0.29.0 | 2026-11-27T00:00:00Z | PROGRAM_PARAMS: Ingress `lb_filter_margin` (FilterMargin) |
 | 0.30.0 | 2026-11-27T00:00:00Z | PROGRAM_PARAMS: Ingress `lb_probe_tau_ms` (FilterProbe) |
 | 0.31.0 | 2026-11-27T00:00:00Z | PROGRAM_PARAMS: Ingress `lb_tb_*` (TokenBucketFilter) |
+| 0.32.0 | 2026-11-27T00:00:00Z | PROGRAM_PARAMS: Ingress `lb_bbr_init_cwnd` (BbrFilter) |

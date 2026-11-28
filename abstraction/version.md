@@ -247,3 +247,4 @@
 | 0.66.1 | 2026-11-27T00:00:00Z | Child bump: benchmark_runner 0.21.0 (config 0.31.0) |
 | 0.67.0 | 2026-11-27T00:00:00Z | Glossary TokenRate, StuckAttempt; `lb_tb_*` rows. Child bump: ingress 0.19.1 (load_balancer 0.24.0) |
 | 0.68.0 | 2026-11-27T00:00:00Z | Glossary BbrFilter, BbrState, BtlBw, RTprop, PacingRate, Cwnd, BbrMode, DeliveryRateSample, AttemptLoss, LongTermBw, BbrAdmit; `lb_filter = bbr` and `lb_bbr_init_cwnd` rows. Child bump: ingress 0.20.0 (load_balancer 0.25.0) |
+| 0.68.1 | 2026-11-27T00:00:00Z | Child bump: benchmark_runner 0.22.0 (config 0.32.0) |

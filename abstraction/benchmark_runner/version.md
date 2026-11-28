@@ -82,3 +82,4 @@
 | 0.19.0 | 2026-11-27T00:00:00Z | Child bump: config 0.29.0 (`lb_filter_margin`) |
 | 0.20.0 | 2026-11-27T00:00:00Z | Child bump: config 0.30.0 (`lb_probe_tau_ms`) |
 | 0.21.0 | 2026-11-27T00:00:00Z | Child bump: config 0.31.0 (`lb_tb_*`) |
+| 0.22.0 | 2026-11-27T00:00:00Z | Child bump: config 0.32.0 (`lb_bbr_init_cwnd`) |

@@ -15,7 +15,8 @@ PROGRAM_PARAMS = {
                 "heartbeat_timeout_ms", "lb_filter", "lb_retry_policy", "lb_max_retries",
                 "lb_retry_timeout_ms", "lb_retry_anxiety_ratio", "lb_retry_late_factor", "forward_mode",
                 "lb_filter_margin", "lb_probe_tau_ms", "lb_tb_slo_ms", "lb_tb_init_rate", "lb_tb_max_tokens",
-                "lb_tb_mult_dec", "lb_tb_add_inc_limit", "lb_tb_add_inc_frac", "lb_tb_min_rate_frac"],
+                "lb_tb_mult_dec", "lb_tb_add_inc_limit", "lb_tb_add_inc_frac", "lb_tb_min_rate_frac",
+                "lb_bbr_init_cwnd"],
 }
 PLACEMENT_KEYS = ["threads", "cpu_set"]                                  # ProcessPlacement
 RUNNER_KEYS = { "server":    ["listen_port", "instances", "gc_trace", "freeze_instance",
