@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.25.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.26.0)
 // impl/envoy (cancellation testbed): tests of the BbrFilter's BbrState (bbr.h): the spec's worked examples, and
 // small simulations of one backend for the mode machine, loss recovery, PROBE_RTT and LongTermBw.
 
@@ -225,6 +225,21 @@ TEST(BbrStateTest, StalledBackendLosesEverythingCwndFallsToOne) {
   EXPECT_FALSE(sim.b.allows(now + 1000 * kMs)); // cwnd 1, one in flight
   sim.b.onLoss(one, now + kMs);
   EXPECT_EQ(sim.b.snapshot().cwnd, 1u);
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#attemptloss
+TEST(BbrStateTest, HedgeCancelOnlyLeavesTheInflight) {
+  BbrSim sim;
+  sim.run(8000, 10, 400);
+  const BbrSnapshot before = sim.b.snapshot();
+  const BbrSendTag t = sim.events.begin()->second.first;
+  sim.events.erase(sim.events.begin());
+  sim.b.onCancel(t, sim.t_ms * kMs);
+  const BbrSnapshot after = sim.b.snapshot();
+  EXPECT_EQ(after.inflight, before.inflight - 1);
+  EXPECT_EQ(after.cwnd, before.cwnd); // no cut
+  EXPECT_FALSE(after.in_recovery);    // no recovery
+  EXPECT_DOUBLE_EQ(after.btl_bw, before.btl_bw);
 }
 
 // Design: abstraction/ingress/load_balancer/design.md#bbrmodel

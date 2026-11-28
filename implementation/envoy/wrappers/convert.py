@@ -1,8 +1,8 @@
 # Source: abstraction/load_generator/design.md (load_generator v0.9.2)
 # Source: abstraction/load_generator/client/design.md (client v0.10.0)
 # Source: abstraction/load_generator/metrics/design.md (metrics v0.6.1)
-# Source: abstraction/ingress/design.md (ingress v0.20.0)
-# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.25.0)
+# Source: abstraction/ingress/design.md (ingress v0.20.1)
+# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.26.0)
 # Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
 # Source: abstraction/protocol/design.md (protocol v0.8.0)
 """impl/envoy wrappers: pure conversions from Envoy's access log and Nighthawk's per-request logs to the testbed's
@@ -211,8 +211,8 @@ def ingress_summary(rows, backends, config, run_start_unix_ns, run_end_s, filter
 #                           race, untaken at a pick; stuck (StuckAttempt) at a decision, latency_ms the oldest pending
 #                           attempt's age; slow, slow_held, fast, fast_held, mid at an answered attempt)
 #   <prefix>.bbr.0.csv      t_unix_ns,event,host,mode,btl_bw,min_rtt_ms,pacing_rate,cwnd,inflight,in_recovery,
-#                           lt_use_bw,cycle_idx,rtt_ms   (BbrFilter: admit, race at a pick; send, answer, loss of an
-#                           attempt; the host's BbrState after the event, rtt_ms the attempt's age at answer or loss)
+#                           lt_use_bw,cycle_idx,rtt_ms   (BbrFilter: admit, race at a pick; send, answer, cancel (HedgeCancel),
+#                           loss of an attempt; the host's BbrState after the event, rtt_ms the attempt's age at answer or loss)
 # (picks: Peak EWMA; evals and queue: peak_ewma_deadline; anxious and exec: the testbed_anxious filter). The merged outputs replace hosts by server ids
 # (--backends order; an empty host stays empty) and Unix times by t_ns since run_start_unix_ns (the forwards.csv
 # time base), add the instance number as `worker` where decisions or queues are per worker, and are sorted by t_ns

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.25.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.26.0)
 #include "contrib/peak_ewma/load_balancing_policies/source/bbr.h"
 
 #include <algorithm>
@@ -432,6 +432,15 @@ void BbrState::onLoss(const BbrSendTag&, int64_t) {
   if (mode_ == BbrMode::ProbeRtt) {
     cwnd_ = std::min(cwnd_, kBbrMinCwnd);
   }
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#attemptloss
+void BbrState::onCancel(const BbrSendTag&, int64_t) {
+  absl::MutexLock lock(&mu_);
+  if (!init_ || inflight_ == 0) {
+    return;
+  }
+  inflight_ -= 1; // HedgeCancel: neither delivered nor lost
 }
 
 // Design: abstraction/ingress/load_balancer/design.md#attemptloss

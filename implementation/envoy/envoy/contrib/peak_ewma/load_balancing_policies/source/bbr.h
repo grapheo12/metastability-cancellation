@@ -1,6 +1,6 @@
 #pragma once
 
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.25.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.26.0)
 // impl/envoy (cancellation testbed): the BbrFilter's per-host BbrState, Linux BBR v1 (tcp_bbr.c + tcp_rate.c) with
 // one upstream attempt per packet (abstraction/ingress/load_balancer/design.md#bbrfilter). Pure logic: times and
 // the random source are passed in. One state per host, kept in the host's PendingRequests (deadline_lb.h) and so
@@ -100,6 +100,8 @@ public:
   BbrSendTag onSend(int64_t now_ns, const BbrRandom& rand);
   void onAnswer(const BbrSendTag& tag, int64_t now_ns, const BbrRandom& rand);
   void onLoss(const BbrSendTag& tag, int64_t now_ns);
+  // HedgeCancel: another attempt of the same request answered first; only leaves the inflight.
+  void onCancel(const BbrSendTag& tag, int64_t now_ns);
   BbrSnapshot snapshot() const;
 
 private:
@@ -194,7 +196,7 @@ private:
 
 // Diagnostic trace <PEAK_EWMA_TRACE_PREFIX>.bbr.0.csv (one file per process, under a lock):
 // t_unix_ns,event,host,mode,btl_bw,min_rtt_ms,pacing_rate,cwnd,inflight,in_recovery,lt_use_bw,cycle_idx,rtt_ms.
-// Events: admit, race, send, answer, loss. No-op without the environment variable.
+// Events: admit, race, send, answer, loss, cancel. No-op without the environment variable.
 void bbrTrace(int64_t unix_ns, const char* event, const std::string& host, const BbrSnapshot& s, double rtt_ms);
 
 } // namespace PeakEwma

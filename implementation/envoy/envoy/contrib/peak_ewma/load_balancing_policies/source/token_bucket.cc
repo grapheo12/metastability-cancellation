@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.25.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.26.0)
 #include "contrib/peak_ewma/load_balancing_policies/source/token_bucket.h"
 
 #include <algorithm>

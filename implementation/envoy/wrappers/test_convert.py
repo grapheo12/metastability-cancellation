@@ -1,6 +1,6 @@
 # Source: abstraction/load_generator/client/design.md (client v0.10.0)
 # Source: abstraction/load_generator/metrics/design.md (metrics v0.6.1)
-# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.25.0)
+# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.26.0)
 # Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
 """Unit tests for the impl/envoy wrappers' conversions (python3 -m unittest discover -s implementation/envoy/wrappers)."""
 import csv

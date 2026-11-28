@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Source: abstraction/ingress/design.md (ingress v0.20.0)
-# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.25.0)
+# Source: abstraction/ingress/design.md (ingress v0.20.1)
+# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.26.0)
 # Source: abstraction/ingress/frontend/design.md (frontend v0.11.0)
 # Source: abstraction/ingress/retry_policy/design.md (retry_policy v0.8.0)
 # Source: abstraction/ingress/upstream_pool/design.md (upstream_pool v0.1.2)

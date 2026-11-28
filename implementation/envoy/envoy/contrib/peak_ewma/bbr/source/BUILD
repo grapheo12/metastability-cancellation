@@ -20,6 +20,7 @@ envoy_cc_library(
         "//envoy/common:random_generator_interface",
         "//envoy/common:time_interface",
         "//envoy/http:filter_interface",
+        "//envoy/stream_info:filter_state_interface",
         "//source/extensions/filters/http/common:pass_through_filter_lib",
     ],
 )

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.25.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.26.0)
 #include "contrib/peak_ewma/bbr/source/filter.h"
 
 #include <chrono>
@@ -45,6 +45,10 @@ Http::FilterHeadersStatus BbrAttemptFilter::encodeHeaders(Http::ResponseHeaderMa
     return Http::FilterHeadersStatus::Continue;
   }
   resolved_ = true; // the attempt answered (response headers, whatever the status)
+  StreamInfo::FilterState& state = *decoder_callbacks_->streamInfo().filterState();
+  if (!state.hasDataWithName(kBbrAnsweredKey)) { // HedgeCancel for the request's other attempts
+    state.setData(kBbrAnsweredKey, std::make_shared<BbrAnswered>(), StreamInfo::FilterState::LifeSpan::FilterChain);
+  }
   auto pending = host_->typedLbPolicyData<PendingRequests>();
   if (!pending.has_value()) {
     return Http::FilterHeadersStatus::Continue;
@@ -61,14 +65,20 @@ void BbrAttemptFilter::onDestroy() {
   if (!sent_ || resolved_) {
     return;
   }
-  resolved_ = true; // ended without response headers: an AttemptLoss
+  resolved_ = true; // ended without response headers
   auto pending = host_->typedLbPolicyData<PendingRequests>();
   if (!pending.has_value()) {
     return;
   }
   const int64_t now = monoNowNs();
-  pending->bbr().onLoss(tag_, now);
-  bbrTrace(unixNowNs(), "loss", host_->address()->asString(), pending->bbr().snapshot(),
+  // HedgeCancel if another attempt of this request already answered, else an AttemptLoss.
+  const bool cancel = decoder_callbacks_->streamInfo().filterState()->hasDataWithName(kBbrAnsweredKey);
+  if (cancel) {
+    pending->bbr().onCancel(tag_, now);
+  } else {
+    pending->bbr().onLoss(tag_, now);
+  }
+  bbrTrace(unixNowNs(), cancel ? "cancel" : "loss", host_->address()->asString(), pending->bbr().snapshot(),
            static_cast<double>(now - tag_.send_ns) / 1e6);
 }
 
