@@ -23,6 +23,7 @@ lb = { policy, filter: lb_filter, beta: ewma_beta, filter_margin: lb_filter_marg
        peak: array[B] (PeakEwmaRtt), pending: array[B] (PendingStarts),         # lb_policy = peak_ewma only
        last_sent: array[B] of u64 = 0, probe_tau_ms: lb_probe_tau_ms,          # FilterProbe
        bucket: array[B] of TokenBucket,                                         # TokenBucketFilter (lb_filter = token_bucket)
+       bbr: array[B] of BbrState,                                               # BbrFilter (lb_filter = bbr)
        last_fold_ns: u64 per Ingress worker = 0 }
 
 function pick(lb, remaining_ns, attempt, record = true, exclude = none, avoid = {}):   # remaining_ns: i64 or none (the request's time to its deadline);
@@ -338,6 +339,8 @@ function choose(lb, remaining_ns, exclude = none, avoid = {}):
         return peak_ewma_deadline_choose(lb, L, remaining_ns)   # PeakEwmaDeadline: its own filter and choice
     if lb.filter == token_bucket:
         return token_bucket_choose(lb, L, remaining_ns)         # TokenBucketFilter: tokens instead of a deadline test
+    if lb.filter == bbr:
+        return bbr_choose(lb, w, L, remaining_ns)               # BbrFilter: cwnd and pacing per backend (w: this worker)
     if lb.filter != none and remaining_ns is not none:
         L = deadline_filter(lb, L, remaining_ns)     # DeadlineFilter
         if L is empty: return Dropped
@@ -417,6 +420,7 @@ it would among `L`. Everything but the per-backend test is shared by the strateg
 | `deadline_mmk` | `Pr(t > T \| N = n) <= DEADLINE_FILTER_MISS` | M/M/k on-time probability `>= 0.99` (see [Model](#model)) |
 | `deadline_provisional_rtt` (OptionalValue; needs `lb_policy = peak_ewma`) | `γ ×` ProvisionalCurrentRtt `<= T` (`γ = lb_filter_margin`) | the backend's RTT average, as if its oldest pending forward answered now; its own choice and wait queues ([PeakEwmaDeadline](#peakewmadeadline)) |
 | `token_bucket` (OptionalValue; needs `lb_policy = peak_ewma`) | its TokenBucket holds a whole token | not a deadline test: a per-backend rate limit adapted by AIMD; the PeakEwmaDeadline's choice and wait queues ([TokenBucketFilter](#tokenbucketfilter)) |
+| `bbr` (OptionalValue; needs `lb_policy = peak_ewma`) | its BbrState has room in the Cwnd and its PacingRate allows a send now | not a deadline test: BBR congestion control per backend, in requests; the PeakEwmaDeadline's choice and wait queues ([BbrFilter](#bbrfilter), [BbrAdmit](#bbradmit)) |
 
 `n`, `k`, `e` and `T` are as defined in the [Model](#model): `outstanding`, `max(WorkerCount, 1)`, EwmaExecTime and
 `remaining_ns`.
@@ -654,7 +658,7 @@ answered now. It is not stored: it is computed at each decision and then forgott
 pending[s] = multiset of u64 (monotonic ns)   # PendingStarts: one per forward picked for s whose client request
                                               # has not ended yet; shared by all workers, under its own lock
 
-procedure pending_add(lb, s, request):        # at each pick that returns s, under deadline_provisional_rtt or token_bucket
+procedure pending_add(lb, s, request):        # at each pick that returns s, under deadline_provisional_rtt, token_bucket or bbr
     t = monotonic_now_ns(); pending[s].insert(t); request.pending.append((s, t))
     last_sent[s] = t                            # LastSentTime (FilterProbe)
 
@@ -956,6 +960,505 @@ Worked example, TokenRate (`init_r = 50`, `slo = 4000 ms`, `mult_dec = 2`, `add_
 | 17 s | 1500 ms | 12 s | 10 → 15 | fast, 17 − 13 = 4 s >= 4 s |
 | 18 s | StuckAttempt: oldest pending sent at 13.5 s | 12 s | 15 → 7.5 | 18 − 13.5 = 4.5 s > 4 s; 18 − 12 = 6 s >= 4 s |
 | 19 s | StuckAttempt, same attempt | 18 s | 7.5 → 7.5 | 1 s < 4 s since the last halving |
+
+## BbrFilter
+
+`lb_filter = bbr` (OptionalValue, with `lb_policy = peak_ewma`) is the **BbrFilter**: BBR congestion control
+(Cardwell, Cheng, Gunn, Hassas Yeganeh, Jacobson, "BBR: Congestion-Based Congestion Control", ACM Queue 14(5), 2016)
+run by the Ingress once per backend, as Linux runs it once per TCP connection (`net/ipv4/tcp_bbr.c` and
+`net/ipv4/tcp_rate.c`, BBR v1). One attempt sent to a backend plays the part of one packet: its answer (response
+headers) is the packet's ACK, and an attempt that ends without an answer is a lost packet ([AttemptLoss](#attemptloss)).
+Rates are in requests/s where Linux has bytes/s.
+
+Each backend `s` has one **BbrState**, kept by the Ingress and shared by all Ingress workers under one lock per
+backend. It estimates:
+- **BtlBw**, the backend's bottleneck rate: the largest [DeliveryRateSample](#deliveryratesample) over the last
+  `BW_WINDOW_ROUNDS` rounds (req/s);
+- **RTprop**, its round-trip time without queueing: the smallest attempt latency over the last `MIN_RTT_WINDOW_S`.
+
+From them it sets a **PacingRate** (how fast attempts may be sent to `s`) and a **Cwnd** (how many may be in flight
+at `s`), and runs the **BbrMode** state machine: STARTUP, DRAIN, PROBE_BW, PROBE_RTT ([BbrModel](#bbrmodel)).
+[BbrAdmit](#bbradmit) keeps only the backends that both allow.
+
+Parameter (Ingress, [api.md](api.md#parameters)): `lb_bbr_init_cwnd` (`init_cwnd`, u32 `>= 4`, default 10, Linux
+`TCP_INIT_CWND`). Every other number is a constant copied from Linux:
+
+| Constant | Value | Linux | Meaning |
+|---|---|---|---|
+| `HIGH_GAIN` | 2.885 | `bbr_high_gain` (2/ln 2) | STARTUP pacing and cwnd gain |
+| `DRAIN_GAIN` | 1 / 2.885 | `bbr_drain_gain` | DRAIN pacing gain |
+| `CWND_GAIN` | 2 | `bbr_cwnd_gain` | PROBE_BW cwnd gain |
+| `PACING_GAIN` | [1.25, 0.75, 1, 1, 1, 1, 1, 1] | `bbr_pacing_gain` | PROBE_BW gain cycle, `CYCLE_LEN = 8` phases |
+| `CYCLE_RAND` | 7 | `bbr_cycle_rand` | random start phase of the cycle |
+| `BW_WINDOW_ROUNDS` | 10 | `bbr_bw_rtts` | BtlBw window, rounds |
+| `MIN_RTT_WINDOW_NS` | 10 s | `bbr_min_rtt_win_sec` | RTprop window |
+| `PROBE_RTT_NS` | 200 ms | `bbr_probe_rtt_mode_ms` | time PROBE_RTT holds the cwnd at `MIN_CWND` |
+| `MIN_CWND` | 4 | `bbr_cwnd_min_target` | cwnd floor, and PROBE_RTT's cwnd |
+| `FULL_BW_THRESH` | 1.25 | `bbr_full_bw_thresh` | growth that counts as "still growing" in STARTUP |
+| `FULL_BW_COUNT` | 3 | `bbr_full_bw_cnt` | rounds without that growth that end STARTUP |
+| `PACING_MARGIN` | 0.01 | `bbr_pacing_margin_percent` | pace 1% below the target rate |
+| `INIT_RTT_NS` | 1 ms | `USEC_PER_MSEC` in `bbr_init_pacing_rate_from_rtt` | RTT assumed before the first answer |
+| `UNPACED_SENDS` | 10 | `data_segs_out >= 10` in `tcp_update_skb_after_send` | the first attempts are not paced |
+| `RATE_MIN_RTT_WINDOW_NS` | 300 s | `tcp_min_rtt_wlen` | window of the RTT minimum that validates a rate sample |
+| `LT_INTVL_MIN_ROUNDS` | 4 | `bbr_lt_intvl_min_rtts` | [LongTermBw](#longtermbw) interval, rounds |
+| `LT_LOSS_THRESH` | 50 / 256 | `bbr_lt_loss_thresh` | loss fraction that marks a policed interval |
+| `LT_BW_RATIO` | 1 / 8 | `bbr_lt_bw_ratio` | two intervals within this ratio agree |
+| `LT_BW_DIFF` | 1/3 req/s | `bbr_lt_bw_diff` (4000 bit/s; at 1500-byte packets) | or within this difference |
+| `LT_BW_MAX_ROUNDS` | 48 | `bbr_lt_bw_max_rtts` | rounds the long-term rate is used |
+
+```
+BbrState = {
+    lock: mutex,                                   # every procedure of the BbrFilter holds bbr[s].lock throughout
+    # delivery accounting (DeliveryRateSample)
+    sent: u64 = 0, inflight: u32 = 0, delivered: u64 = 0, lost: u64 = 0,
+    delivered_ns: u64 = 0, first_send_ns: u64 = 0, app_limited: u64 = 0,
+    rate_min_rtt: windowed min (minmax) of ns over time, empty,          # TCP's own RTT minimum (tcp_min_rtt)
+    # model (BbrModel)
+    mode = STARTUP, bw: windowed max (minmax) of req/s over rounds, reset to (0, 0),
+    min_rtt_ns: u64 or none = none, min_rtt_stamp_ns: u64 = creation time,
+    round_count: u64 = 0, next_round_delivered: u64 = 0, round_start = false,
+    full_bw: binary64 = 0, full_bw_count: u32 = 0, full_bw_reached = false,
+    cycle_idx: u32 = 0, cycle_stamp_ns: u64 = 0,
+    pacing_gain = HIGH_GAIN, cwnd_gain = HIGH_GAIN,
+    has_seen_rtt = false, pacing_rate: binary64 req/s = HIGH_GAIN * init_cwnd / (INIT_RTT_NS / 1e9) * (1 - PACING_MARGIN),
+    next_send_ns: u64 = 0,                                               # Linux tcp_wstamp_ns
+    cwnd: u32 = init_cwnd, prior_cwnd: u32 = 0,
+    idle_restart = false, probe_rtt_done_ns: u64 or none = none, probe_rtt_round_done = false,
+    # loss (AttemptLoss)
+    in_recovery = false, recovery_seq: u64 = 0, packet_conservation = false, unreported_losses: u32 = 0,
+    # LongTermBw
+    lt_is_sampling = false, lt_use_bw = false, lt_bw: binary64 = 0, lt_rtt_count: u32 = 0,
+    lt_last_delivered: u64 = 0, lt_last_lost: u64 = 0, lt_last_stamp_ns: u64 = 0 }
+
+SendTag = { seq: u64, delivered: u64, delivered_ns: u64, first_send_ns: u64, send_ns: u64, app_limited: boolean }
+                                                   # kept by the attempt from bbr_on_send until its answer or loss
+
+function bdp(b, bw, gain):                         # -> u32; Linux bbr_bdp (no quantization budget)
+    if b.min_rtt_ns is none: return init_cwnd
+    return ceil(bw * (float(b.min_rtt_ns) / 1e9) * gain)       # binary64, products left to right
+
+function btl_bw(b):                                # Linux bbr_bw
+    return b.lt_bw if b.lt_use_bw else b.bw.value()
+```
+
+- **Hooks.** The Frontend calls, for each attempt at `s`:
+  - `bbr_on_send(lb, s, now)` when the attempt's request is sent, keeping the returned SendTag with the attempt;
+  - `bbr_on_answer(lb, s, tag, now)` when its response headers arrive, whatever the status;
+  - `bbr_on_loss(lb, s, tag, now)` when it ends without response headers (cancelled because another attempt answered
+    first, cut at the RequestDeadline, reset, a connection error).
+  Exactly one of the last two follows each `bbr_on_send`. All times are monotonic ns.
+- **Windowed min and max.** `bw` and `rate_min_rtt` are Kathleen Nichols' windowed filters as in Linux
+  `lib/minmax.c` (the block below); `bw` is indexed by `round_count` with a window of `BW_WINDOW_ROUNDS`,
+  `rate_min_rtt` by time with a window of `RATE_MIN_RTT_WINDOW_NS`.
+- **Left out of Linux:** the TSO quantization budget (`bbr_quantization_budget`), ACK aggregation (`extra_acked`),
+  the TSO pacing floor, the `TCP_CA_Loss` (RTO) state, and the EDT in-network adjustment
+  (`bbr_packets_in_net_at_edt`): requests have no segments, no ACK compression and no retransmission timer.
+- **Not used:** FilterMargin, FilterProbe, the PendingStarts test and the `lb_tb_*` parameters (validated, ignored).
+
+```
+procedure minmax_reset(m, t, v): m.s[0] = m.s[1] = m.s[2] = (t, v)
+
+function minmax_running_max(m, win, t, v):        # u64 t; for a min filter swap ">=" for "<=" (minmax_running_min)
+    if v >= m.s[0].v or t - m.s[2].t > win: minmax_reset(m, t, v); return v
+    if v >= m.s[1].v: m.s[2] = m.s[1] = (t, v)
+    else if v >= m.s[2].v: m.s[2] = (t, v)
+    dt = t - m.s[0].t                              # minmax_subwin_update
+    if dt > win:
+        m.s[0] = m.s[1]; m.s[1] = m.s[2]; m.s[2] = (t, v)
+        if t - m.s[0].t > win: m.s[0] = m.s[1]; m.s[1] = m.s[2]; m.s[2] = (t, v)
+    else if m.s[1].t == m.s[0].t and dt > win / 4: m.s[2] = m.s[1] = (t, v)   # integer division
+    else if m.s[2].t == m.s[1].t and dt > win / 2: m.s[2] = (t, v)
+    return m.s[0].v                                # value(): m.s[0].v
+```
+
+An empty `rate_min_rtt` takes its first sample as a reset.
+
+## DeliveryRateSample
+
+A **DeliveryRateSample** is Linux `tcp_rate.c` per attempt: how many attempts `s` answered between this attempt's
+send and its answer, over that interval.
+
+```
+function bbr_on_send(lb, s, now):                  # -> SendTag; Linux tcp_rate_skb_sent + tcp_event_data_sent
+    b = lb.bbr[s]
+    if b.inflight == 0:
+        b.first_send_ns = now; b.delivered_ns = now
+        if b.app_limited != 0: idle_restart(b, now)        # Linux CA_EVENT_TX_START
+    tag = SendTag(seq = b.sent, delivered = b.delivered, delivered_ns = b.delivered_ns,
+                  first_send_ns = b.first_send_ns, send_ns = now, app_limited = b.app_limited != 0)
+    b.sent = b.sent + 1; b.inflight = b.inflight + 1
+    return tag
+
+procedure idle_restart(b, now):                    # Linux bbr_cwnd_event
+    b.idle_restart = true
+    if b.mode == PROBE_BW: set_pacing_rate(b, btl_bw(b), 1)
+    else if b.mode == PROBE_RTT: check_probe_rtt_done(b, now)
+
+procedure bbr_on_answer(lb, s, tag, now):          # Linux tcp_ack -> tcp_rate_skb_delivered, tcp_rate_gen, bbr_main
+    b = lb.bbr[s]
+    prior_inflight = b.inflight; b.inflight = b.inflight - 1
+    b.delivered = b.delivered + 1
+    rtt = now - tag.send_ns
+    minmax_running_min(b.rate_min_rtt, RATE_MIN_RTT_WINDOW_NS, now, rtt)
+    send_elapsed = tag.send_ns - tag.first_send_ns
+    b.first_send_ns = tag.send_ns
+    if b.app_limited != 0 and b.delivered > b.app_limited: b.app_limited = 0
+    b.delivered_ns = now
+    rs = RateSample(delivered = b.delivered - tag.delivered,
+                    interval_ns = max(send_elapsed, now - tag.delivered_ns),
+                    rtt_ns = rtt, is_app_limited = tag.app_limited, prior_delivered = tag.delivered,
+                    prior_inflight = prior_inflight, acked = 1, losses = b.unreported_losses)
+    b.unreported_losses = 0
+    if rs.interval_ns < b.rate_min_rtt.value(): rs.interval_ns = none            # not a valid sample
+    if b.in_recovery and tag.seq >= b.recovery_seq: end_recovery(b)              # AttemptLoss
+    bbr_main(b, rs, now)
+
+function rate(rs):                                 # req/s; only for a valid sample
+    return float(rs.delivered) * 1e9 / float(rs.interval_ns)
+
+procedure mark_app_limited(b):                      # Linux tcp_rate_check_app_limited; called by BbrAdmit
+    b.app_limited = (b.delivered + b.inflight) if b.delivered + b.inflight > 0 else 1
+```
+
+- **Interval.** The sample is taken over the longer of the send interval (from the attempt sent just before the
+  earliest one still counted to this one) and the answer interval (from the answer this attempt saw last at its send
+  to its own), as in Linux, so neither a burst of sends nor a burst of answers inflates the rate.
+- **Invalid.** An interval shorter than the RTT minimum seen over `RATE_MIN_RTT_WINDOW_NS` (including this answer's
+  RTT) gives no rate sample. The answer still counts for the RTT, the inflight and the cwnd.
+- **App-limited.** A sample of an attempt sent while the Ingress had nothing waiting for `s` ([BbrAdmit](#bbradmit))
+  is marked, and may raise BtlBw but never lower it: a backend that was offered less than it can serve shows a low
+  rate that says nothing about its capacity. The mark covers every attempt sent until `delivered` passes the value
+  stored by `mark_app_limited`.
+- **Losses are reported with the next answer.** A lost attempt is counted at once ([AttemptLoss](#attemptloss)), and
+  the count also rides on the next answer's sample (`rs.losses`), as TCP learns of a loss from the ACK after it.
+
+Worked example (`min_rtt` none at first, every attempt answered in about 400 ms):
+
+| Event at | `inflight` before | Tag (`delivered`, `delivered_ns`, `first_send_ns`) | Sample | Check |
+|---|---|---|---|---|
+| A sent 0 ms | 0 | (0, 0, 0) | — | first_send = delivered_ns = 0 |
+| B sent 10 ms | 1 | (0, 0, 0) | — | |
+| A answered 400 ms | 2 | | 1 over 400 ms = 2.5 req/s | send 0 − 0 = 0; answer 400 − 0 = 400 |
+| B answered 410 ms | 1 | | 2 over 410 ms = 4.878 req/s | `delivered` 2 − 0; send 10 − 0 = 10; answer 410 − 0 = 410 |
+| C sent 420 ms | 0 | (2, 420, 420) | — | idle: first_send = delivered_ns = 420 |
+| C answered 820 ms | 1 | | 1 over 400 ms = 2.5 req/s | 3 − 2; answer 820 − 420 |
+
+## BbrModel
+
+**BbrModel** is Linux `bbr_main`, run on every answer (`bbr_on_answer`), in this order:
+
+```
+procedure bbr_main(b, rs, now):
+    update_bw(b, rs, now); update_cycle_phase(b, rs); check_full_bw_reached(b, rs); check_drain(b, rs)
+    update_min_rtt(b, rs, now); update_gains(b)
+    set_pacing_rate(b, btl_bw(b), b.pacing_gain)
+    set_cwnd(b, rs, btl_bw(b), b.cwnd_gain)
+
+procedure update_bw(b, rs, now):
+    b.round_start = false
+    if rs.interval_ns is none: return              # not a valid observation
+    if rs.prior_delivered >= b.next_round_delivered:                       # a round has passed
+        b.next_round_delivered = b.delivered; b.round_count = b.round_count + 1
+        b.round_start = true; b.packet_conservation = false
+    lt_bw_sampling(b, rs)                          # LongTermBw
+    bw = rate(rs)
+    if not rs.is_app_limited or bw >= b.bw.value():
+        minmax_running_max(b.bw, BW_WINDOW_ROUNDS, b.round_count, bw)
+
+procedure update_cycle_phase(b, rs):               # ProbeBwCycle
+    if b.mode == PROBE_BW and is_next_cycle_phase(b, rs): advance_cycle_phase(b)
+
+function is_next_cycle_phase(b, rs):
+    full_length = b.delivered_ns - b.cycle_stamp_ns > b.min_rtt_ns       # min_rtt_ns is set in PROBE_BW
+    if b.pacing_gain == 1: return full_length
+    if b.pacing_gain > 1:                          # probing: until a loss or the extra in flight is there
+        return full_length and (rs.losses > 0 or rs.prior_inflight >= bdp(b, btl_bw(b), b.pacing_gain))
+    return full_length or rs.prior_inflight <= bdp(b, btl_bw(b), 1)       # draining: until the queue is gone
+
+procedure advance_cycle_phase(b):
+    b.cycle_idx = (b.cycle_idx + 1) mod CYCLE_LEN; b.cycle_stamp_ns = b.delivered_ns
+
+procedure reset_probe_bw_mode(b):
+    b.mode = PROBE_BW
+    b.cycle_idx = CYCLE_LEN - 1 - (native_random_u64() mod CYCLE_RAND)   # 1 ..= 7
+    advance_cycle_phase(b)                         # so the cycle never starts in the 0.75 phase
+
+procedure reset_mode(b):
+    if not b.full_bw_reached: b.mode = STARTUP else: reset_probe_bw_mode(b)
+
+procedure check_full_bw_reached(b, rs):
+    if b.full_bw_reached or not b.round_start or rs.is_app_limited: return
+    if btl_bw(b) >= b.full_bw * FULL_BW_THRESH:
+        b.full_bw = btl_bw(b); b.full_bw_count = 0; return
+    b.full_bw_count = b.full_bw_count + 1
+    b.full_bw_reached = b.full_bw_count >= FULL_BW_COUNT
+
+procedure check_drain(b, rs):
+    if b.mode == STARTUP and b.full_bw_reached: b.mode = DRAIN
+    if b.mode == DRAIN and rs.prior_inflight <= bdp(b, btl_bw(b), 1): reset_probe_bw_mode(b)
+
+procedure update_min_rtt(b, rs, now):              # RTprop and PROBE_RTT
+    expired = now > b.min_rtt_stamp_ns + MIN_RTT_WINDOW_NS
+    if b.min_rtt_ns is none or rs.rtt_ns < b.min_rtt_ns or expired:
+        b.min_rtt_ns = rs.rtt_ns; b.min_rtt_stamp_ns = now
+    if expired and not b.idle_restart and b.mode != PROBE_RTT:
+        b.mode = PROBE_RTT; save_cwnd(b); b.probe_rtt_done_ns = none
+    if b.mode == PROBE_RTT:
+        mark_app_limited(b)                        # samples taken while holding back are not capacity
+        if b.probe_rtt_done_ns is none and b.inflight <= MIN_CWND:
+            b.probe_rtt_done_ns = now + PROBE_RTT_NS
+            b.probe_rtt_round_done = false; b.next_round_delivered = b.delivered
+        else if b.probe_rtt_done_ns is not none:
+            if b.round_start: b.probe_rtt_round_done = true
+            if b.probe_rtt_round_done: check_probe_rtt_done(b, now)
+    if rs.delivered > 0: b.idle_restart = false
+
+procedure check_probe_rtt_done(b, now):
+    if b.probe_rtt_done_ns is none or not now > b.probe_rtt_done_ns: return
+    b.min_rtt_stamp_ns = now
+    b.cwnd = max(b.cwnd, b.prior_cwnd)
+    reset_mode(b)
+
+procedure update_gains(b):
+    STARTUP:   b.pacing_gain = HIGH_GAIN;  b.cwnd_gain = HIGH_GAIN
+    DRAIN:     b.pacing_gain = DRAIN_GAIN; b.cwnd_gain = HIGH_GAIN
+    PROBE_BW:  b.pacing_gain = 1 if b.lt_use_bw else PACING_GAIN[b.cycle_idx]; b.cwnd_gain = CWND_GAIN
+    PROBE_RTT: b.pacing_gain = 1;          b.cwnd_gain = 1
+
+procedure set_pacing_rate(b, bw, gain):
+    r = bw * gain * (1 - PACING_MARGIN)
+    if not b.has_seen_rtt and b.min_rtt_ns is not none:         # Linux bbr_init_pacing_rate_from_rtt with srtt
+        b.has_seen_rtt = true
+        b.pacing_rate = HIGH_GAIN * float(b.cwnd) / (float(b.min_rtt_ns) / 1e9) * (1 - PACING_MARGIN)
+    if b.full_bw_reached or r > b.pacing_rate: b.pacing_rate = r      # STARTUP only raises it
+
+procedure save_cwnd(b):
+    if not b.in_recovery and b.mode != PROBE_RTT: b.prior_cwnd = b.cwnd
+    else: b.prior_cwnd = max(b.prior_cwnd, b.cwnd)
+
+procedure set_cwnd(b, rs, bw, gain):
+    if rs.acked > 0 and not recovery_cwnd(b, rs.acked):          # AttemptLoss: packet conservation decides alone
+        target = bdp(b, bw, gain)
+        if b.full_bw_reached: b.cwnd = min(b.cwnd + rs.acked, target)
+        else if b.cwnd < target or b.delivered < init_cwnd: b.cwnd = b.cwnd + rs.acked
+        b.cwnd = max(b.cwnd, MIN_CWND)
+    if b.mode == PROBE_RTT: b.cwnd = min(b.cwnd, MIN_CWND)
+```
+
+- **Rounds.** A round ends when an attempt sent after the previous round's end is answered, counted by `delivered`
+  as in Linux. Rounds advance only on valid samples, so a backend that answers nothing ages nothing: its BtlBw window
+  stands still.
+- **STARTUP** doubles the delivery rate each round (gain 2/ln 2) until three rounds in a row (not app-limited) grow
+  BtlBw by less than 25%. **DRAIN** then paces at the inverse gain until what is in flight fits one BDP.
+  **PROBE_BW** cycles the pacing gain through 1.25, 0.75 and six phases of 1, each at least one RTprop long.
+  **PROBE_RTT** comes every 10 s that RTprop has not been renewed: the cwnd drops to `MIN_CWND` for
+  `PROBE_RTT_NS` and one round, so the queue drains and a fresh RTprop can be measured.
+- **Ordering.** `reset_probe_bw_mode` makes one `native_random_u64()` draw (the implementation's random source), at
+  each entry into PROBE_BW, under the backend's lock. No other procedure of the BbrFilter draws.
+- **Startup pacing.** Before any answer the PacingRate assumes `INIT_RTT_NS`, which for `init_cwnd = 10` is about
+  28,600 req/s: unpaced in practice, the cwnd alone limits. The first answer replaces it with
+  `HIGH_GAIN × cwnd / RTprop`.
+
+Worked example, BDP and rates (`BtlBw = 100` req/s, `RTprop = 400 ms`):
+
+| Quantity | Value | Check |
+|---|---|---|
+| `bdp(b, 100, 1)` | 40 | ceil(100 × 0.4 × 1) |
+| PROBE_BW cwnd target, `bdp(b, 100, CWND_GAIN)` | 80 | ceil(100 × 0.4 × 2) |
+| STARTUP cwnd target, `bdp(b, 100, HIGH_GAIN)` | 116 | ceil(115.4) |
+| PacingRate in the 1.25 phase | 123.75 req/s | 100 × 1.25 × 0.99 |
+| PacingRate in a 1 phase | 99 req/s | 100 × 1 × 0.99 |
+| Initial PacingRate, `init_cwnd = 10` | 28561.5 req/s | 2.885 × 10 / 0.001 × 0.99 |
+| PacingRate after the first answer, RTT 400 ms, cwnd 10 | 71.40375 req/s | 2.885 × 10 / 0.4 × 0.99 (the cwnd grows after) |
+
+Worked example, end of STARTUP (one valid, not app-limited sample at each round start):
+
+| Round | BtlBw | `full_bw` before | Threshold | `full_bw_count` | Check |
+|---|---|---|---|---|---|
+| 1 | 50 | 0 | 0 | 0 | 50 >= 0: `full_bw` = 50 |
+| 2 | 100 | 50 | 62.5 | 0 | 100 >= 62.5: `full_bw` = 100 |
+| 3 | 110 | 100 | 125 | 1 | 110 < 125 |
+| 4 | 115 | 100 | 125 | 2 | |
+| 5 | 118 | 100 | 125 | 3 | reached: DRAIN |
+
+Worked example, PROBE_BW start: a draw of 0 gives `cycle_idx = 8 − 1 − 0 = 7`, advanced to 0 (gain 1.25); a draw of
+6 gives 1, advanced to 2 (gain 1). No draw gives phase 1 (0.75).
+
+Worked example, PROBE_RTT (RTprop 400 ms stamped at 0 s, cwnd 80, `full_bw_reached`):
+
+| At | Event | Result | Check |
+|---|---|---|---|
+| 10.001 s | answer, RTT 450 ms | RTprop 450 ms stamped 10.001 s; PROBE_RTT; `prior_cwnd` 80; cwnd 4 | 10.001 > 0 + 10: expired |
+| 10.5 s | answer, `inflight` 4 | `probe_rtt_done_ns` = 10.7 s; a new round starts at this `delivered` | 4 <= 4 |
+| 10.8 s | first answer of an attempt sent after 10.5 s | round done; 10.8 > 10.7: cwnd = max(4, 80) = 80, PROBE_BW | |
+
+## AttemptLoss
+
+An attempt at `s` that ends without an answer is an **AttemptLoss**, Linux's lost packet: it leaves the inflight,
+counts in `lost`, and puts the backend in recovery with packet conservation (Linux `TCP_CA_Recovery` and
+`bbr_set_cwnd_to_recover_or_restore`).
+
+```
+procedure bbr_on_loss(lb, s, tag, now):
+    b = lb.bbr[s]
+    b.inflight = b.inflight - 1; b.lost = b.lost + 1
+    b.unreported_losses = b.unreported_losses + 1            # reported in the next answer's sample
+    b.cwnd = max(b.cwnd - 1, 1)                              # rs.losses = 1
+    if not b.in_recovery:                                    # enter recovery (Linux tcp_enter_recovery)
+        save_cwnd(b)                                         # Linux bbr_ssthresh
+        b.in_recovery = true; b.recovery_seq = b.sent        # Linux high_seq = snd_nxt
+        b.packet_conservation = true
+        b.next_round_delivered = b.delivered                 # a round starts now
+        b.cwnd = b.inflight                                  # in flight + acked (0)
+    if b.packet_conservation: b.cwnd = max(b.cwnd, b.inflight)
+    if b.mode == PROBE_RTT: b.cwnd = min(b.cwnd, MIN_CWND)
+
+function recovery_cwnd(b, acked):                  # in set_cwnd, on an answer; -> true if it decided the cwnd
+    if b.packet_conservation:
+        b.cwnd = max(b.cwnd, b.inflight + acked); return true
+    return false
+
+procedure end_recovery(b):                         # the first answer of an attempt sent after recovery began
+    b.in_recovery = false; b.packet_conservation = false
+    b.cwnd = max(b.cwnd, b.prior_cwnd)
+```
+
+- **When the cut happens.** In TCP a loss is found by an ACK and cut in that ACK's `bbr_main`. Here a loss arrives on
+  its own, so `bbr_on_loss` applies Linux's loss cut itself (`cwnd − losses`, then packet conservation) and does not
+  run `bbr_main`; the loss is also carried by the next answer's `rs.losses`, where it ends a probing phase
+  ([BbrModel](#bbrmodel)) and feeds [LongTermBw](#longtermbw), but is not cut a second time.
+- **Packet conservation** holds the cwnd at what is in flight plus what was just answered until the next round
+  starts (`update_bw`): one answer lets one new attempt go.
+- **End of recovery.** TCP leaves recovery when everything sent before it began is acknowledged. Lost attempts are
+  not re-sent to the same backend, so here recovery ends at the first answer to an attempt sent after it began
+  (`tag.seq >= recovery_seq`), which then restores the cwnd saved at entry. A backend that answers nothing stays in
+  recovery, and each of its lost attempts lowers its cwnd, down to 1.
+- **Cases.** The loser of a HedgedForwarding race, an attempt cut at the RequestDeadline, a stream reset and a
+  connection error are all losses. An attempt picked but never sent (its request ended first) has no SendTag and is
+  neither answered nor lost.
+
+Worked example, PROBE_BW, cwnd 80, `inflight` 80, `prior_cwnd` 0:
+
+| Event | `inflight` after | cwnd | Check |
+|---|---|---|---|
+| loss | 79 | 79 | `prior_cwnd` = 80; max(80 − 1, 1) = 79; enter: cwnd = 79; max(79, 79) |
+| loss | 78 | 78 | max(79 − 1, 1) = 78; max(78, 78) |
+| answer of an attempt sent before the first loss, no round start | 77 | 78 | conservation: max(78, 77 + 1) |
+| one attempt sent (room: 77 < 78), then answered | 77 | 80 | sent after the first loss: recovery ends, max(78, 80); then min(80 + 1, 80) |
+| the backend stalls: its 77 attempts are lost, none answered | 0 | 1 | first loss: `prior_cwnd` 80, enter: cwnd = 76; each next: max(cwnd − 1, 1), then max(cwnd, inflight) |
+
+## LongTermBw
+
+**LongTermBw** is Linux's policer detection (`bbr_lt_bw_sampling`): when two consecutive intervals of 4 to 16 rounds
+both lose at least `LT_LOSS_THRESH` of their attempts at nearly the same delivery rate, the backend is taken to be
+rate-limited at that rate, and BtlBw becomes that rate, at gain 1, for `LT_BW_MAX_ROUNDS` rounds.
+
+```
+procedure reset_lt_interval(b):
+    b.lt_last_stamp_ns = b.delivered_ns; b.lt_last_delivered = b.delivered; b.lt_last_lost = b.lost
+    b.lt_rtt_count = 0
+
+procedure reset_lt(b):
+    b.lt_bw = 0; b.lt_use_bw = false; b.lt_is_sampling = false; reset_lt_interval(b)
+
+procedure lt_bw_sampling(b, rs):                   # from update_bw, after the round check
+    if b.lt_use_bw:
+        if b.mode == PROBE_BW and b.round_start:
+            b.lt_rtt_count = b.lt_rtt_count + 1
+            if b.lt_rtt_count >= LT_BW_MAX_ROUNDS: reset_lt(b); reset_probe_bw_mode(b)
+        return
+    if not b.lt_is_sampling:
+        if rs.losses == 0: return
+        reset_lt_interval(b); b.lt_is_sampling = true
+    if rs.is_app_limited: reset_lt(b); return
+    if b.round_start: b.lt_rtt_count = b.lt_rtt_count + 1
+    if b.lt_rtt_count < LT_INTVL_MIN_ROUNDS: return
+    if b.lt_rtt_count > 4 * LT_INTVL_MIN_ROUNDS: reset_lt(b); return
+    if rs.losses == 0: return
+    lost = b.lost - b.lt_last_lost; delivered = b.delivered - b.lt_last_delivered
+    if delivered == 0 or lost * 256 < 50 * delivered: return                 # LT_LOSS_THRESH, exact in integers
+    t = floor(b.delivered_ns / 1e6) - floor(b.lt_last_stamp_ns / 1e6)       # whole ms, as Linux
+    if t < 1: return
+    lt_interval_done(b, float(delivered) * 1000 / float(t))
+
+procedure lt_interval_done(b, bw):
+    if b.lt_bw > 0:
+        diff = abs(bw - b.lt_bw)
+        if diff <= LT_BW_RATIO * b.lt_bw or diff <= LT_BW_DIFF:          # the two intervals agree
+            b.lt_bw = (bw + b.lt_bw) / 2; b.lt_use_bw = true
+            b.pacing_gain = 1; b.lt_rtt_count = 0
+            return
+    b.lt_bw = bw
+    reset_lt_interval(b)
+```
+
+`reset_lt` also runs once when a BbrState is created (Linux `bbr_init`).
+
+Worked example:
+
+| Interval | `delivered` | `lost` | `t` | Rate | Check |
+|---|---|---|---|---|---|
+| 1 | 100 | 30 | 1000 ms | 100 req/s | 30 × 256 = 7680 >= 50 × 100 = 5000; `lt_bw` was 0: `lt_bw` = 100, new interval |
+| 2 | 90 | 25 | 1000 ms | 90 req/s | 6400 >= 4500; diff 10 <= 100 / 8 = 12.5: `lt_bw` = 95, in use |
+| 2' | 90 | 10 | 1000 ms | — | 2560 < 4500: not policed, the interval goes on |
+
+## BbrAdmit
+
+**BbrAdmit** is the BbrFilter's choice, in place of the PeakEwmaDeadline's test: a backend is kept while its Cwnd
+has room and its PacingRate allows a send now (Linux `tcp_cwnd_test` and the EDT pacing check).
+
+```
+function bbr_allows(b, now):                       # under b.lock
+    return b.inflight < b.cwnd and b.next_send_ns <= now
+
+procedure pace(b, now):                            # Linux tcp_update_skb_after_send; under b.lock
+    prior = b.next_send_ns
+    b.next_send_ns = max(b.next_send_ns, now)
+    if b.sent >= UNPACED_SENDS:
+        len_ns = floor(1e9 / b.pacing_rate)                          # u64 ns
+        len_ns = len_ns - min(floor(len_ns / 2), b.next_send_ns - prior)   # credit for an idle gap, at most half
+        b.next_send_ns = b.next_send_ns + len_ns
+
+function bbr_choose(lb, w, L, remaining_ns):       # L after LiveSet, exclude and avoid; -> s | Dropped
+    now = monotonic_now_ns()
+    if remaining_ns is not none and remaining_ns <= 0: return Dropped           # already late: no backend
+    if remaining_ns is none: K = L                                              # no RequestDeadline: never filtered
+    else: K = [ s for s in L if bbr_allows(lb.bbr[s], now) ]
+    if K is empty: return Dropped
+    best = min(peak_ewma_cost(lb, s) for s in K)
+    T = [ s for s in K if peak_ewma_cost(lb, s) == best ]
+    s = T[0] if len(T) == 1 else T[native_random_u64() mod len(T)]              # ties: the implementation's random source
+    b = lb.bbr[s]
+    if remaining_ns is not none and not bbr_allows(b, now): return Dropped       # another worker took the room first
+    if wq[w] is empty and retries[w] is empty and b.inflight < b.cwnd: mark_app_limited(b)
+    pace(b, now)
+    return s
+```
+
+- **Waiting.** `admit_peak`, `retry_peak` and `scan_peak` of the [PeakEwmaDeadline](#peakewmadeadline) are used
+  unchanged with `choose = bbr_choose`. A first attempt that no backend allows waits in its worker's FIFO and is
+  answered `503` once its RequestDeadline passes; a refused LbRetry is re-tried at every 10 ms scan, so a paced
+  backend is re-checked at most every `FILTER_QUEUE_TICK_MS`.
+- **Inflight is counted at the send.** `bbr_allows` is checked at the pick, but `inflight` grows only in
+  `bbr_on_send`, when the attempt's request is sent. Two workers may pick `s` with one slot left before either sends,
+  so `inflight` may pass the cwnd by at most one less than the number of Ingress workers. The pacing slot, in
+  contrast, is taken at the pick (`pace`), so two picks never share it.
+- **App-limited.** The pick that finds its worker's FilterWaitQueue and refused LbRetries empty and room in the cwnd
+  marks `s` app-limited: the Ingress sends what it has, and the samples that follow show the offered load, not the
+  capacity ([DeliveryRateSample](#deliveryratesample)).
+- **Without a RequestDeadline** a request is never refused: it is sent even if the cwnd is full or the pacing time
+  has not come, and still counts in the inflight and the pacing.
+- **Ordering.** The tie-break draw happens only when `T` has more than one backend, after every `bbr_allows`.
+- **pending_add** runs at each pick as under the PeakEwmaDeadline (PeakEwmaCost reads `outstanding`).
+
+Worked example, pacing at 99 req/s after 10 sends (`len_ns = floor(1e9 / 99) = 10101010`):
+
+| `now` | `next_send_ns` before | Allowed | `next_send_ns` after | Check |
+|---|---|---|---|---|
+| 1000 ms | 1000 ms | yes | 1010.10101 ms | no gap: credit 0 |
+| 1005 ms | 1010.10101 ms | no | — | 1010.1 > 1005: waits for the next scan |
+| 1020 ms | 1010.10101 ms | yes | 1025.050505 ms | credit 9.89899 ms; 10.10101 − 5.050505 (at most half) |
+| 1020 ms, cwnd 80, `inflight` 80 | 1000 ms | no | — | 80 < 80 is false |
 
 ## PickLog
 
