@@ -75,8 +75,8 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [Structure](#structure) | [loadgen.py:85](../../implementation/envoy/bin/loadgen.py#L85) |
+| [Structure](#structure) | [loadgen.py:115](../../implementation/envoy/bin/loadgen.py#L115) |
 | [Time base](#time-base) | [convert.py:375](../../implementation/envoy/wrappers/convert.py#L375) |
-| [Concurrency](#concurrency) | [loadgen.py:100](../../implementation/envoy/bin/loadgen.py#L100) |
-| [Phases](#phases) | [loadgen.py:103](../../implementation/envoy/bin/loadgen.py#L103) |
+| [Concurrency](#concurrency) | [loadgen.py:130](../../implementation/envoy/bin/loadgen.py#L130) |
+| [Phases](#phases) | [loadgen.py:133](../../implementation/envoy/bin/loadgen.py#L133) |
 <!-- trace:end -->

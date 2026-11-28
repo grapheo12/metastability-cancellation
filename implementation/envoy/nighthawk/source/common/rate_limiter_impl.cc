@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <memory>
 
 #include "envoy/api/api.h"
@@ -121,17 +122,52 @@ bool LinearRateLimiter::tryAcquireOne() {
 
 // Design: abstraction/load_generator/client/design.md#arrivalrng
 // Design: abstraction/load_generator/client/design.md#semiopenloopclient
-// Source: abstraction/load_generator/client/design.md (client v0.10.0)
-PoissonRateLimiter::PoissonRateLimiter(Envoy::TimeSource& time_source, double rate_per_s, uint64_t seed)
-    : RateLimiterBaseImpl(time_source), rng_(seed), gap_s_(rate_per_s) {
+// Source: abstraction/load_generator/client/design.md (client v0.11.0)
+PoissonRateLimiter::PoissonRateLimiter(Envoy::TimeSource& time_source, double rate_per_s, uint64_t seed,
+                                       std::vector<Step> schedule)
+    : RateLimiterBaseImpl(time_source), rng_(seed), gap_s_(rate_per_s > 0 ? rate_per_s : 1.0),
+      schedule_(std::move(schedule)) {
   if (!(rate_per_s > 0)) {
     throw NighthawkException(fmt::format("poisson rate must be > 0, value: {}", rate_per_s));
   }
-  next_release_ = nextGap();
+  if (!schedule_.empty() && schedule_[0].start.count() != 0) {
+    throw NighthawkException("poisson schedule must start at 0");
+  }
+  for (size_t k = 0; k < schedule_.size(); ++k) {
+    if (!(schedule_[k].rate_per_s > 0) || (k > 0 && schedule_[k].start <= schedule_[k - 1].start)) {
+      throw NighthawkException("poisson schedule needs increasing starts and rates > 0");
+    }
+  }
+  next_release_ = nextArrival(0ns);
 }
 
-std::chrono::nanoseconds PoissonRateLimiter::nextGap() {
-  return std::chrono::nanoseconds(static_cast<int64_t>(gap_s_(rng_) * 1e9));
+// Design: abstraction/load_generator/client/design.md#rateschedule
+std::chrono::nanoseconds PoissonRateLimiter::nextArrival(std::chrono::nanoseconds t) {
+  if (schedule_.empty()) { // ArrivalRng native: an Exp(rate) draw in seconds, truncated to ns (unchanged)
+    return t + std::chrono::nanoseconds(static_cast<int64_t>(gap_s_(rng_) * 1e9));
+  }
+  return scheduledArrival(t, exp1_(rng_), schedule_); // one Exp(1) draw per arrival
+}
+
+// Design: abstraction/load_generator/client/design.md#rateschedule
+std::chrono::nanoseconds PoissonRateLimiter::scheduledArrival(std::chrono::nanoseconds t, double e,
+                                                              const std::vector<Step>& steps) {
+  size_t k = 0;
+  while (k + 1 < steps.size() && steps[k + 1].start <= t) {
+    k++;
+  }
+  for (;;) {
+    const double rate = steps[k].rate_per_s;
+    const double end = k + 1 < steps.size() ? static_cast<double>(steps[k + 1].start.count())
+                                            : std::numeric_limits<double>::infinity();
+    const double dt = e / rate * 1e9;
+    if (static_cast<double>(t.count()) + dt < end) {
+      return t + std::chrono::nanoseconds(static_cast<int64_t>(std::floor(dt + 0.5)));
+    }
+    e = std::max(0.0, e - static_cast<double>((steps[k + 1].start - t).count()) / 1e9 * rate);
+    t = steps[k + 1].start;
+    k++;
+  }
 }
 
 // Design: abstraction/load_generator/client/design.md#gatedarrival
@@ -143,7 +179,7 @@ bool PoissonRateLimiter::tryAcquireOne() {
   const std::chrono::nanoseconds now = elapsed();
   while (next_release_ <= now) {
     acquireable_count_++;
-    next_release_ += nextGap();
+    next_release_ = nextArrival(next_release_);
   }
   return acquireable_count_ > 0 ? tryAcquireOne() : false;
 }

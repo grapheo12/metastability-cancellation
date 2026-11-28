@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# Source: abstraction/load_generator/design.md (load_generator v0.9.2)
-# Source: abstraction/load_generator/client/design.md (client v0.10.0)
-# Source: abstraction/load_generator/run_controller/design.md (run_controller v0.8.0)
+# Source: abstraction/load_generator/design.md (load_generator v0.10.1)
+# Source: abstraction/load_generator/client/design.md (client v0.11.0)
+# Source: abstraction/load_generator/run_controller/design.md (run_controller v0.9.0)
 """impl/envoy LoadGenerator: runs the vendored Nighthawk (build/nighthawk_client) with the Go load generator's
 command line (abstraction/load_generator/api.md#program-parameters) and writes its outputs (requests.csv,
 summary.json, abstraction/load_generator/metrics/api.md) from Nighthawk's per-request logs.
@@ -15,6 +15,8 @@ Mapping:
   duration_s         -> --duration (whole seconds)
   drain_timeout_ms   -> --timeout: Nighthawk's bound on draining in-flight requests at the end (DrainDeadline)
   arrival_rng        -> native only: per-worker mt19937_64 seeded seed + k (NH_POISSON_SEED)
+  rate_schedule      -> RateSchedule steps (start_ns:rate / num_clients per worker) in NH_POISSON_SCHEDULE; the
+                        Poisson limiter spends one Exp(1) draw per arrival over the steps (time change)
 Rejected as not supported (exit 2): arrival_rng sampling, max_retries other than 0 (no RequestCopies), slo_cancel
 true (no SLOCancellation), a duration_s that is not a whole number of seconds.
 """
@@ -37,6 +39,32 @@ def parse_bool(s):
     if s in ("true", "false"):
         return s == "true"
     raise argparse.ArgumentTypeError("must be true or false")
+
+
+RATE_SCHEDULE_ERROR = ("rate_schedule must be start_s:rate pairs separated by commas, the first starting at 0, "
+                       "starts increasing, rates > 0")
+
+
+# Design: abstraction/load_generator/run_controller/design.md#configuration-validation
+def parse_rate_schedule(s, n):
+    """parse_rate_schedule: None if empty, else [(start_ns, per-client rate)]; exits 2 on a bad schedule."""
+    if not s:
+        return None
+    steps = []
+    for item in s.split(","):
+        parts = item.split(":")
+        if len(parts) != 2:
+            fail(RATE_SCHEDULE_ERROR)
+        try:
+            start_s, rate = float(parts[0]), float(parts[1])
+        except ValueError:
+            fail(RATE_SCHEDULE_ERROR)
+        if not (0 <= start_s < float("inf")) or not (0 < rate < float("inf")):
+            fail(RATE_SCHEDULE_ERROR)
+        steps.append((round(start_s * 1e9), rate / n))
+    if steps[0][0] != 0 or any(b[0] <= a[0] for a, b in zip(steps, steps[1:])):
+        fail(RATE_SCHEDULE_ERROR)
+    return steps
 
 
 def fail(message):
@@ -64,6 +92,7 @@ def parse(argv):
     a("--drain_timeout_ms", default=10000, type=float)
     a("--output_path", default="results")
     a("--arrival_rng", default="sampling")
+    a("--rate_schedule", default="")
     args = p.parse_args(argv)
     if args.request_bytes < 76:
         fail("request_bytes must be >= 76")
@@ -77,6 +106,7 @@ def parse(argv):
         fail("slo_cancel true is not supported by this implementation")
     if args.duration_s != int(args.duration_s) or args.duration_s < 1:
         fail(f"duration_s {args.duration_s:g} is not supported by this implementation")
+    args.rate_steps = parse_rate_schedule(args.rate_schedule, args.num_clients)
     return args
 
 
@@ -115,6 +145,9 @@ def main():
     # Design: abstraction/load_generator/client/design.md#arrivalrng
     env = dict(os.environ, NH_REQUEST_LOG_PREFIX=prefix, NH_POISSON_RATE=repr(args.global_rate / n),
                NH_POISSON_SEED=str(args.seed))
+    # Design: abstraction/load_generator/client/design.md#rateschedule
+    if args.rate_steps is not None:
+        env["NH_POISSON_SCHEDULE"] = ",".join(f"{start_ns}:{rate!r}" for start_ns, rate in args.rate_steps)
     started = time.monotonic()
     with open(out + ".nighthawk.json", "w") as stdout, open(out + ".nighthawk.log", "w") as stderr:
         rc = subprocess.run(cmd, env=env, stdout=stdout, stderr=stderr).returncode

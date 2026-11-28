@@ -142,8 +142,8 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [Configuration validation](#configuration-validation) | [loadgen.py:49](../../../implementation/envoy/bin/loadgen.py#L49) |
-| [Startup](#startup) | [loadgen.py:85](../../../implementation/envoy/bin/loadgen.py#L85) |
-| [DrainPhase](#drainphase) | [loadgen.py:109](../../../implementation/envoy/bin/loadgen.py#L109) |
-| [Shutdown ordering](#shutdown-ordering) | [loadgen.py:123](../../../implementation/envoy/bin/loadgen.py#L123) |
+| [Configuration validation](#configuration-validation) | [loadgen.py:49](../../../implementation/envoy/bin/loadgen.py#L49), [loadgen.py:77](../../../implementation/envoy/bin/loadgen.py#L77), [test_loadgen.py:30](../../../implementation/envoy/wrappers/test_loadgen.py#L30) |
+| [Startup](#startup) | [loadgen.py:115](../../../implementation/envoy/bin/loadgen.py#L115) |
+| [DrainPhase](#drainphase) | [loadgen.py:139](../../../implementation/envoy/bin/loadgen.py#L139) |
+| [Shutdown ordering](#shutdown-ordering) | [loadgen.py:156](../../../implementation/envoy/bin/loadgen.py#L156) |
 <!-- trace:end -->

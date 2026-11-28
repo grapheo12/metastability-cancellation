@@ -3,6 +3,7 @@
 #include <list>
 #include <optional>
 #include <random>
+#include <vector>
 
 #include "envoy/common/time.h"
 
@@ -73,20 +74,32 @@ protected:
  * due while the caller was busy are made acquireable at once (no catch-up is skipped).
  */
 // Design: abstraction/load_generator/client/design.md#arrivalrng
-// Source: abstraction/load_generator/client/design.md (client v0.10.0)
+// Source: abstraction/load_generator/client/design.md (client v0.11.0)
 class PoissonRateLimiter : public RateLimiterBaseImpl,
                            public Envoy::Logger::Loggable<Envoy::Logger::Id::main> {
 public:
-  PoissonRateLimiter(Envoy::TimeSource& time_source, double rate_per_s, uint64_t seed);
+  // A RateSchedule step: from start (since the limiter's start) on, this worker's rate is rate_per_s.
+  struct Step {
+    std::chrono::nanoseconds start;
+    double rate_per_s;
+  };
+  // With a non-empty schedule (first step at 0) the rate follows it and rate_per_s is not used for arrivals.
+  PoissonRateLimiter(Envoy::TimeSource& time_source, double rate_per_s, uint64_t seed,
+                     std::vector<Step> schedule = {});
   bool tryAcquireOne() override;
   void releaseOne() override;
+  // RateSchedule next_arrival: spends e (an Exp(1) draw) at each step's rate from t on.
+  static std::chrono::nanoseconds scheduledArrival(std::chrono::nanoseconds t, double e,
+                                                   const std::vector<Step>& steps);
 
 private:
-  std::chrono::nanoseconds nextGap();
+  std::chrono::nanoseconds nextArrival(std::chrono::nanoseconds t);
   int64_t acquireable_count_{0};
   std::chrono::nanoseconds next_release_{0};
   std::mt19937_64 rng_;
   std::exponential_distribution<double> gap_s_;
+  std::exponential_distribution<double> exp1_{1.0};
+  const std::vector<Step> schedule_;
 };
 
 /**

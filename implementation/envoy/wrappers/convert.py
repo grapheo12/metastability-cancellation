@@ -1,5 +1,5 @@
-# Source: abstraction/load_generator/design.md (load_generator v0.9.2)
-# Source: abstraction/load_generator/client/design.md (client v0.10.0)
+# Source: abstraction/load_generator/design.md (load_generator v0.10.1)
+# Source: abstraction/load_generator/client/design.md (client v0.11.0)
 # Source: abstraction/load_generator/metrics/design.md (metrics v0.6.1)
 # Source: abstraction/ingress/design.md (ingress v0.20.1)
 # Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.26.0)

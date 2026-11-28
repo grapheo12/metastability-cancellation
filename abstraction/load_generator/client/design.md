@@ -442,6 +442,7 @@ carries `Design:` tags; unchanged upstream code does not.
 - DrainDeadline: `slo_cancel = false` only; Nighthawk's `--timeout` (whole seconds, rounded up from
   `drain_timeout_ms`) resets what is still outstanding, which the per-request log records as `reset` and
   `convert.request_outcome` classifies `cancelled`.
+- RateSchedule: `bin/loadgen.py` validates `--rate_schedule` (`parse_rate_schedule`) and passes the steps to Nighthawk as `NH_POISSON_SCHEDULE` (`start_ns:rate,...`, per-worker rates); `PoissonRateLimiter` then draws one `std::exponential_distribution<double>(1.0)` sample per arrival and spends it over the steps (`scheduledArrival`, a static function checked against the worked example); without the variable it keeps its Exp(rate) draw. Step times count from the limiter's first acquisition, which is the worker's start.
 
 ### Not traced
 
@@ -459,15 +460,16 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [SemiOpenLoopClient](#semiopenloopclient) | [loadgen.py:100](../../../implementation/envoy/bin/loadgen.py#L100), [rate_limiter_impl.cc:125](../../../implementation/envoy/nighthawk/source/common/rate_limiter_impl.cc#L125) |
-| [GatedArrival](#gatedarrival) | [loadgen.py:105](../../../implementation/envoy/bin/loadgen.py#L105), [rate_limiter_impl.cc:138](../../../implementation/envoy/nighthawk/source/common/rate_limiter_impl.cc#L138) |
-| [ArrivalRng](#arrivalrng) | [loadgen.py:116](../../../implementation/envoy/bin/loadgen.py#L116), [factories_impl.cc:111](../../../implementation/envoy/nighthawk/source/client/factories_impl.cc#L111), [rate_limiter_impl.cc:125](../../../implementation/envoy/nighthawk/source/common/rate_limiter_impl.cc#L125), [rate_limiter_impl.h:77](../../../implementation/envoy/nighthawk/source/common/rate_limiter_impl.h#L77), [rate_limiter_test.cc:43](../../../implementation/envoy/nighthawk/test/rate_limiter_test.cc#L43) |
+| [SemiOpenLoopClient](#semiopenloopclient) | [loadgen.py:130](../../../implementation/envoy/bin/loadgen.py#L130), [rate_limiter_impl.cc:126](../../../implementation/envoy/nighthawk/source/common/rate_limiter_impl.cc#L126) |
+| [GatedArrival](#gatedarrival) | [loadgen.py:135](../../../implementation/envoy/bin/loadgen.py#L135), [rate_limiter_impl.cc:174](../../../implementation/envoy/nighthawk/source/common/rate_limiter_impl.cc#L174) |
+| [ArrivalRng](#arrivalrng) | [loadgen.py:146](../../../implementation/envoy/bin/loadgen.py#L146), [factories_impl.cc:114](../../../implementation/envoy/nighthawk/source/client/factories_impl.cc#L114), [rate_limiter_impl.cc:126](../../../implementation/envoy/nighthawk/source/common/rate_limiter_impl.cc#L126), [rate_limiter_impl.h:78](../../../implementation/envoy/nighthawk/source/common/rate_limiter_impl.h#L78), [rate_limiter_test.cc:43](../../../implementation/envoy/nighthawk/test/rate_limiter_test.cc#L43) |
+| [RateSchedule](#rateschedule) | [loadgen.py:149](../../../implementation/envoy/bin/loadgen.py#L149), [factories_impl.cc:121](../../../implementation/envoy/nighthawk/source/client/factories_impl.cc#L121), [rate_limiter_impl.cc:145](../../../implementation/envoy/nighthawk/source/common/rate_limiter_impl.cc#L145), [rate_limiter_impl.cc:153](../../../implementation/envoy/nighthawk/source/common/rate_limiter_impl.cc#L153), [rate_limiter_test.cc:71](../../../implementation/envoy/nighthawk/test/rate_limiter_test.cc#L71) |
 | [start_request](#start_request) | [ping_request_source_plugin_impl.cc:43](../../../implementation/envoy/nighthawk/source/request_source/ping_request_source_plugin_impl.cc#L43) |
 | [RequestDeadline](#requestdeadline) | [ping_request_source_plugin_impl.cc:52](../../../implementation/envoy/nighthawk/source/request_source/ping_request_source_plugin_impl.cc#L52), [ping_request_source_plugin_test.cc:34](../../../implementation/envoy/nighthawk/test/request_source/ping_request_source_plugin_test.cc#L34) |
 | [RetryTimer](#retrytimer) | not traced |
 | [StallWindow](#stallwindow) | [convert.py:375](../../../implementation/envoy/wrappers/convert.py#L375), [test_convert.py:293](../../../implementation/envoy/wrappers/test_convert.py#L293) |
 | [SLOCancellation](#slocancellation) | not traced |
-| [DrainDeadline](#draindeadline) | [loadgen.py:109](../../../implementation/envoy/bin/loadgen.py#L109), [stream_decoder.cc:99](../../../implementation/envoy/nighthawk/source/client/stream_decoder.cc#L99) |
+| [DrainDeadline](#draindeadline) | [loadgen.py:139](../../../implementation/envoy/bin/loadgen.py#L139), [stream_decoder.cc:99](../../../implementation/envoy/nighthawk/source/client/stream_decoder.cc#L99) |
 | [Outcome classification](#outcome-classification) | [convert.py:351](../../../implementation/envoy/wrappers/convert.py#L351) |
 | [State machine](#state-machine) | not traced |
 <!-- trace:end -->

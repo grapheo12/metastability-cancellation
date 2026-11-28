@@ -37,7 +37,7 @@ TEST_F(RateLimiterTest, LinearRateLimiterTest) {
   EXPECT_FALSE(rate_limiter.tryAcquireOne());
 }
 
-// Source: abstraction/load_generator/client/design.md (client v0.10.0)
+// Source: abstraction/load_generator/client/design.md (client v0.11.0)
 // impl/envoy: Poisson arrivals average the configured rate and are reproducible for a seed.
 // Design: abstraction/load_generator/client/design.md#arrivalrng
 TEST_F(RateLimiterTest, PoissonRateLimiterTest) {
@@ -64,6 +64,33 @@ TEST_F(RateLimiterTest, PoissonRateLimiterTest) {
   while (b.tryAcquireOne()) nb++;
   EXPECT_EQ(na, nb);
   EXPECT_THROW(PoissonRateLimiter(t1, 0.0, 1), NighthawkException);
+}
+
+// impl/envoy: the RateSchedule worked example ("0:200,30:120") and a schedule's rates per step.
+// Design: abstraction/load_generator/client/design.md#rateschedule
+TEST_F(RateLimiterTest, PoissonRateScheduleTest) {
+  using Step = PoissonRateLimiter::Step;
+  const std::vector<Step> one{{0ns, 200.0}, {30s, 120.0}};
+  const std::vector<Step> sixteen{{0ns, 200.0 / 16}, {30s, 120.0 / 16}};
+  EXPECT_EQ(PoissonRateLimiter::scheduledArrival(0ns, 0.5, one).count(), 2'500'000);
+  EXPECT_EQ(PoissonRateLimiter::scheduledArrival(29'999'000'000ns, 0.5, one).count(), 30'002'500'000);
+  EXPECT_EQ(PoissonRateLimiter::scheduledArrival(29'997'500'000ns, 0.5, one).count(), 30'000'000'000);
+  EXPECT_EQ(PoissonRateLimiter::scheduledArrival(0ns, 1.0, sixteen).count(), 80'000'000);
+  EXPECT_EQ(PoissonRateLimiter::scheduledArrival(40'000'000'000ns, 0.6, one).count(), 40'005'000'000);
+
+  Envoy::Event::SimulatedTimeSystem time_system;
+  PoissonRateLimiter limiter(time_system, 1.0, 11, {{0ns, 200.0}, {30s, 120.0}});
+  int first = 0, second = 0;
+  for (int i = 0; i < 600; i++) { // 60 s in 100 ms steps
+    time_system.advanceTimeWait(100ms);
+    while (limiter.tryAcquireOne()) {
+      (i < 300 ? first : second)++;
+    }
+  }
+  EXPECT_NEAR(first, 6000, 300);  // 200/s x 30 s, sd ~77
+  EXPECT_NEAR(second, 3600, 240); // 120/s x 30 s, sd 60
+  EXPECT_THROW(PoissonRateLimiter(time_system, 1.0, 1, {{5s, 200.0}}), NighthawkException);
+  EXPECT_THROW(PoissonRateLimiter(time_system, 1.0, 1, {{0ns, 200.0}, {0ns, 100.0}}), NighthawkException);
 }
 
 TEST_F(RateLimiterTest, LinearRateLimiterInvalidArgumentTest) {

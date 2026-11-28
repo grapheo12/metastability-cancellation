@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/client/design.md (client v0.10.0)
+// Source: abstraction/load_generator/client/design.md (client v0.11.0)
 // Source: abstraction/protocol/design.md (protocol v0.8.0)
 #include "source/request_source/ping_request_source_plugin_impl.h"
 

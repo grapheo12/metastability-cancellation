@@ -1,4 +1,4 @@
-// Source: abstraction/load_generator/client/design.md (client v0.10.0)
+// Source: abstraction/load_generator/client/design.md (client v0.11.0)
 // Source: abstraction/protocol/design.md (protocol v0.8.0)
 // impl/envoy: tests for the ping RequestSource's body format (abstraction/protocol/design.md#pingrequestbody)
 // and the per-request log's field parsing (source/client/request_log.h).

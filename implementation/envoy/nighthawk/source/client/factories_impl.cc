@@ -18,6 +18,9 @@
 
 #include "api/client/options.pb.h"
 
+#include "absl/strings/numbers.h"
+#include "absl/strings/str_split.h"
+
 #include "source/client/benchmark_client_impl.h"
 #include "source/client/output_collector_impl.h"
 #include "source/client/output_formatter_impl.h"
@@ -104,7 +107,7 @@ SequencerPtr SequencerFactoryImpl::create(Envoy::TimeSource& time_source,
     // If no rate limiter plugin is set, use the default linear rate limiter.
   } else {
     Frequency frequency(options_.requestsPerSecond());
-    // Source: abstraction/load_generator/client/design.md (client v0.10.0)
+    // Source: abstraction/load_generator/client/design.md (client v0.11.0)
     // impl/envoy: NH_POISSON_RATE (per-worker requests/s, a decimal) selects Poisson arrivals in place of the
     // linear pace; NH_POISSON_SEED (default 0) seeds worker k's stream with seed + k.
     // Design: abstraction/load_generator/client/design.md#arrivalrng
@@ -113,8 +116,24 @@ SequencerPtr SequencerFactoryImpl::create(Envoy::TimeSource& time_source,
       static std::atomic<uint64_t> poisson_worker{0};
       const char* seed_env = std::getenv("NH_POISSON_SEED");
       const uint64_t seed = (seed_env != nullptr ? std::strtoull(seed_env, nullptr, 10) : 0) + poisson_worker++;
+      // RateSchedule: NH_POISSON_SCHEDULE = "start_ns:rate,..." (per-worker req/s from start_ns on).
+      // Design: abstraction/load_generator/client/design.md#rateschedule
+      std::vector<PoissonRateLimiter::Step> schedule;
+      const char* schedule_env = std::getenv("NH_POISSON_SCHEDULE");
+      if (schedule_env != nullptr && schedule_env[0] != '\0') {
+        for (absl::string_view item : absl::StrSplit(schedule_env, ',')) {
+          const std::vector<absl::string_view> parts = absl::StrSplit(item, ':');
+          int64_t start_ns = 0;
+          double rate = 0;
+          if (parts.size() != 2 || !absl::SimpleAtoi(parts[0], &start_ns) || !absl::SimpleAtod(parts[1], &rate)) {
+            throw NighthawkException(fmt::format("bad NH_POISSON_SCHEDULE: {}", schedule_env));
+          }
+          schedule.push_back({std::chrono::nanoseconds(start_ns), rate});
+        }
+      }
       rate_limiter = std::make_unique<ScheduledStartingRateLimiter>(
-          std::make_unique<PoissonRateLimiter>(time_source, std::strtod(poisson_rate, nullptr), seed),
+          std::make_unique<PoissonRateLimiter>(time_source, std::strtod(poisson_rate, nullptr), seed,
+                                               std::move(schedule)),
           scheduled_starting_time);
     } else {
       rate_limiter = std::make_unique<ScheduledStartingRateLimiter>(

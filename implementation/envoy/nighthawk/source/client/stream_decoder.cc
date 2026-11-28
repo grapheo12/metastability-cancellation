@@ -58,7 +58,7 @@ void StreamDecoder::decodeData(Envoy::Buffer::Instance& data, bool end_stream) {
   stream_info_.addBytesSent(data.length());
   // Design: abstraction/load_generator/metrics/design.md#collection
   // Source: abstraction/load_generator/metrics/design.md (metrics v0.6.1)
-  // Source: abstraction/load_generator/client/design.md (client v0.10.0)
+  // Source: abstraction/load_generator/client/design.md (client v0.11.0)
   if (RequestLog::enabled() && log_response_prefix_.size() < 512) {
     const uint64_t n = std::min<uint64_t>(data.length(), 512 - log_response_prefix_.size());
     log_response_prefix_.append(static_cast<const char*>(data.linearize(n)), n);
