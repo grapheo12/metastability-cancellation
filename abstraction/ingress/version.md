@@ -64,3 +64,4 @@
 | 0.19.0 | 2026-11-27T00:00:00Z | `lb_filter = token_bucket` and the `lb_tb_*` parameters with their validation. Child bump: load_balancer 0.23.0 |
 | 0.19.1 | 2026-11-27T00:00:00Z | `lb_tb_mult_dec` / `lb_tb_add_inc_limit` / `lb_tb_add_inc_frac` rows: StuckAttempt and once-per-SLO increase. Child bump: load_balancer 0.24.0 |
 | 0.20.0 | 2026-11-27T00:00:00Z | `lb_filter = bbr` and `lb_bbr_init_cwnd` with its validation. Child bump: load_balancer 0.25.0 |
+| 0.20.1 | 2026-11-28T00:00:00Z | Child bump: load_balancer 0.26.0 (HedgeCancel) |

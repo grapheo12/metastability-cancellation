@@ -1044,9 +1044,11 @@ function btl_bw(b):                                # Linux bbr_bw
 - **Hooks.** The Frontend calls, for each attempt at `s`:
   - `bbr_on_send(lb, s, now)` when the attempt's request is sent, keeping the returned SendTag with the attempt;
   - `bbr_on_answer(lb, s, tag, now)` when its response headers arrive, whatever the status;
-  - `bbr_on_loss(lb, s, tag, now)` when it ends without response headers (cancelled because another attempt answered
-    first, cut at the RequestDeadline, reset, a connection error).
-  Exactly one of the last two follows each `bbr_on_send`. All times are monotonic ns.
+  - `bbr_on_cancel(lb, s, tag, now)` when it ends without response headers because another attempt of the same
+    request answered first (a [HedgeCancel](#attemptloss));
+  - `bbr_on_loss(lb, s, tag, now)` when it ends without response headers for any other reason (cut at the
+    RequestDeadline, the client request reset, the attempt reset, a connection error).
+  Exactly one of the last three follows each `bbr_on_send`. All times are monotonic ns.
 - **Windowed min and max.** `bw` and `rate_min_rtt` are Kathleen Nichols' windowed filters as in Linux
   `lib/minmax.c` (the block below); `bw` is indexed by `round_count` with a window of `BW_WINDOW_ROUNDS`,
   `rate_min_rtt` by time with a window of `RATE_MIN_RTT_WINDOW_NS`.
@@ -1294,9 +1296,19 @@ Worked example, PROBE_RTT (RTprop 400 ms stamped at 0 s, cwnd 80, `full_bw_reach
 
 ## AttemptLoss
 
-An attempt at `s` that ends without an answer is an **AttemptLoss**, Linux's lost packet: it leaves the inflight,
-counts in `lost`, and puts the backend in recovery with packet conservation (Linux `TCP_CA_Recovery` and
-`bbr_set_cwnd_to_recover_or_restore`).
+An attempt at `s` that ends without an answer, other than a HedgeCancel, is an **AttemptLoss**, Linux's lost
+packet: it leaves the inflight, counts in `lost`, and puts the backend in recovery with packet conservation (Linux
+`TCP_CA_Recovery` and `bbr_set_cwnd_to_recover_or_restore`).
+
+An attempt that ends without an answer because another attempt of the same request answered first is a
+**HedgeCancel**: it only leaves the inflight. It is neither delivered nor lost, so it changes no sample, no cwnd and
+no recovery state.
+
+```
+procedure bbr_on_cancel(lb, s, tag, now):          # HedgeCancel
+    b = lb.bbr[s]
+    b.inflight = b.inflight - 1
+```
 
 ```
 procedure bbr_on_loss(lb, s, tag, now):
@@ -1333,9 +1345,17 @@ procedure end_recovery(b):                         # the first answer of an atte
   not re-sent to the same backend, so here recovery ends at the first answer to an attempt sent after it began
   (`tag.seq >= recovery_seq`), which then restores the cwnd saved at entry. A backend that answers nothing stays in
   recovery, and each of its lost attempts lowers its cwnd, down to 1.
-- **Cases.** The loser of a HedgedForwarding race, an attempt cut at the RequestDeadline, a stream reset and a
-  connection error are all losses. An attempt picked but never sent (its request ended first) has no SendTag and is
-  neither answered nor lost.
+- **Cases.** An attempt cut at the RequestDeadline, the client request reset, an attempt reset and a connection
+  error are losses. The loser of a HedgedForwarding race (another attempt of its request answered first) is a
+  HedgeCancel, not a loss: that the other backend answered first says nothing about congestion at `s`, and counting
+  it kept a backend that mostly received hedges in recovery for good. An attempt picked but never sent (its request
+  ended first) has no SendTag and is neither answered nor lost.
+- **Which one.** An attempt ending without an answer is a HedgeCancel if and only if, when it ends, another attempt
+  of the same request has already received its response headers. Whichever is observed first wins: an attempt
+  that ends before the other's answer is observed is a loss.
+- **A stalled backend** no longer loses its hedged-away attempts: each HedgeCancel frees one slot of its cwnd. Its
+  BtlBw window does not age (no answers, no rounds), so it keeps receiving up to a cwnd of attempts each time its
+  stuck attempts are hedged away; only losses (deadline cuts, resets) shrink its cwnd.
 
 Worked example, PROBE_BW, cwnd 80, `inflight` 80, `prior_cwnd` 0:
 
@@ -1345,7 +1365,7 @@ Worked example, PROBE_BW, cwnd 80, `inflight` 80, `prior_cwnd` 0:
 | loss | 78 | 78 | max(79 − 1, 1) = 78; max(78, 78) |
 | answer of an attempt sent before the first loss, no round start | 77 | 78 | conservation: max(78, 77 + 1) |
 | one attempt sent (room: 77 < 78), then answered | 77 | 80 | sent after the first loss: recovery ends, max(78, 80); then min(80 + 1, 80) |
-| the backend stalls: its 77 attempts are lost, none answered | 0 | 1 | first loss: `prior_cwnd` 80, enter: cwnd = 76; each next: max(cwnd − 1, 1), then max(cwnd, inflight) |
+| the backend stalls: its 77 attempts are lost (cut at their RequestDeadline), none answered | 0 | 1 | first loss: `prior_cwnd` 80, enter: cwnd = 76; each next: max(cwnd − 1, 1), then max(cwnd, inflight) |
 
 ## LongTermBw
 

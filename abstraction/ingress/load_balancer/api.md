@@ -150,10 +150,11 @@ With `lb_filter = token_bucket`: adapts backend `s`'s TokenRate by AIMD. Called 
 response headers arrive, whatever the status, with the time from sending that attempt; an attempt that never gets
 response headers is not reported. See [design.md#tokenbucketfilter](design.md#tokenbucketfilter).
 
-### `bbr_on_send(lb, s: u32, now_ns: u64) -> SendTag`, `bbr_on_answer(lb, s: u32, tag: SendTag, now_ns: u64) -> nothing`, `bbr_on_loss(lb, s: u32, tag: SendTag, now_ns: u64) -> nothing`
+### `bbr_on_send(lb, s: u32, now_ns: u64) -> SendTag`, `bbr_on_answer(lb, s: u32, tag: SendTag, now_ns: u64) -> nothing`, `bbr_on_cancel(lb, s: u32, tag: SendTag, now_ns: u64) -> nothing`, `bbr_on_loss(lb, s: u32, tag: SendTag, now_ns: u64) -> nothing`
 With `lb_filter = bbr`: the BbrFilter's view of each attempt at `s`. The Frontend calls `bbr_on_send` when the
 attempt's request is sent and keeps the SendTag with the attempt; then exactly one of `bbr_on_answer` (its response
-headers arrived, whatever the status) or `bbr_on_loss` (it ended without them). They update `s`'s BbrState: the
+headers arrived, whatever the status), `bbr_on_cancel` (it ended without them because another attempt of the same
+request answered first: HedgeCancel) or `bbr_on_loss` (it ended without them otherwise). They update `s`'s BbrState: the
 DeliveryRateSample, the BbrModel and the AttemptLoss recovery. See [design.md#bbrfilter](design.md#bbrfilter),
 [design.md#deliveryratesample](design.md#deliveryratesample), [design.md#bbrmodel](design.md#bbrmodel) and
 [design.md#attemptloss](design.md#attemptloss).
