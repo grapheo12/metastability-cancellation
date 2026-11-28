@@ -731,6 +731,7 @@ retries[w] = list of WaitEntry          # LbRetries that no backend took; never 
 
 function admit_peak(lb, w, request, deadline):        # attempt 0
     if deadline is none: s = choose(...); pending_add(lb, s, request); return Sent(s)
+    if hopeless(lb, deadline - wall_clock_unix_ns()): answer 503 (dropped, filter_dropped += 1); return Dropped   # HopelessDrop (bbr only)
     if wq[w] is not empty: wq[w].push_back(entry); return Wait     # FIFO: never overtakes at admission
     s = choose(lb, deadline - wall_clock_unix_ns(), ...)
     if s is Dropped: wq[w].push_back(entry); return Wait
@@ -745,7 +746,7 @@ procedure scan_peak(lb, w):                            # every FILTER_QUEUE_TICK
     for e in wq[w], oldest first:
         if e is gone: remove e; continue
         remaining = e.deadline - wall_clock_unix_ns()
-        if remaining <= 0: remove e; answer 503 (dropped, filter_dropped += 1); continue
+        if remaining <= 0 or hopeless(lb, remaining): remove e; answer 503 (dropped, filter_dropped += 1); continue   # HopelessDrop
         s = choose(lb, remaining, ...)
         if s is not Dropped: remove e; pending_add(lb, s, e.request); send e to s; continue
     for e in retries[w], oldest first:
@@ -1455,8 +1456,21 @@ function bbr_choose(lb, w, L, remaining_ns):       # L after LiveSet, exclude an
     return s
 ```
 
+- **HopelessDrop.** With `lb_filter = bbr`, a first attempt whose time left is below the RTprop of every backend
+  is answered `503` at once, at admission or at the next scan, instead of waiting until its RequestDeadline: no
+  backend could answer it in time even if it were sent now.
+
+```
+function hopeless(lb, remaining_ns):             # false unless lb.filter == bbr
+    if lb.filter != bbr: return false
+    L = the LiveSet (as in choose, without exclude or avoid)
+    if some s in L has lb.bbr[s].min_rtt_ns none: return false    # an unmeasured backend might be fast
+    return remaining_ns < min(lb.bbr[s].min_rtt_ns for s in L)    # i64 against u64 ns; RTprop read under each lock
+```
+
 - **Waiting.** `admit_peak`, `retry_peak` and `scan_peak` of the [PeakEwmaDeadline](#peakewmadeadline) are used
-  unchanged with `choose = bbr_choose`. A first attempt that no backend allows waits in its worker's FIFO and is
+  with `choose = bbr_choose` and the HopelessDrop above. Refused LbRetries are never dropped (their request's
+  earlier attempt is still running), so `hopeless` applies to first attempts only. A first attempt that no backend allows waits in its worker's FIFO and is
   answered `503` once its RequestDeadline passes; a refused LbRetry is re-tried at every 10 ms scan, so a paced
   backend is re-checked at most every `FILTER_QUEUE_TICK_MS`.
 - **Inflight is counted at the send.** `bbr_allows` is checked at the pick, but `inflight` grows only in
@@ -1470,6 +1484,15 @@ function bbr_choose(lb, w, L, remaining_ns):       # L after LiveSet, exclude an
   has not come, and still counts in the inflight and the pacing.
 - **Ordering.** The tie-break draw happens only when `T` has more than one backend, after every `bbr_allows`.
 - **pending_add** runs at each pick as under the PeakEwmaDeadline (PeakEwmaCost reads `outstanding`).
+
+Worked example, HopelessDrop (two backends):
+
+| RTprop 0, RTprop 1 | Time left | Dropped | Check |
+|---|---|---|---|
+| 400 ms, 450 ms | 399 ms | yes | 399 < min(400, 450) |
+| 400 ms, 450 ms | 400 ms | no | 400 < 400 is false: waits (it can still be sent) |
+| none, 450 ms | 10 ms | no | backend 0 unmeasured |
+| 400 ms, 450 ms | 3 s | no | waits as before |
 
 Worked example, pacing at 99 req/s after 10 sends (`len_ns = floor(1e9 / 99) = 10101010`):
 
