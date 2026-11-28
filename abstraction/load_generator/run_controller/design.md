@@ -14,6 +14,7 @@ function validate(params):
     seed parses as u64                       else error
     arrival_rng in {sampling, native}        else error             # default sampling
     arrival_rng is realized here             else error "arrival_rng <value> is not supported by this implementation"   # OptionalValue
+    rate_steps = parse_rate_schedule(rate_schedule, num_clients)   # RateSchedule; none if empty (default)
     target parses as host:port               else error
     1 <= n_waiting_requests <= MAX_WAITING_REQUESTS   else error     # MAX_WAITING_REQUESTS = 1000
     retry_timeout_ms > 0                     else error             # default 150
@@ -23,12 +24,31 @@ function validate(params):
     initial_stall_ms < duration_s * 1000     else error             # measured_s > 0
     return LoadGenConfig(params,
                          per_client_rate = global_rate / num_clients,
+                         rate_steps = rate_steps,
                          slo_ns = round(slo_ms * 1e6),
                          retry_timeout_ns = round(retry_timeout_ms * 1e6),
                          initial_stall_ns = initial_stall_ms * 1_000_000,
                          duration_ns = round(duration_s * 1e9),
                          drain_timeout_ns = drain_timeout_ms * 1_000_000)
 ```
+
+```
+function parse_rate_schedule(s, n):              # -> none | list of (start_ns, λ)
+    if s is empty: return none
+    E = "rate_schedule must be start_s:rate pairs separated by commas, the first starting at 0, starts increasing, rates > 0"
+    steps = []
+    for item in s split on ",":
+        (a, b) = item split on ":" into exactly two parts      else error E
+        start_s = a as a finite float >= 0; rate = b as a finite float > 0   else error E
+        steps.append((round(start_s * 1e9), rate / n))
+    steps[0].start_ns == 0                                     else error E
+    every steps[k + 1].start_ns > steps[k].start_ns           else error E
+    return steps
+```
+
+Examples: `"0:200,30:120"` gives `[(0, 200/N), (30_000_000_000, 120/N)]`; `"0:200"` is one step (a constant rate,
+drawn by the time change); `"5:200"`, `"0:200,30:0"`, `"0:200,30:120,30:100"`, `"0:200;30:120"` and `"0:200,x:1"`
+are errors.
 
 The last retry check keeps every client's streams of unresolved requests within the `SETTINGS_MAX_CONCURRENT_STREAMS`
 that servers and the Ingress advertise ([../client/design.md#retrytimer](../client/design.md#retrytimer)). Examples:

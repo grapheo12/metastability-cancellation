@@ -28,3 +28,4 @@
 | 0.9.1 | 2026-11-27T00:00:00Z | Child bump: run_controller 0.8.0 (`arrival_rng` validation and ArrivalRng creation) |
 | 0.9.2 | 2026-11-27T00:00:00Z | Child bump: metrics 0.6.1 (wording) |
 | 0.10.0 | 2026-11-28T00:00:00Z | Parameter `rate_schedule` and derived `rate_steps`. Child bump: client 0.11.0 (RateSchedule) |
+| 0.10.1 | 2026-11-28T00:00:00Z | Child bump: run_controller 0.9.0 (`rate_schedule` validation) |
