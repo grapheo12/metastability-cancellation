@@ -2,7 +2,8 @@
 
 Leaf component: the **SemiOpenLoopClient**. One instance simulates one user on its own HTTP/2 connection. It:
 
-- Generates scheduled arrival times from a Poisson process of rate `global_rate / N`.
+- Generates scheduled arrival times from a Poisson process of rate `global_rate / N`, or piecewise per step of a
+  **RateSchedule** (`rate_schedule`).
 - Keeps up to `n_waiting_requests` requests outstanding at once. A **sender** activity sends each arrival when it
   comes due; a **receiver** activity collects responses, timeouts and errors. An arrival that comes due while the
   client is at its cap waits for a slot (**GatedArrival**). The schedule itself is never shifted, so waiting builds

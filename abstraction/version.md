@@ -249,3 +249,4 @@
 | 0.68.0 | 2026-11-27T00:00:00Z | Glossary BbrFilter, BbrState, BtlBw, RTprop, PacingRate, Cwnd, BbrMode, DeliveryRateSample, AttemptLoss, LongTermBw, BbrAdmit; `lb_filter = bbr` and `lb_bbr_init_cwnd` rows. Child bump: ingress 0.20.0 (load_balancer 0.25.0) |
 | 0.68.1 | 2026-11-27T00:00:00Z | Child bump: benchmark_runner 0.22.0 (config 0.32.0) |
 | 0.69.0 | 2026-11-28T00:00:00Z | Glossary HedgeCancel; AttemptLoss excludes it. Child bump: ingress 0.20.1 (load_balancer 0.26.0) |
+| 0.70.0 | 2026-11-28T00:00:00Z | Glossary RateSchedule; `rate_schedule` parameter row. Child bump: load_generator 0.10.0 (client 0.11.0) |

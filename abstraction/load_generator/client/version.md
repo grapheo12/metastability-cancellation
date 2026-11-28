@@ -12,3 +12,4 @@
 | 0.8.0 | 2026-11-20T00:00:00Z | `settle` reads the ExecReport (`parse_exec_report`) of the deciding `ok`/`rejected` response into the RequestRecord |
 | 0.9.0 | 2026-11-20T00:00:00Z | `slo_cancel = false`: no SLO timer; new DrainDeadline (per-request timer at `D + DRAIN`, same settle/reset path, outcome `cancelled`); late answers stay `ok`; worked examples; state machine and description |
 | 0.10.0 | 2026-11-27T00:00:00Z | RequestDeadlineHeader on every copy (`x-request-deadline`, from `req.deadline_unix_ns`); RequestDeadline stated as first-send wall clock + SLO (reading the wall clock at the send is equivalent); ArrivalRng: `arrival_rng = sampling` (derive_seed streams) or `native` (OptionalValue: implementation generator seeded `seed + client index`) |
+| 0.11.0 | 2026-11-28T00:00:00Z | RateSchedule: `next_arrival` (piecewise Poisson by a time change, one Exp(1) draw per arrival; unchanged without a schedule); sender uses it; worked example |

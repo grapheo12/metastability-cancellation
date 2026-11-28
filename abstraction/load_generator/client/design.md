@@ -22,7 +22,7 @@ function run_client(client_id, conn, config, rng, run_start, run_start_unix_ns):
 
 procedure sender(C, client_id, conn, config, rng):
     seq = 0
-    t_sched = sampling.exponential_ns(rng, λ)        # first arrival: one gap after 0
+    t_sched = next_arrival(0, rng, config)           # first arrival: one gap after 0 (RateSchedule)
     while t_sched < D:
         sleep_until(t_sched)                         # no-op if t_sched is already past
         with C.lock:
@@ -35,7 +35,7 @@ procedure sender(C, client_id, conn, config, rng):
             C.events.push(NotSent(seq, t_sched))
         if seq == 2^32 - 1: break
         seq = seq + 1
-        t_sched = t_sched + sampling.exponential_ns(rng, λ)
+        t_sched = next_arrival(t_sched, rng, config)
     C.events.push(SenderDone)
 
 procedure receiver(C, client_id):
@@ -56,9 +56,10 @@ procedure receiver(C, client_id):
             with C.lock: if C.outstanding == 0: return
 ```
 
-- **Schedule.** Arrivals are at the running sums of Exp(λ) gaps. The `j`-th gap is always the `j`-th sample of
-  this client's ArrivalRng ([ArrivalRng](#arrivalrng)), so the arrival schedule depends only on `seed`, `client_id`,
-  λ and `arrival_rng`, not on how the server behaves or on `W`.
+- **Schedule.** Arrivals are at the running sums of Exp(λ) gaps, or follow the [RateSchedule](#rateschedule) when
+  one is set. The `j`-th gap is always made from the `j`-th sample of this client's ArrivalRng
+  ([ArrivalRng](#arrivalrng)), so the arrival schedule depends only on `seed`, `client_id`, the rates and
+  `arrival_rng`, not on how the server behaves or on `W`.
 - **seq** is the index of the scheduled arrival (starting at 0), and every scheduled arrival uses one. After
   `seq = 2^32 - 1` the client stops scheduling.
 - **No arrival at or after `D`.** An arrival at `t_sched < D` that becomes sendable only at `now() >= D` is
@@ -109,6 +110,54 @@ The **ArrivalRng** of a client is the generator its Exp(λ) gaps come from. The 
   schedule never depends on the server, on `W` or on the other clients.
 - `native` exists for an implementation that reuses a load generator with its own random generator. Results of two
   implementations under `native` agree in distribution, not sample by sample.
+
+## RateSchedule
+
+With `rate_schedule` set, the offered rate is a **RateSchedule**: piecewise constant, `rate_k` requests/s in total
+from second `start_k` until the next step's start (the last step lasts to the end). Each client's arrivals are then a
+Poisson process of rate `λ_k = rate_k / N` on step `k`. Without it (the default, `rate_schedule` empty), every
+client's rate is `λ = global_rate / N` throughout and `next_arrival` is exactly the former gap.
+
+```
+steps = config.rate_steps     # list of (start_ns: u64, λ: binary64 per-client req/s); steps[0].start_ns = 0
+
+function next_arrival(t, rng, config):          # t: u64 ns, the previous arrival (0 before the first)
+    if config.rate_steps is none:
+        return t + sampling.exponential_ns(rng, λ)          # unchanged, bit for bit
+    e = exp1_seconds(rng)                        # ONE Exp(1) draw per arrival: the work to the next arrival
+    k = the largest index with steps[k].start_ns <= t
+    loop:
+        λk  = steps[k].λ
+        end = steps[k + 1].start_ns if k + 1 < len(steps) else +infinity
+        dt  = e / λk * 1e9                       # binary64 ns, operations left to right
+        if float(t) + dt < float(end):
+            return t + floor(dt + 0.5)           # rounded half-up, as exponential_ns
+        e = max(0, e - float(end - t) / 1e9 * λk)   # the part of the work step k did
+        t = end; k = k + 1
+
+function exp1_seconds(rng):                      # by ArrivalRng
+    sampling: sampling.exponential_seconds(rng, 1)
+    native:   the implementation's own Exp(1) draw in seconds
+```
+
+- **Time change.** An Exp(1) amount of "work" is spent at the current step's rate; at a step boundary the rest
+  carries over to the next rate. Because the exponential is memoryless this is exactly the piecewise Poisson process,
+  and it still uses one draw per arrival, so `seq` and the ArrivalRng stay aligned.
+- **Boundary.** An arrival that would land exactly on a step's start belongs to the new step (the `<` test).
+- **Units.** `rate_steps` comes from validation ([../run_controller/design.md#configuration-validation](../run_controller/design.md#configuration-validation)):
+  `start_ns = round(start_s × 1e9)`, `λ = rate / N`.
+- **`global_rate`** stays required. With a RateSchedule it is not used for arrivals; it names the point's nominal
+  rate (for the runner's tables).
+
+Worked example, `rate_schedule = "0:200,30:120"`:
+
+| `N` | `t` (ns) | `e` | Steps crossed | Next arrival (ns) | Check |
+|---|---|---|---|---|---|
+| 1 | 0 | 0.5 | none | 2,500,000 | 0.5 / 200 = 2.5 ms |
+| 1 | 29,999,000,000 | 0.5 | 0 → 1 | 30,002,500,000 | 1 ms at 200 uses 0.2; 0.3 / 120 = 2.5 ms after 30 s |
+| 1 | 29,997,500,000 | 0.5 | 0 → 1 | 30,000,000,000 | 2.5 ms at 200 uses all 0.5 (max(0, …)): exactly the boundary, step 1 |
+| 16 | 0 | 1.0 | none | 80,000,000 | λ = 200 / 16 = 12.5; 1 / 12.5 = 80 ms |
+| 1 | 40,000,000,000 | 0.6 | none (last step) | 40,005,000,000 | 0.6 / 120 = 5 ms |
 
 ## start_request
 

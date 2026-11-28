@@ -3,7 +3,7 @@
 Subcomponents: Run Controller, Client, Metrics.
 
 Simulates `N` independent clients against the server, each on its own HTTP/2 connection. Each
-client is a **SemiOpenLoopClient**: arrivals follow a Poisson process of rate `global_rate / N`, and a client
+client is a **SemiOpenLoopClient**: arrivals follow a Poisson process of rate `global_rate / N` (or of each step's rate under a RateSchedule), and a client
 keeps up to `n_waiting_requests` requests outstanding, so an arrival that comes due while it is at that cap waits
 for a slot (a **GatedArrival**). A request that has not been fully answered `slo_ms` after it was sent is
 cancelled with `RST_STREAM` (**SLOCancellation**). Before that, each send of a request (a **RequestCopy**) has a
