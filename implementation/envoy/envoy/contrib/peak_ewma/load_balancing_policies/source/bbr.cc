@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.26.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.27.0)
 #include "contrib/peak_ewma/load_balancing_policies/source/bbr.h"
 
 #include <algorithm>
@@ -534,6 +534,11 @@ void BbrState::ltIntervalDone(double bw) {
   }
   lt_bw_ = bw;
   resetLtInterval();
+}
+
+absl::optional<int64_t> BbrState::minRttNs() const {
+  absl::MutexLock lock(&mu_);
+  return init_ ? min_rtt_ns_ : absl::nullopt;
 }
 
 BbrSnapshot BbrState::snapshot() const {

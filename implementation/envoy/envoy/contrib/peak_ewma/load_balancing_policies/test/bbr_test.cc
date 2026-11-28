@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.26.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.27.0)
 // impl/envoy (cancellation testbed): tests of the BbrFilter's BbrState (bbr.h): the spec's worked examples, and
 // small simulations of one backend for the mode machine, loss recovery, PROBE_RTT and LongTermBw.
 

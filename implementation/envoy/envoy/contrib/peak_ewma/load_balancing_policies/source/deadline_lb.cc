@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.26.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.27.0)
 // Source: abstraction/protocol/design.md (protocol v0.8.0)
 #include "contrib/peak_ewma/load_balancing_policies/source/deadline_lb.h"
 
@@ -416,6 +416,11 @@ PeakEwmaDeadlineLoadBalancer::chooseHost(Upstream::LoadBalancerContext* context)
     }
     return waitAsRetry(context, *deadline);
   }
+  // Design: abstraction/ingress/load_balancer/design.md#bbradmit
+  if (hopeless(*deadline - nowUnixNs())) { // HopelessDrop: no backend could answer in time
+    trace_.queueEvent("dropped", 0, *deadline - nowUnixNs(), "");
+    return {nullptr, std::string(kDroppedDetails)};
+  }
   if (!queue_.empty()) {
     return enqueue(context, *deadline); // FIFO: never overtake a waiting request at admission
   }
@@ -425,6 +430,27 @@ PeakEwmaDeadlineLoadBalancer::chooseHost(Upstream::LoadBalancerContext* context)
     return {host};
   }
   return enqueue(context, *deadline);
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#bbradmit
+bool PeakEwmaDeadlineLoadBalancer::hopeless(int64_t remaining_ns) const {
+  if (!bbr_init_cwnd_.has_value()) {
+    return false;
+  }
+  const auto& host_sets = priority_set_.hostSetsPerPriority();
+  if (host_sets.empty() || host_sets[0]->healthyHosts().empty()) {
+    return false;
+  }
+  int64_t min_rtt = std::numeric_limits<int64_t>::max();
+  for (const auto& host : host_sets[0]->healthyHosts()) {
+    auto pending = host->typedLbPolicyData<PendingRequests>();
+    const absl::optional<int64_t> rtt = pending.has_value() ? pending->bbr().minRttNs() : absl::nullopt;
+    if (!rtt.has_value()) {
+      return false; // an unmeasured backend might be fast
+    }
+    min_rtt = std::min(min_rtt, *rtt);
+  }
+  return remaining_ns < min_rtt;
 }
 
 bool PeakEwmaDeadlineLoadBalancer::ensureTimer(Upstream::LoadBalancerContext* context) {
@@ -485,7 +511,7 @@ void PeakEwmaDeadlineLoadBalancer::scan() {
       it = queue_.erase(it);
       continue;
     }
-    if (remaining <= 0) {
+    if (remaining <= 0 || hopeless(remaining)) { // past the deadline, or HopelessDrop
       Upstream::LoadBalancerContext* context = it->context;
       it = queue_.erase(it);
       trace_.queueEvent("dropped", waited, remaining, "");

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.26.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.27.0)
 // impl/envoy (cancellation testbed): tests of the peak_ewma_deadline load balancer (deadline_lb.h): the deadline
 // filter over every host, the lowest-cost choice, and the per-worker FIFO wait queue.
 
@@ -308,6 +308,27 @@ TEST_F(PeakEwmaDeadlineBbrTest, NoDeadlineIsNeverFiltered) {
   fill(1);
   auto a = request(absl::nullopt);
   EXPECT_EQ(lb_->chooseHost(&a->context).host, hosts_[0]); // both full, still sent to the cheaper
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#bbradmit
+TEST_F(PeakEwmaDeadlineBbrTest, HopelessDropAtAdmission) {
+  setHost(0, 100, 0);
+  setHost(1, 300, 0);
+  auto measure = [&](size_t i, int64_t rtt_ms) { // one attempt answered after rtt_ms: RTprop = rtt_ms
+    const BbrSendTag tag = bbr(i).onSend(mono_ns_, [] { return uint64_t{0}; });
+    bbr(i).onAnswer(tag, mono_ns_ + rtt_ms * kMs, [] { return uint64_t{0}; });
+  };
+  measure(0, 400);
+  auto unmeasured = request(10 * kMs);
+  EXPECT_NE(lb_->chooseHost(&unmeasured->context).host, nullptr); // host 1 unmeasured: no early drop
+  measure(1, 450);
+  auto doomed = request(399 * kMs);
+  const auto r = lb_->chooseHost(&doomed->context);
+  EXPECT_EQ(r.host, nullptr); // 399 ms < min(400, 450): dropped at once, never queued
+  EXPECT_EQ(r.cancelable, nullptr);
+  EXPECT_EQ(lb_->queueLength(), 0u);
+  auto fits = request(400 * kMs);
+  EXPECT_NE(lb_->chooseHost(&fits->context).host, nullptr); // 400 < 400 is false: sent
 }
 
 // Design: abstraction/ingress/load_balancer/design.md#attemptloss

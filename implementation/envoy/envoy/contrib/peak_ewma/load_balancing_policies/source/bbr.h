@@ -1,6 +1,6 @@
 #pragma once
 
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.26.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.27.0)
 // impl/envoy (cancellation testbed): the BbrFilter's per-host BbrState, Linux BBR v1 (tcp_bbr.c + tcp_rate.c) with
 // one upstream attempt per packet (abstraction/ingress/load_balancer/design.md#bbrfilter). Pure logic: times and
 // the random source are passed in. One state per host, kept in the host's PendingRequests (deadline_lb.h) and so
@@ -103,6 +103,8 @@ public:
   // HedgeCancel: another attempt of the same request answered first; only leaves the inflight.
   void onCancel(const BbrSendTag& tag, int64_t now_ns);
   BbrSnapshot snapshot() const;
+  // RTprop (min_rtt_ns), none before the first answer or while not initialized.
+  absl::optional<int64_t> minRttNs() const;
 
 private:
   struct RateSample {

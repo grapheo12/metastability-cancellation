@@ -1,6 +1,6 @@
 #pragma once
 
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.26.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.27.0)
 // impl/envoy (cancellation testbed): the testbed_bbr upstream filter. One instance per upstream attempt: decodeHeaders
 // (the attempt's request is sent) calls the host's BbrState onSend, encodeHeaders (response headers, whatever the
 // status) onAnswer, and onDestroy without response headers onCancel if another attempt of the request already

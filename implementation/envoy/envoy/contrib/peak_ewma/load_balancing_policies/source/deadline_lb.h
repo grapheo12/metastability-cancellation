@@ -171,6 +171,9 @@ private:
   // context: hosts it asks to avoid (retry host predicates, e.g. previous_hosts) are not kept, unless all are.
   Upstream::HostConstSharedPtr decide(absl::optional<int64_t> remaining_ns, const char* kind,
                                       Upstream::LoadBalancerContext* context);
+  // HopelessDrop (lb_filter = bbr): remaining_ns is below the RTprop of every healthy host (false if any is
+  // unmeasured, and always false without bbr).
+  bool hopeless(int64_t remaining_ns) const;
   Upstream::HostSelectionResponse enqueue(Upstream::LoadBalancerContext* context, int64_t deadline_unix_ns);
   Upstream::HostSelectionResponse waitAsRetry(Upstream::LoadBalancerContext* context, int64_t deadline_unix_ns);
 

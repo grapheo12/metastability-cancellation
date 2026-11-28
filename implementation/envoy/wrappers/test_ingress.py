@@ -1,5 +1,5 @@
-# Source: abstraction/ingress/design.md (ingress v0.20.1)
-# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.26.0)
+# Source: abstraction/ingress/design.md (ingress v0.20.2)
+# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.27.0)
 """Tests of the impl/envoy Ingress wrapper (bin/ingress.py): validation and the generated Envoy config."""
 import io
 import os

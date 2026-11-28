@@ -1,6 +1,6 @@
 #pragma once
 
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.26.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.27.0)
 // impl/envoy (cancellation testbed): the testbed_token_bucket upstream filter. One instance per upstream attempt:
 // decodeHeaders notes the attempt's host and send time, encodeHeaders (the attempt answered, whatever the status)
 // reports the latency to the host's TokenBucket (abstraction/ingress/load_balancer/design.md#tokenbucketfilter).
