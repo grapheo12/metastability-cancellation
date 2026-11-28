@@ -56,6 +56,20 @@ message PeakEwmaDeadline {
   // bucket holds a whole token, the chosen host gives one up, and the bucket's refill rate adapts by AIMD from the
   // latencies the testbed_token_bucket upstream filter reports. Waiting is as above.
   TokenBucket token_bucket = 6;
+
+  // BbrFilter (abstraction/ingress/load_balancer/design.md#bbrfilter). When set, the deadline test above is
+  // replaced: each host runs Linux BBR v1 with one upstream attempt per packet, from the sends, answers and losses
+  // the testbed_bbr upstream filter reports; a host is kept for a request with a deadline only while its cwnd has
+  // room and its pacing rate allows a send now. Waiting is as above.
+  Bbr bbr = 7;
+}
+
+// The BbrFilter's parameter (the Ingress's lb_bbr_init_cwnd). Every other value is a Linux constant.
+message Bbr {
+  option (xds.annotations.v3.message_status).work_in_progress = true;
+
+  // Initial congestion window, attempts per host (lb_bbr_init_cwnd, >= 4). Default 10.
+  google.protobuf.UInt32Value init_cwnd = 1;
 }
 
 // The TokenBucketFilter's parameters (the Ingress's lb_tb_*). Unset fields take the defaults given.

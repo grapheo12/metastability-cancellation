@@ -1,6 +1,6 @@
 #pragma once
 
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.24.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.25.0)
 // impl/envoy (cancellation testbed): the TokenBucketFilter's per-host TokenBucket and its TokenRate AIMD
 // (abstraction/ingress/load_balancer/design.md#tokenbucketfilter), pure logic (times are passed in). One bucket per
 // host, kept in the host's PendingRequests (deadline_lb.h) and so shared by every worker's balancer; the

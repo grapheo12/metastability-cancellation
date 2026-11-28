@@ -1,5 +1,5 @@
-# Source: abstraction/ingress/design.md (ingress v0.19.1)
-# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.24.0)
+# Source: abstraction/ingress/design.md (ingress v0.20.0)
+# Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.25.0)
 """Tests of the impl/envoy Ingress wrapper (bin/ingress.py): validation and the generated Envoy config."""
 import io
 import os
@@ -63,6 +63,33 @@ class TokenBucketFlags(unittest.TestCase):
             "typed_config"])
         self.assertNotIn("http_filters", c2["typed_extension_protocol_options"][
             "envoy.extensions.upstreams.http.v3.HttpProtocolOptions"])
+
+
+class BbrFlags(unittest.TestCase):
+    # Design: abstraction/ingress/design.md#configuration-validation
+    def test_validation(self):
+        self.assertIsNone(error_of(BASE + ["--lb_filter", "bbr"]))
+        self.assertEqual(ingress.parse(BASE + ["--lb_filter", "bbr"]).lb_bbr_init_cwnd, 10)
+        self.assertEqual(error_of(BASE[:4] + ["--lb_policy", "ewma", "--lb_filter", "bbr"]),
+                         "lb_filter bbr needs lb_policy peak_ewma")
+        for bad in ["3", "0", "-1", "4.5", "x", "4294967296"]:  # validated even without bbr
+            self.assertEqual(error_of(BASE + ["--lb_bbr_init_cwnd", bad]), "lb_bbr_init_cwnd must be an integer >= 4",
+                             bad)
+        self.assertIsNone(error_of(BASE + ["--lb_bbr_init_cwnd", "4"]))
+
+    # Design: abstraction/ingress/load_balancer/design.md#bbrfilter
+    def test_envoy_config(self):
+        args = ingress.parse(BASE + ["--lb_filter", "bbr", "--lb_bbr_init_cwnd", "20", "--lb_retry_policy", "anxious",
+                                     "--lb_max_retries", "1"])
+        cluster = ingress.envoy_config(args, args.backends.split(","), 9901, "/dev/null")["static_resources"][
+            "clusters"][0]
+        tc = cluster["load_balancing_policy"]["policies"][0]["typed_extension_config"]["typed_config"]
+        self.assertEqual(tc["bbr"], {"init_cwnd": 20})
+        self.assertNotIn("token_bucket", tc)
+        names = [f["name"] for f in cluster["typed_extension_protocol_options"][
+            "envoy.extensions.upstreams.http.v3.HttpProtocolOptions"]["http_filters"]]
+        self.assertEqual(names, ["envoy.filters.http.testbed_bbr", "envoy.filters.http.testbed_anxious",
+                                 "envoy.filters.http.upstream_codec"])
 
 
 if __name__ == "__main__":

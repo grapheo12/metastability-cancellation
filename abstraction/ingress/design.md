@@ -196,11 +196,11 @@ Regenerate from the repository root with `python3 implementation/spec_tools/trac
 <!-- trace:begin -->
 | Design subsection | Implementation (file:line) |
 |---|---|
-| [Structure](#structure) | [ingress.py:207](../../implementation/envoy/bin/ingress.py#L207) |
+| [Structure](#structure) | [ingress.py:230](../../implementation/envoy/bin/ingress.py#L230) |
 | [Shared state](#shared-state) | not traced |
-| [Configuration validation](#configuration-validation) | [ingress.py:66](../../implementation/envoy/bin/ingress.py#L66), [test_ingress.py:31](../../implementation/envoy/wrappers/test_ingress.py#L31) |
-| [Concurrency model](#concurrency-model) | [ingress.py:325](../../implementation/envoy/bin/ingress.py#L325) |
+| [Configuration validation](#configuration-validation) | [ingress.py:67](../../implementation/envoy/bin/ingress.py#L67), [test_ingress.py:31](../../implementation/envoy/wrappers/test_ingress.py#L31), [test_ingress.py:70](../../implementation/envoy/wrappers/test_ingress.py#L70) |
+| [Concurrency model](#concurrency-model) | [ingress.py:348](../../implementation/envoy/bin/ingress.py#L348) |
 | [Time base](#time-base) | [convert.py:136](../../implementation/envoy/wrappers/convert.py#L136) |
-| [Shutdown](#shutdown) | [ingress.py:334](../../implementation/envoy/bin/ingress.py#L334), [convert.py:174](../../implementation/envoy/wrappers/convert.py#L174) |
-| [Why one upstream connection per client and backend](#why-one-upstream-connection-per-client-and-backend) | [ingress.py:218](../../implementation/envoy/bin/ingress.py#L218) |
+| [Shutdown](#shutdown) | [ingress.py:357](../../implementation/envoy/bin/ingress.py#L357), [convert.py:174](../../implementation/envoy/wrappers/convert.py#L174) |
+| [Why one upstream connection per client and backend](#why-one-upstream-connection-per-client-and-backend) | [ingress.py:241](../../implementation/envoy/bin/ingress.py#L241) |
 <!-- trace:end -->

@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.24.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.25.0)
 // Source: abstraction/protocol/design.md (protocol v0.8.0)
 #include "contrib/peak_ewma/load_balancing_policies/source/deadline_lb.h"
 
@@ -68,6 +68,7 @@ void PendingRegistration::add(Upstream::HostConstSharedPtr host, int64_t start_n
 
 void PeakEwmaDeadlineLoadBalancer::addPendingDataToHosts(const Upstream::HostVector& hosts,
                                                          const absl::optional<TokenParams>& token_params,
+                                                         absl::optional<uint32_t> bbr_init_cwnd,
                                                          int64_t now_mono_ns) {
   static absl::Mutex attach_mu; // worker balancers are created concurrently; attach once per host
   absl::MutexLock lock(&attach_mu);
@@ -78,6 +79,10 @@ void PeakEwmaDeadlineLoadBalancer::addPendingDataToHosts(const Upstream::HostVec
     // Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
     if (token_params.has_value()) { // TokenBucket: empty, rate init_r, from the first balancer's start
       host->typedLbPolicyData<PendingRequests>()->tokenBucket().init(*token_params, now_mono_ns);
+    }
+    // Design: abstraction/ingress/load_balancer/design.md#bbrfilter
+    if (bbr_init_cwnd.has_value()) { // BbrState: STARTUP, cwnd init_cwnd, from the first balancer's start
+      host->typedLbPolicyData<PendingRequests>()->bbr().init(*bbr_init_cwnd, now_mono_ns);
     }
   }
 }
@@ -99,6 +104,14 @@ absl::optional<TokenParams> tokenParamsOf(const DeadlineConfig& config) {
   p.r_min = (tb.has_min_rate_frac() ? tb.min_rate_frac().value() : 0.1) * p.init_rate;
   return p;
 }
+
+// BbrFilter initial cwnd from the config (lb_bbr_init_cwnd); unset: 10.
+absl::optional<uint32_t> bbrInitCwndOf(const DeadlineConfig& config) {
+  if (!config.has_bbr()) {
+    return absl::nullopt;
+  }
+  return config.bbr().has_init_cwnd() ? std::max<uint32_t>(4, config.bbr().init_cwnd().value()) : 10;
+}
 } // namespace
 
 PeakEwmaDeadlineLoadBalancer::PeakEwmaDeadlineLoadBalancer(
@@ -117,13 +130,13 @@ PeakEwmaDeadlineLoadBalancer::PeakEwmaDeadlineLoadBalancer(
       probe_tau_ms_(config.has_probe_tau()
                         ? static_cast<double>(DurationUtil::durationToMilliseconds(config.probe_tau()))
                         : 0.0),
-      token_params_(tokenParamsOf(config)) {
+      token_params_(tokenParamsOf(config)), bbr_init_cwnd_(bbrInitCwndOf(config)) {
   for (const auto& host_set : priority_set_.hostSetsPerPriority()) {
-    addPendingDataToHosts(host_set->hosts(), token_params_, monoNowNs());
+    addPendingDataToHosts(host_set->hosts(), token_params_, bbr_init_cwnd_, monoNowNs());
   }
   pending_update_cb_ = priority_set_.addPriorityUpdateCb(
       [this](uint32_t, const Upstream::HostVector& hosts_added, const Upstream::HostVector&) -> absl::Status {
-        addPendingDataToHosts(hosts_added, token_params_, monoNowNs());
+        addPendingDataToHosts(hosts_added, token_params_, bbr_init_cwnd_, monoNowNs());
         return absl::OkStatus();
       });
 }
@@ -277,6 +290,10 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
       // Design: abstraction/ingress/load_balancer/design.md#tokenbucketfilter
       auto pending = hosts[i]->typedLbPolicyData<PendingRequests>(); // TokenBucketFilter: a whole token, no RTT test
       keep[i] = pending.has_value() && pending->tokenBucket().hasToken(now_mono);
+    } else if (bbr_init_cwnd_.has_value()) {
+      // Design: abstraction/ingress/load_balancer/design.md#bbradmit
+      auto pending = hosts[i]->typedLbPolicyData<PendingRequests>(); // BbrFilter: cwnd room and a pacing slot
+      keep[i] = pending.has_value() && pending->bbr().allows(now_mono);
     } else if (ewma_ms <= 0.0 && !has_pending) {
       keep[i] = true; // no RTT sample and nothing pending: eligible (as the Go DeadlineFilter with no sample)
     } else {
@@ -339,6 +356,21 @@ PeakEwmaDeadlineLoadBalancer::decide(absl::optional<int64_t> remaining_ns, const
     }
     if (!took && remaining_ns.has_value()) {
       chosen = hosts.size(); // another worker took the token first: Dropped, re-checked at the next scan
+    }
+  }
+
+  // Design: abstraction/ingress/load_balancer/design.md#bbradmit
+  if (bbr_init_cwnd_.has_value() && chosen < hosts.size()) { // re-check under the host's lock, mark, pace
+    auto pending = hosts[chosen]->typedLbPolicyData<PendingRequests>();
+    const bool idle_queue = queue_.empty() && retry_waiters_.empty(); // app-limited: nothing waits here
+    const bool admitted =
+        pending.has_value() && pending->bbr().admit(now_mono, idle_queue, !remaining_ns.has_value());
+    if (pending.has_value()) {
+      bbrTrace(nowUnixNs(), admitted ? "admit" : "race", hosts[chosen]->address()->asString(),
+               pending->bbr().snapshot(), 0.0);
+    }
+    if (!admitted && remaining_ns.has_value()) {
+      chosen = hosts.size(); // another worker took the room or the pacing slot first: re-checked at the next scan
     }
   }
 

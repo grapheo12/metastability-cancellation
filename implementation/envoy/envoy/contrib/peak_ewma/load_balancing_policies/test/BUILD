@@ -89,6 +89,14 @@ envoy_cc_test(
 )
 
 envoy_cc_test(
+    name = "bbr_test",
+    srcs = ["bbr_test.cc"],
+    deps = [
+        "//contrib/peak_ewma/load_balancing_policies/source:bbr_lib",
+    ],
+)
+
+envoy_cc_test(
     name = "deadline_lb_test",
     srcs = ["deadline_lb_test.cc"],
     deps = [

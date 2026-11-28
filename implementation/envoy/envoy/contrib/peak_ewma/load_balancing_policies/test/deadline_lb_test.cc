@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.24.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.25.0)
 // impl/envoy (cancellation testbed): tests of the peak_ewma_deadline load balancer (deadline_lb.h): the deadline
 // filter over every host, the lowest-cost choice, and the per-worker FIFO wait queue.
 
@@ -6,6 +6,7 @@
 #include <cmath>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "source/common/network/address_impl.h"
 
@@ -244,6 +245,83 @@ TEST_F(PeakEwmaDeadlineProbeTest, LateRequestIsNeverProbed) {
   expectTimer();
   auto late = request(0);
   EXPECT_EQ(lb_->chooseHost(&late->context).host, nullptr); // remaining <= 0: no backend, no coin
+}
+
+// BbrFilter: init_cwnd 4.
+class PeakEwmaDeadlineBbrTest : public PeakEwmaDeadlineTest {
+protected:
+  void SetUp() override {
+    config_.mutable_bbr()->mutable_init_cwnd()->set_value(4);
+    PeakEwmaDeadlineTest::SetUp();
+  }
+  BbrState& bbr(size_t i) { return hosts_[i]->typedLbPolicyData<PendingRequests>()->bbr(); }
+  void fill(size_t i) { // the upstream filter's sends until host i's cwnd is full
+    while (bbr(i).snapshot().inflight < bbr(i).snapshot().cwnd) {
+      bbr(i).onSend(mono_ns_, [] { return uint64_t{0}; });
+    }
+  }
+};
+
+// Design: abstraction/ingress/load_balancer/design.md#bbradmit
+TEST_F(PeakEwmaDeadlineBbrTest, LowestCostAmongHostsWithCwndRoom) {
+  setHost(0, 100, 0); // cost 100
+  setHost(1, 300, 0); // cost 300
+  EXPECT_EQ(bbr(0).snapshot().cwnd, 4u); // init_cwnd from the config
+  auto a = request(4000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&a->context).host, hosts_[0]); // RTT test ignored: cwnd room and cost
+  fill(0);
+  auto b = request(4000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&b->context).host, hosts_[1]); // host 0's cwnd is full
+  fill(1);
+  expectTimer();
+  auto c = request(4000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&c->context).host, nullptr); // no room anywhere: waits
+  EXPECT_EQ(lb_->queueLength(), 1u);
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#bbradmit
+TEST_F(PeakEwmaDeadlineBbrTest, RttTestIsNotApplied) {
+  setHost(0, 9000, 0); // the RTT test would refuse it with 4 s left
+  setHost(1, 9500, 0);
+  auto a = request(4000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&a->context).host, hosts_[0]);
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#bbradmit
+TEST_F(PeakEwmaDeadlineBbrTest, RefusedRetryWaitsApart) {
+  setHost(0, 100, 0);
+  setHost(1, 300, 0);
+  fill(0);
+  fill(1);
+  expectTimer();
+  auto r = request(4000 * kMs, 2); // an LB retry
+  EXPECT_EQ(lb_->chooseHost(&r->context).host, nullptr);
+  EXPECT_EQ(lb_->retryWaiters(), 1u);
+  EXPECT_EQ(lb_->queueLength(), 0u);
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#bbradmit
+TEST_F(PeakEwmaDeadlineBbrTest, NoDeadlineIsNeverFiltered) {
+  setHost(0, 100, 0);
+  setHost(1, 300, 0);
+  fill(0);
+  fill(1);
+  auto a = request(absl::nullopt);
+  EXPECT_EQ(lb_->chooseHost(&a->context).host, hosts_[0]); // both full, still sent to the cheaper
+}
+
+// Design: abstraction/ingress/load_balancer/design.md#attemptloss
+TEST_F(PeakEwmaDeadlineBbrTest, LossesFreeTheCwndOnlyDownToInflight) {
+  setHost(0, 100, 0);
+  setHost(1, 300, 0);
+  std::vector<BbrSendTag> tags;
+  for (int k = 0; k < 4; ++k) {
+    tags.push_back(bbr(0).onSend(mono_ns_, [] { return uint64_t{0}; }));
+  }
+  bbr(0).onLoss(tags[0], mono_ns_); // a hedge loser: cwnd = in flight (3)
+  EXPECT_EQ(bbr(0).snapshot().cwnd, 3u);
+  auto a = request(4000 * kMs);
+  EXPECT_EQ(lb_->chooseHost(&a->context).host, hosts_[1]); // host 0 is still full
 }
 
 // TokenBucketFilter: slo 4 s, the other parameters at their defaults (init_r 50/s, max_tokens 10).

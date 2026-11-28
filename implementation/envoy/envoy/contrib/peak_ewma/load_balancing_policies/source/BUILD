@@ -63,15 +63,29 @@ envoy_cc_library(
     ],
 )
 
+# impl/envoy (cancellation testbed): the BbrFilter's per-host BbrState (Linux BBR v1, pure logic) and its trace.
+envoy_cc_library(
+    name = "bbr_lib",
+    srcs = ["bbr.cc"],
+    hdrs = ["bbr.h"],
+    visibility = ["//contrib/peak_ewma/load_balancing_policies/test:__pkg__"],
+    deps = [
+        "@abseil-cpp//absl/synchronization",
+        "@abseil-cpp//absl/types:optional",
+    ],
+)
+
 envoy_cc_library(
     name = "deadline_lb_lib",
     srcs = ["deadline_lb.cc"],
     hdrs = ["deadline_lb.h"],
     visibility = [
         "//contrib/peak_ewma/load_balancing_policies/test:__pkg__",
+        "//contrib/peak_ewma/bbr/source:__pkg__",
         "//contrib/peak_ewma/token_bucket/source:__pkg__",
     ],
     deps = [
+        ":bbr_lib",
         ":peak_ewma_lb_lib",
         ":token_bucket_lib",
         "//envoy/event:dispatcher_interface",

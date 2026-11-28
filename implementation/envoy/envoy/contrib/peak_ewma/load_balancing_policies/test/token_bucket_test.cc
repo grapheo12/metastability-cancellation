@@ -1,4 +1,4 @@
-// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.24.0)
+// Source: abstraction/ingress/load_balancer/design.md (load_balancer v0.25.0)
 // impl/envoy (cancellation testbed): tests of the TokenBucketFilter's TokenBucket and TokenRate (token_bucket.h),
 // the spec's worked examples.
 

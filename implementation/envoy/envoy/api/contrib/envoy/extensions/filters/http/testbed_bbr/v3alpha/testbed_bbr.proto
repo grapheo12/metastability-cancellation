@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package envoy.extensions.filters.http.testbed_bbr.v3alpha;
+
+import "xds/annotations/v3/status.proto";
+
+import "udpa/annotations/status.proto";
+
+option java_package = "io.envoyproxy.envoy.extensions.filters.http.testbed_bbr.v3alpha";
+option java_outer_classname = "TestbedBbrProto";
+option java_multiple_files = true;
+option go_package = "github.com/envoyproxy/go-control-plane/contrib/envoy/extensions/filters/http/testbed_bbr/v3alpha";
+option (udpa.annotations.file_status).package_version_status = ACTIVE;
+option (xds.annotations.v3.file_status).work_in_progress = true;
+
+// [#protodoc-title: Testbed BBR attempt reports (upstream filter)]
+// impl/envoy (cancellation testbed): the BbrFilter's input (abstraction/ingress/load_balancer/design.md#bbrfilter).
+// Configured as an upstream HTTP filter of the cluster, it reports every upstream attempt to its host's BbrState
+// (kept by the peak_ewma_deadline load balancer when its bbr is set): the send at the request headers, then either
+// the answer at the response headers (whatever the status) or a loss when the attempt ends without them.
+// [#extension: envoy.filters.http.testbed_bbr]
+message TestbedBbr {
+  option (xds.annotations.v3.message_status).work_in_progress = true;
+}
